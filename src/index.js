@@ -420,6 +420,41 @@ async function initBot() {
 const handlers = {
   start: async (ctx) => {
     if (ctx.chat.type === 'private') {
+      const { models } = getDB();
+      const userId = ctx.from.id;
+      
+      // Check if this is a flip session start (from the deeplink button)
+      const startParam = ctx.startPayload;
+      if (startParam && startParam.startsWith('flip_')) {
+        const sessionId = startParam.replace('flip_', '');
+        
+        try {
+          const session = await models.BotSession.findByPk(sessionId);
+          if (session && parseInt(session.userId) === userId) {
+            // Valid flip session, send token selection
+            const supportedTokens = await getSupportedTokensList();
+            const tokenButtons = supportedTokens.map((token, idx) => [
+              Markup.button.callback(
+                `${token.symbol} (${token.network})`,
+                `start_flip_${session.id}_${idx}`
+              ),
+            ]);
+
+            await ctx.reply(
+              '🪙 <b>Select a Token</b>\n\nChoose which token to flip:',
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard(tokenButtons).reply_markup,
+              }
+            );
+            return;
+          }
+        } catch (error) {
+          logger.error('Error handling flip start parameter', error);
+        }
+      }
+
+      // Regular start message
       await ctx.reply(
         `🪙 <b>Welcome to Coin Flip Bot!</b>\n\n` +
         `Start a coin flip game from any group chat by using the buttons that appear.\n\n` +
@@ -592,13 +627,16 @@ const handlers = {
           return;
         }
 
+        // Get bot info for deeplink
+        const botInfo = await ctx.telegram.getMe();
+
         await ctx.reply(
           '🪙 <b>Start a Coin Flip!</b>\n\n' +
           'Click below to set up your flip in DM (for privacy)',
           {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('💬 Start in DM', `start_flip_dm_${session.id}`)],
+              [Markup.button.url('💬 Start in DM', `https://t.me/${botInfo.username}?start=flip_${session.id}`)],
             ]).reply_markup,
           }
         );
