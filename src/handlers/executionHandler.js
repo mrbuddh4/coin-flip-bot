@@ -12,15 +12,19 @@ class ExecutionHandler {
   static async executeFlip(flipId, ctx) {
     try {
       const { models } = getDB();
-      const flip = await models.CoinFlip.findByPk(flipId, {
-        include: [
-          { association: 'creator', model: models.User },
-          { association: 'challenger', model: models.User },
-        ],
-      });
+      const flip = await models.CoinFlip.findByPk(flipId);
 
       if (!flip || !flip.creatorDepositConfirmed || !flip.challengerDepositConfirmed) {
         logger.warn('Cannot execute flip - deposits not confirmed', { flipId });
+        return;
+      }
+
+      // Fetch creator and challenger user records
+      const creator = await models.User.findByPk(flip.creatorId);
+      const challenger = await models.User.findByPk(flip.challengerId);
+
+      if (!creator || !challenger) {
+        logger.warn('Creator or challenger user not found', { flipId, creatorId: flip.creatorId, challengerId: flip.challengerId });
         return;
       }
 
@@ -29,6 +33,7 @@ class ExecutionHandler {
       const winnerId = result === 0 ? flip.creatorId : flip.challengerId;
       const flipResultEnum = result === 0 ? 'CREATOR' : 'CHALLENGER';
       const winnerDepositAddress = result === 0 ? flip.creatorDepositWalletAddress : flip.challengerDepositWalletAddress;
+      const winnerName = result === 0 ? creator.firstName : challenger.firstName;
 
       // Calculate winnings
       const totalPool = parseFloat(flip.wagerAmount) * 2;
@@ -67,7 +72,6 @@ class ExecutionHandler {
         : `https://solscan.io/tx/${winningTxHash}`;
 
       // Send result to group chat
-      const winnerName = result === 0 ? flip.creator.firstName : flip.challenger.firstName;
       const txLinkMessage = winningTxHash 
         ? `\n🔗 <a href="${txLink}">View Transaction</a>`
         : `\n⏳ Processing winnings...`;
