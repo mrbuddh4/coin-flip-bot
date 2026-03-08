@@ -370,7 +370,7 @@ class FlipHandler {
 
       // Get challenger's username or name
       const challenger = await models.User.findByPk(challengerId);
-      const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
+      const challengerDisplay = challenger?.username ? challenger.username : challenger?.firstName || 'Challenger';
 
       await ctx.editMessageText(
         `🪙 <b>Challenger Found!</b>\n\n` +
