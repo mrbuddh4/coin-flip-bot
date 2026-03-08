@@ -168,7 +168,6 @@ class ExecutionHandler {
       const devAmount = (totalPool * 0.05).toFixed(flip.tokenDecimals);
       const burnAmount = (totalPool * 0.05).toFixed(flip.tokenDecimals);
 
-      const blockchainManager = getBlockchainManager();
       const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
 
       // Get dev wallet and burn address for this network
