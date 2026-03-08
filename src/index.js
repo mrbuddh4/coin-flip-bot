@@ -2,7 +2,7 @@ const { Telegraf, Markup, session } = require('telegraf');
 const { Op } = require('sequelize');
 const config = require('./config');
 const { initDB, getDB } = require('./database');
-const { initBlockchainManager } = require('./blockchain/manager');
+const { initBlockchainManager, getBlockchainManager } = require('./blockchain/manager');
 const FlipHandler = require('./handlers/flipHandler');
 const ExecutionHandler = require('./handlers/executionHandler');
 const AdminHandler = require('./handlers/adminHandler');
@@ -1062,7 +1062,6 @@ async function handleChallengerDepositConfirm(ctx) {
   }
 
   // Verify deposit on bot's wallet
-  const { getBlockchainManager } = require('./blockchain/manager');
   const blockchainManager = getBlockchainManager();
   const verification = await blockchainManager.verifyDeposit(
     flip.tokenNetwork,
