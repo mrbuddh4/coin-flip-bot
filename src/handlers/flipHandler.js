@@ -1,4 +1,5 @@
 const { Markup } = require('telegraf');
+const { Op } = require('sequelize');
 const { getDB } = require('../database');
 const { getBlockchainManager } = require('../blockchain/manager');
 const { performCoinFlip, formatAddress, isValidNumber } = require('../utils/helpers');
@@ -19,7 +20,9 @@ class FlipHandler {
       const activeFlip = await models.CoinFlip.findOne({
         where: {
           groupChatId: groupId,
-          status: ['WAITING_CHALLENGER', 'WAITING_CHALLENGER_DEPOSIT', 'WAITING_EXECUTION'],
+          status: {
+            [Op.in]: ['WAITING_CHALLENGER', 'WAITING_CHALLENGER_DEPOSIT', 'WAITING_EXECUTION'],
+          },
         },
       });
 
