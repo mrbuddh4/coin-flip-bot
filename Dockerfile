@@ -2,7 +2,7 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies (Updated: 2026-03-08)
 COPY package.json ./
 COPY package-lock.json ./
 RUN npm install --production
