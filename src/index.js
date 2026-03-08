@@ -108,7 +108,7 @@ async function initBot() {
       try {
         const { models } = getDB();
         const sessionId = ctx.match[1];
-        const userId = ctx.from.id;
+        const userId = ctx.from.id; // Telegram user ID
 
         logger.info('start_flip_dm button clicked', { sessionId, userId });
 
@@ -119,9 +119,13 @@ async function initBot() {
           return;
         }
         
-        if (session.userId !== userId) {
-          logger.error('Session user mismatch', { sessionId, sessionUserId: session.userId, clickingUserId: userId });
-          await ctx.answerCbQuery('❌ Unauthorized');
+        // Ensure both are numbers for comparison
+        const sessionUserId = parseInt(session.userId);
+        const clickingUserId = parseInt(userId);
+        
+        if (sessionUserId !== clickingUserId) {
+          logger.error('Session user mismatch', { sessionId, sessionUserId, clickingUserId });
+          await ctx.answerCbQuery('❌ This button is for someone else');
           return;
         }
 
@@ -191,8 +195,17 @@ async function initBot() {
         const userId = ctx.from.id;
 
         const session = await models.BotSession.findByPk(sessionId);
-        if (!session || session.userId !== userId) {
+        if (!session) {
           await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+
+        // Ensure both are numbers for comparison
+        const sessionUserId = parseInt(session.userId);
+        const clickingUserId = parseInt(userId);
+        
+        if (sessionUserId !== clickingUserId) {
+          await ctx.answerCbQuery('❌ This button is for someone else');
           return;
         }
 
@@ -267,8 +280,17 @@ async function initBot() {
         const userId = ctx.from.id;
 
         const session = await models.BotSession.findByPk(sessionId);
-        if (!session || session.userId !== userId) {
+        if (!session) {
           await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+
+        // Ensure both are numbers for comparison
+        const sessionUserId = parseInt(session.userId);
+        const clickingUserId = parseInt(userId);
+        
+        if (sessionUserId !== clickingUserId) {
+          await ctx.answerCbQuery('❌ This button is for someone else');
           return;
         }
 
@@ -339,8 +361,17 @@ async function initBot() {
         const userId = ctx.from.id;
 
         const session = await models.BotSession.findByPk(sessionId);
-        if (!session || session.userId !== userId) {
+        if (!session) {
           await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+
+        // Ensure both are numbers for comparison
+        const sessionUserId = parseInt(session.userId);
+        const clickingUserId = parseInt(userId);
+        
+        if (sessionUserId !== clickingUserId) {
+          await ctx.answerCbQuery('❌ This button is for someone else');
           return;
         }
 
