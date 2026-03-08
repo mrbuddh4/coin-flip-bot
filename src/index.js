@@ -383,9 +383,15 @@ async function initBot() {
         logger.info('Token selected', { token: token.symbol, network: token.network });
 
         // Store selected token and prepare to ask for wager
-        session.data.tokenInfo = token;
+        // IMPORTANT: Must explicitly set and save for JSON field to persist
+        session.data = {
+          ...session.data,
+          tokenInfo: token
+        };
         session.currentStep = 'AWAITING_WAGER';
         await session.save();
+
+        logger.info('Session saved with token info', { tokenInfo: session.data.tokenInfo });
 
         // Ask for wager amount - edit the message
         await ctx.editMessageText(

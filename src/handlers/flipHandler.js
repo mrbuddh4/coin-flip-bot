@@ -104,7 +104,21 @@ class FlipHandler {
         return;
       }
 
+      logger.info('Session data before wager processing', { sessionData: session.data });
+
       const { tokenInfo, groupId } = session.data;
+
+      if (!tokenInfo) {
+        logger.error('Token info missing from session', { sessionId: session.id, sessionData: session.data });
+        await ctx.reply('❌ Token selection was lost. Please start over with /flip');
+        return;
+      }
+
+      if (!groupId) {
+        logger.error('Group ID missing from session', { sessionId: session.id, sessionData: session.data });
+        await ctx.reply('❌ Group context was lost. Please start over with /flip');
+        return;
+      }
 
       // Create flip record NOW (after wager confirmed)
       const flip = await models.CoinFlip.create({
