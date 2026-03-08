@@ -256,7 +256,11 @@ async function initBot() {
 
         logger.info('Flip challenge confirmed', { userId, flipId });
       } catch (error) {
-        logger.error('Error confirming flip', error);
+        logger.error('Error confirming flip', {
+          message: error.message,
+          stack: error.stack,
+          error: error.toString(),
+        });
         await ctx.answerCbQuery('❌ Error confirming challenge');
       }
     });
@@ -338,7 +342,11 @@ async function initBot() {
 
         logger.info('Flip challenge rejected', { userId, flipId });
       } catch (error) {
-        logger.error('Error rejecting flip', error);
+        logger.error('Error rejecting flip', {
+          message: error.message,
+          stack: error.stack,
+          error: error.toString(),
+        });
         await ctx.answerCbQuery('❌ Error rejecting challenge');
       }
     });
