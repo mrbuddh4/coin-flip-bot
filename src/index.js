@@ -704,6 +704,12 @@ const handlers = {
               await ctx.reply('❌ Flip not found');
               return;
             }
+
+            // Set the challengerId now (this was missing!)
+            flip.challengerId = userId;
+            flip.status = 'WAITING_CHALLENGER_DEPOSIT';
+            await flip.save();
+            logger.info('[start] Set challengerId on flip', { flipId: flip.id, challengerId: userId });
             
             const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const blockchainManager = getBlockchainManager();
