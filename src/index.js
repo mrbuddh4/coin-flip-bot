@@ -379,13 +379,14 @@ async function initBot() {
           return;
         }
 
-        const supportedTokens = await getSupportedTokensList();
-        logger.info('Supported tokens list', { count: supportedTokens.length, tokenIdx });
+        // Use the token list stored in the session to ensure consistent ordering
+        const supportedTokens = session.data.tokensList || (await getSupportedTokensList());
+        logger.info('Using tokens from session', { count: supportedTokens.length, tokenIdx });
         
         const token = supportedTokens[tokenIdx];
 
         if (!token) {
-          logger.error('Token not found at index', { tokenIdx, supportedTokens });
+          logger.error('Token not found at index', { tokenIdx, availableTokens: supportedTokens.length });
           await ctx.answerCbQuery('❌ Token not found');
           return;
         }
@@ -402,7 +403,7 @@ async function initBot() {
           `💰 <b>Enter Wager Amount</b>\n\n` +
           `Token: ${token.symbol}\n` +
           `Network: ${token.network}\n\n` +
-          `Just reply to this message with the amount.\n` +
+          `Just reply with the amount.\n` +
           `Example: <code>10</code> or <code>100.5</code>`,
           { parse_mode: 'HTML' }
         );
@@ -444,6 +445,11 @@ const handlers = {
           if (session && parseInt(session.userId) === userId) {
             // Valid flip session, send token selection
             const supportedTokens = await getSupportedTokensList();
+            
+            // Store the token list in the session to ensure consistent ordering
+            session.data.tokensList = supportedTokens;
+            await session.save();
+            
             const tokenButtons = supportedTokens.map((token, idx) => [
               Markup.button.callback(
                 `${token.symbol} (${token.network})`,
