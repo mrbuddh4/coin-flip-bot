@@ -454,6 +454,17 @@ async function initBot() {
         flip.challengerDepositConfirmed = true;
         await flip.save();
 
+        // Immediately edit message to remove button and show confirmation
+        try {
+          await ctx.editMessageText(
+            `✅ <b>Your Deposit Confirmed!</b>\n\n` +
+            (flip.creatorDepositConfirmed ? `🎉 Both players ready! Executing flip...` : `⏳ Waiting for the other player's deposit...`),
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          logger.warn('Failed to edit confirmation message', err.message);
+        }
+
         // Delete session  
         await session.destroy();
 
@@ -464,12 +475,6 @@ async function initBot() {
           // Execute the flip
           await ExecutionHandler.executeFlip(flipId, ctx);
         } else {
-          // Wait for creator deposit
-          await ctx.editMessageText(
-            `✅ <b>Your Deposit Confirmed!</b>\n\n` +
-            `⏳ Waiting for the other player's deposit...`,
-            { parse_mode: 'HTML' }
-          );
 
           // Notify creator in group
           try {
@@ -547,6 +552,17 @@ async function initBot() {
         flip.creatorDepositConfirmed = true;
         flip.status = 'WAITING_CHALLENGER';
         await flip.save();
+
+        // Immediately edit DM message to show confirmation (removes button, prevents re-clicking)
+        try {
+          await ctx.editMessageText(
+            `✅ <b>Your Deposit Confirmed!</b>\n\n` +
+            `🪙 Challenge posted to the group...`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          logger.warn('Failed to edit creator confirmation message', err.message);
+        }
 
         // Now post the challenge message to the group
         const userRecord = await models.User.findByPk(userId);
