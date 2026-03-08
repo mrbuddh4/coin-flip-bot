@@ -386,8 +386,9 @@ const handlers = {
           }
         );
       } catch (error) {
+        console.error('[FLIP_ERROR]', error.message, error.stack);
         logger.error('Error starting flip in DM', error);
-        await ctx.reply('❌ Error starting flip. Please try again.');
+        await ctx.reply(`❌ Error starting flip: ${error.message}`);
       }
     } else {
       // In group chat - show token selection (original behavior)
