@@ -307,20 +307,25 @@ class FlipHandler {
     try {
       const { models } = getDB();
       const challengerId = ctx.from.id;
-      const groupId = ctx.chat.id; // Store which group the button was clicked in
+      const groupId = ctx.chat.id;
+
+      logger.info('Challenger accepting flip', { challengerId, flipId, groupId });
 
       const flip = await models.CoinFlip.findByPk(flipId);
       if (!flip) {
+        logger.error('Flip not found on accept', { flipId });
         await ctx.answerCbQuery('❌ Flip not found or expired.');
         return;
       }
 
       if (flip.status !== 'WAITING_CHALLENGER') {
+        logger.warn('Flip not in WAITING_CHALLENGER status', { flipId, status: flip.status });
         await ctx.answerCbQuery('❌ This flip is no longer available.');
         return;
       }
 
       if (flip.creatorId === challengerId) {
+        logger.warn('Challenger is the creator', { challengerId, flipId });
         await ctx.answerCbQuery('❌ You cannot challenge your own flip.');
         return;
       }
@@ -328,6 +333,7 @@ class FlipHandler {
       // Get or create challenger user
       let user = await models.User.findByPk(challengerId);
       if (!user) {
+        logger.info('Creating new user for challenger', { challengerId });
         user = await models.User.create({
           telegramId: challengerId,
           username: ctx.from.username,
@@ -348,7 +354,7 @@ class FlipHandler {
       }).then(([session]) => {
         if (session.sessionType === 'LAST_GROUP_ACTIVITY') {
           session.data = { groupId };
-          session.save();
+          return session.save();
         }
       });
 
@@ -367,51 +373,56 @@ class FlipHandler {
         },
       });
 
+      logger.info('Created confirmation session for challenger', { sessionId: confirmSession.id });
+
       // Send confirmation prompt to challenger in DM
-      await ctx.telegram.sendMessage(
-        challengerId,
-        `🪙 <b>Coin Flip Challenge!</b>\n\n` +
-        `A player is challenging you to a flip:\n\n` +
-        `💰 <b>Wager:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
-        `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
-        `<b>How it works:</b>\n` +
-        `1️⃣ Both players send their wager to the bot\n` +
-        `2️⃣ Coin flips 🪙\n` +
-        `3️⃣ Winner takes the pot!\n\n` +
-        `⚠️ <b>Note:</b> By confirming, you agree to send <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard([
-            [
-              Markup.button.callback('✅ Accept', `confirm_flip_${confirmSession.id}`),
-              Markup.button.callback('❌ Reject', `reject_flip_${confirmSession.id}`),
-            ],
-          ]).reply_markup,
-        }
-      );
+      try {
+        await ctx.telegram.sendMessage(
+          challengerId,
+          `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+          `A player is challenging you to a flip:\n\n` +
+          `💰 <b>Wager:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+          `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
+          `<b>How it works:</b>\n` +
+          `1️⃣ Both players send their wager to the bot\n` +
+          `2️⃣ Coin flips 🪙\n` +
+          `3️⃣ Winner takes the pot!\n\n` +
+          `⚠️ <b>Note:</b> By confirming, you agree to send <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [
+                Markup.button.callback('✅ Accept', `confirm_flip_${confirmSession.id}`),
+                Markup.button.callback('❌ Reject', `reject_flip_${confirmSession.id}`),
+              ],
+            ]).reply_markup,
+          }
+        );
+        logger.info('Sent confirmation DM to challenger', { challengerId });
+      } catch (dmError) {
+        logger.error('Failed to send confirmation DM', { error: dmError.message, challengerId });
+        throw dmError;
+      }
 
       // Notify in group that challenger is reviewing
       await ctx.editMessageText(
         `🪙 <b>Challenger Found!</b>\n\n` +
         `⏳ Waiting for challenger to confirm in DM...`,
         {
-          chat_id: ctx.callbackQuery.message.chat.id,
-          message_id: ctx.callbackQuery.message.message_id,
           parse_mode: 'HTML',
         }
       );
 
-      await ctx.answerCbQuery('✅ Check your DMs to confirm the challenge!');
+      await ctx.answerCbQuery('✅ Challenge accepted! Check your DM.');
 
-      // Set timeout for confirmation (30 seconds to confirm)
-      setTimeout(() => {
-        this.handleConfirmationTimeout(flipId, 'challenger', confirmSession.id);
-      }, 30 * 1000);
-
-      logger.info('Challenge prompt sent', { challengerId, flipId });
+      logger.info('Flip acceptance complete', { flipId, challengerId });
     } catch (error) {
-      logger.error('Error accepting flip', error);
-      await ctx.answerCbQuery('❌ Error accepting challenge.');
+      logger.error('Error accepting flip', { error: error.message, stack: error.stack, flipId, userId: ctx.from.id });
+      try {
+        await ctx.answerCbQuery('❌ Error accepting challenge. Please try again.');
+      } catch (e) {
+        logger.error('Failed to send error callback', { error: e.message });
+      }
     }
   }
 
