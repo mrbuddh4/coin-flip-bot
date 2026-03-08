@@ -360,8 +360,11 @@ async function initBot() {
         const tokenIdx = parseInt(ctx.match[2]);
         const userId = ctx.from.id;
 
+        logger.info('Token selection clicked', { sessionId, tokenIdx, userId });
+
         const session = await models.BotSession.findByPk(sessionId);
         if (!session) {
+          logger.error('Session not found for token selection', { sessionId });
           await ctx.answerCbQuery('❌ Session expired');
           return;
         }
@@ -371,24 +374,30 @@ async function initBot() {
         const clickingUserId = parseInt(userId);
         
         if (sessionUserId !== clickingUserId) {
+          logger.error('User mismatch on token selection', { sessionUserId, clickingUserId });
           await ctx.answerCbQuery('❌ This button is for someone else');
           return;
         }
 
         const supportedTokens = await getSupportedTokensList();
+        logger.info('Supported tokens list', { count: supportedTokens.length, tokenIdx });
+        
         const token = supportedTokens[tokenIdx];
 
         if (!token) {
+          logger.error('Token not found at index', { tokenIdx, supportedTokens });
           await ctx.answerCbQuery('❌ Token not found');
           return;
         }
+
+        logger.info('Token selected', { token: token.symbol, network: token.network });
 
         // Store selected token and prepare to ask for wager
         session.data.tokenInfo = token;
         session.currentStep = 'AWAITING_WAGER';
         await session.save();
 
-        // Ask for wager amount right in the same chat (group or DM)
+        // Ask for wager amount - edit the message
         await ctx.editMessageText(
           `💰 <b>Enter Wager Amount</b>\n\n` +
           `Token: ${token.symbol}\n` +
@@ -397,7 +406,9 @@ async function initBot() {
           `Example: <code>10</code> or <code>100.5</code>`,
           { parse_mode: 'HTML' }
         );
-        await ctx.answerCbQuery('✅');
+        
+        logger.info('Message edited for wager input');
+        await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error selecting token', error);
         await ctx.answerCbQuery('❌ Error');
