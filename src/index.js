@@ -148,7 +148,7 @@ async function initBot() {
           }
         );
 
-        await ctx.answerCbQuery('✅ Token selection sent to your DM');
+        await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error starting flip in DM', error);
         await ctx.answerCbQuery('❌ Error');
