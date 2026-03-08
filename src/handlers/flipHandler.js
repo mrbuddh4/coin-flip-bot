@@ -315,6 +315,7 @@ class FlipHandler {
         currentStep: 'AWAITING_DEPOSIT',
         data: {
           flipId,
+          groupChatId: flip.groupChatId,
           wagerAmount: flip.wagerAmount,
         },
       });
@@ -369,6 +370,126 @@ class FlipHandler {
     } catch (error) {
       logger.error('Error accepting flip', error);
       await ctx.answerCbQuery('❌ Error accepting challenge.');
+    }
+  }
+
+  /**
+   * Process wager amount from DM flip flow
+   */
+  static async processDMWagerAmount(ctx, session) {
+    try {
+      const { models } = getDB();
+      const userId = ctx.from.id;
+      const wagerText = ctx.message.text.trim();
+
+      // Validate wager amount
+      if (!isValidNumber(wagerText)) {
+        await ctx.reply('❌ Please enter a valid number (e.g., 10 or 100.5)');
+        return;
+      }
+
+      const wagerAmount = parseFloat(wagerText);
+      if (wagerAmount <= 0) {
+        await ctx.reply('❌ Wager must be greater than 0.');
+        return;
+      }
+
+      const token = session.data.tokenInfo;
+      const groupChatId = session.data.groupChatId;
+
+      // Check for active flip in this group
+      const activeFlip = await models.CoinFlip.findOne({
+        where: {
+          groupChatId,
+          status: {
+            [Op.in]: ['WAITING_CHALLENGER', 'WAITING_CHALLENGER_DEPOSIT', 'WAITING_EXECUTION'],
+          },
+        },
+      });
+
+      if (activeFlip) {
+        await ctx.reply('⏳ A coin flip is already in progress in that group.');
+        return;
+      }
+
+      // Create or get creator user
+      let user = await models.User.findByPk(userId);
+      if (!user) {
+        user = await models.User.create({
+          telegramId: userId,
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        });
+      }
+
+      // Create flip record
+      const flip = await models.CoinFlip.create({
+        groupChatId,
+        creatorId: userId,
+        tokenNetwork: token.network,
+        tokenAddress: token.address,
+        tokenSymbol: token.symbol,
+        tokenDecimals: token.decimals,
+        wagerAmount: wagerAmount.toString(),
+        status: 'WAITING_CHALLENGER',
+      });
+
+      // Update session
+      session.data.flipId = flip.id;
+      session.currentStep = 'AWAITING_DEPOSIT';
+      await session.save();
+
+      // Get bot wallet for deposit
+      const blockchainManager = getBlockchainManager();
+      const botWalletAddress = blockchainManager.getBotWalletAddress(token.network);
+
+      // Send deposit instructions in DM
+      await ctx.reply(
+        `✅ Flip created! Wager: <b>${wagerAmount} ${token.symbol}</b>\n\n` +
+        `<b>Deposit Instructions:</b>\n` +
+        `Send <b>${wagerAmount} ${token.symbol}</b> to:\n` +
+        `<code>${botWalletAddress}</code>\n\n` +
+        `Once sent, reply with "confirmed"`,
+        { parse_mode: 'HTML' }
+      );
+
+      // Send challenge message to group
+      try {
+        const supportedTokens = Array.from(
+          new Map(
+            Object.entries(config.supportedTokens).map(([key, val]) => [val.symbol, val])
+          ).values()
+        );
+
+        const tokenButtons =  supportedTokens.map((t, idx) => [
+          Markup.button.callback(
+            `${t.symbol} (${t.network})`,
+            `select_dm_group_token_${flip.id}_${idx}`
+          ),
+        ]);
+
+        await ctx.telegram.sendMessage(
+          groupChatId,
+          `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+          `<a href="tg://user?id=${userId}">${user.firstName}</a> started a flip for <b>${wagerAmount} ${token.symbol}</b>\n\n` +
+          `⏰ Waiting for a challenger...`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+            ]).reply_markup,
+          }
+        );
+      } catch (groupError) {
+        logger.error('Failed to send challenge to group', groupError);
+        await ctx.reply('⚠️ Failed to send challenge to group. It may have removed the bot.');
+      }
+
+      logger.info('DM flip created', { userId, flipId: flip.id });
+    } catch (error) {
+      logger.error('Error processing DM wager', error);
+      await ctx.reply('❌ Error creating flip. Please try again.');
     }
   }
 }
