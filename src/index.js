@@ -37,6 +37,15 @@ async function initBot() {
     console.log('Creating Telegraf instance...');
     bot = new Telegraf(config.telegram.token);
 
+    // Set up bot commands menu
+    console.log('Setting up commands menu...');
+    await bot.telegram.setMyCommands([
+      { command: 'start', description: '🎲 Start the bot' },
+      { command: 'help', description: '❓ How to play' },
+      { command: 'stats', description: '📊 Your game statistics' },
+      { command: 'flip', description: '🪙 Start a coin flip' },
+    ]);
+
     // Middleware setup
     console.log('Setting up middleware...');
     bot.use(middleware.errorHandler);
@@ -46,6 +55,7 @@ async function initBot() {
     bot.start(handlers.start);
     bot.help(handlers.help);
     bot.command('stats', handlers.stats);
+    bot.command('flip', handlers.flip);
 
     // Admin commands
     AdminHandler.registerCommands(bot);
@@ -234,6 +244,40 @@ const handlers = {
     } catch (error) {
       logger.error('Error handling DM message', error);
       await ctx.reply('❌ An error occurred processing your message.');
+    }
+  },
+
+  flip: async (ctx) => {
+    if (ctx.chat.type === 'private') {
+      await ctx.reply(
+        '🪙 <b>Coin Flip Game</b>\n\n' +
+        'Use this command in a group chat to start a coin flip game with other members!',
+        { parse_mode: 'HTML' }
+      );
+    } else {
+      // In group chat - show token selection
+      const supportedTokens = await getSupportedTokensList();
+
+      if (supportedTokens.length === 0) {
+        await ctx.reply('⚠️ No tokens configured for this bot yet.');
+        return;
+      }
+
+      const inlineButtons = supportedTokens.map(token => [
+        Markup.button.callback(
+          `${token.symbol} (${token.network})`,
+          `start_flip_${token.id}`
+        ),
+      ]);
+
+      await ctx.reply(
+        '🪙 <b>Start a Coin Flip!</b>\n\n' +
+        'Select a token:',
+        {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(inlineButtons).reply_markup,
+        }
+      );
     }
   },
 };
