@@ -110,9 +110,18 @@ async function initBot() {
         const sessionId = ctx.match[1];
         const userId = ctx.from.id;
 
+        logger.info('start_flip_dm button clicked', { sessionId, userId });
+
         const session = await models.BotSession.findByPk(sessionId);
-        if (!session || session.userId !== userId) {
+        if (!session) {
+          logger.error('Session not found', { sessionId, userId });
           await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+        
+        if (session.userId !== userId) {
+          logger.error('Session user mismatch', { sessionId, sessionUserId: session.userId, clickingUserId: userId });
+          await ctx.answerCbQuery('❌ Unauthorized');
           return;
         }
 
@@ -543,6 +552,14 @@ const handlers = {
             groupId: ctx.chat.id,
           },
         });
+
+        logger.info('Created session for flip', { sessionId: session.id, userId });
+
+        if (!session || !session.id) {
+          logger.error('Session creation failed - no ID', { userId });
+          await ctx.reply('❌ Error creating session. Please try again.');
+          return;
+        }
 
         await ctx.reply(
           '🪙 <b>Start a Coin Flip!</b>\n\n' +
