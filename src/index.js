@@ -155,17 +155,6 @@ async function initBot() {
       }
     });
 
-    bot.action(/^start_flip_(.+)$/, async (ctx) => {
-      const tokenId = parseInt(ctx.match[1]);
-      const supportedTokens = await getSupportedTokensList();
-      const token = supportedTokens[tokenId];
-
-      if (token) {
-        await FlipHandler.startFlipInGroup(ctx, token);
-      }
-      await ctx.answerCbQuery();
-    });
-
     bot.action(/^accept_flip_(.+)$/, async (ctx) => {
       const flipId = ctx.match[1];
       const { models } = getDB();
