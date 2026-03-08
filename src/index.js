@@ -429,12 +429,11 @@ async function initBot() {
 
         // Verify deposit on blockchain
         const blockchainManager = getBlockchainManager();
-        const verification = await blockchainManager.verifyTokenDeposit(
-          userId,
+        const verification = await blockchainManager.verifyDeposit(
+          flip.tokenNetwork,
           flip.tokenAddress,
           flip.wagerAmount,
-          flip.tokenDecimals,
-          flip.tokenNetwork
+          flip.tokenDecimals
         );
 
         if (!verification.received) {
@@ -523,12 +522,11 @@ async function initBot() {
 
         // Verify deposit on blockchain
         const blockchainManager = getBlockchainManager();
-        const verification = await blockchainManager.verifyTokenDeposit(
-          userId,
+        const verification = await blockchainManager.verifyDeposit(
+          flip.tokenNetwork,
           flip.tokenAddress,
           flip.wagerAmount,
-          flip.tokenDecimals,
-          flip.tokenNetwork
+          flip.tokenDecimals
         );
 
         if (!verification.received) {
