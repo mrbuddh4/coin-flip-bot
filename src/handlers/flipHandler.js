@@ -120,7 +120,7 @@ class FlipHandler {
         return;
       }
 
-      // Create flip record NOW (after wager confirmed)
+      // Create flip record with WAITING_CREATOR_DEPOSIT status (won't post to group yet)
       const flip = await models.CoinFlip.create({
         groupChatId: groupId,
         creatorId: userId,
@@ -129,7 +129,7 @@ class FlipHandler {
         tokenSymbol: tokenInfo.symbol,
         tokenDecimals: tokenInfo.decimals,
         wagerAmount: wagerAmount.toString(),
-        status: 'WAITING_CHALLENGER',
+        status: 'WAITING_CREATOR_DEPOSIT',
       });
 
       // Get bot's wallet address for this network
@@ -146,38 +146,22 @@ class FlipHandler {
       };
       await session.save();
 
-      // NOW post the challenge message in the group with Accept button
-      const groupMessage = await ctx.telegram.sendMessage(
-        groupId,
-        `🪙 <b>Coin Flip Challenge!</b>\n\n` +
-        `<a href="tg://user?id=${userId}">${(await models.User.findByPk(userId))?.firstName || 'A player'}</a> started a flip for:\n\n` +
-        `💰 <b>${wagerAmount} ${tokenInfo.symbol}</b>\n` +
-        `🌐 Network: ${tokenInfo.network}\n\n` +
-        `⏰ Waiting for a challenger...`,
+      // Send deposit instructions to creator in DM with confirmation button (don't post to group yet)
+      const formattedWagerDisplay = parseFloat(wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+      await ctx.reply(
+        `💰 <b>Send Your Deposit</b>\n\n` +
+        `You have <b>3 minutes</b> to complete this.\n\n` +
+        `<b>Wager Amount:</b> ${formattedWagerDisplay} ${tokenInfo.symbol}\n` +
+        `<b>Network:</b> ${tokenInfo.network}\n\n` +
+        `📮 <b>Send to this address:</b>\n\n` +
+        `<code>${botWalletAddress}</code>\n\n` +
+        `Once sent, click the button below:`,
         {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+            [Markup.button.callback('✅ I Sent the Deposit', `creator_deposit_confirmed_${flip.id}`)],
           ]).reply_markup,
         }
-      );
-
-      // Save message ID to flip
-      flip.groupMessageId = groupMessage.message_id;
-      await flip.save();
-
-      // Send deposit instructions to creator in DM
-      const formattedWagerDisplay = parseFloat(wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-      await ctx.reply(
-        `✅ Wager confirmed: <b>${formattedWagerDisplay} ${tokenInfo.symbol}</b>\n\n` +
-        `<b>Step 2: Send tokens to this address</b>\n\n` +
-        `<code>${botWalletAddress}</code>\n\n` +
-        `Network: ${tokenInfo.network}\n` +
-        `Token: ${tokenInfo.symbol}\n` +
-        `Amount: ${formattedWagerDisplay}\n\n` +
-        `⏳ You have 3 minutes to complete this.\n\n` +
-        `Reply <code>confirmed</code> when you've sent the tokens.`,
-        { parse_mode: 'HTML' }
       );
 
       // Set timeout for creator deposit
@@ -185,7 +169,7 @@ class FlipHandler {
         this.handleDepositTimeout(flip.id, 'creator');
       }, config.bot.flipTimeoutSeconds * 1000);
 
-      logger.info('Wager confirmed and flip posted to group', { userId, groupId, wagerAmount });
+      logger.info('Flip created waiting for creator deposit', { userId, groupId, wagerAmount, flipId: flip.id });
     } catch (error) {
       logger.error('Error processing wager', { error: error.message, stack: error.stack, userId: ctx.from.id });
       await ctx.reply('❌ Error processing wager. Please try again.');

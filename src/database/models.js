@@ -65,8 +65,8 @@ const defineModels = (sequelize) => {
       defaultValue: false,
     },
     status: {
-      type: DataTypes.ENUM('WAITING_CHALLENGER', 'WAITING_CHALLENGER_DEPOSIT', 'WAITING_EXECUTION', 'COMPLETED', 'CANCELLED'),
-      defaultValue: 'WAITING_CHALLENGER',
+      type: DataTypes.ENUM('WAITING_CREATOR_DEPOSIT', 'WAITING_CHALLENGER', 'WAITING_CHALLENGER_DEPOSIT', 'WAITING_EXECUTION', 'COMPLETED', 'CANCELLED'),
+      defaultValue: 'WAITING_CREATOR_DEPOSIT',
     },
     creatorTimedOut: {
       type: DataTypes.BOOLEAN,

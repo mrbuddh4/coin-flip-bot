@@ -496,6 +496,99 @@ async function initBot() {
         await ctx.answerCbQuery('❌ Error confirming deposit');
       }
     });
+
+    // Handle creator deposit confirmation - posts challenge to group after creator deposit verified
+    bot.action(/^creator_deposit_confirmed_(.+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const flipId = ctx.match[1];
+        const userId = ctx.from.id;
+
+        logger.info('[creator_deposit_confirmed] Button clicked', { flipId, userId });
+
+        const flip = await models.CoinFlip.findByPk(flipId);
+        if (!flip) {
+          await ctx.answerCbQuery('❌ Flip not found');
+          return;
+        }
+
+        // Verify user is the creator
+        if (flip.creatorId !== userId) {
+          await ctx.answerCbQuery('❌ Only the creator can confirm this');
+          return;
+        }
+
+        logger.info('[creator_deposit_confirmed] Verifying creator deposit', { flipId, userId });
+        await ctx.answerCbQuery('⏳ Verifying deposit...');
+
+        // Verify deposit on blockchain
+        const blockchainManager = getBlockchainManager();
+        const verification = await blockchainManager.verifyTokenDeposit(
+          userId,
+          flip.tokenAddress,
+          flip.wagerAmount,
+          flip.tokenDecimals,
+          flip.tokenNetwork
+        );
+
+        if (!verification.received) {
+          logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId });
+          await ctx.reply(
+            `⏳ <b>Deposit not received yet</b>\n\n` +
+            `Expected: ${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+            `Received: ${verification.amount || '0'}\n\n` +
+            `Please verify the transaction and try again.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
+
+        // Mark creator deposit as confirmed
+        flip.creatorDepositConfirmed = true;
+        flip.status = 'WAITING_CHALLENGER';
+        await flip.save();
+
+        // Now post the challenge message to the group
+        const userRecord = await models.User.findByPk(userId);
+        const groupMessage = await ctx.telegram.sendMessage(
+          flip.groupChatId,
+          `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+          `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
+          `💰 <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n` +
+          `🌐 Network: ${flip.tokenNetwork}\n\n` +
+          `⏰ Waiting for a challenger...`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+            ]).reply_markup,
+          }
+        );
+
+        // Save message ID to flip
+        flip.groupMessageId = groupMessage.message_id;
+        await flip.save();
+
+        // Confirm to creator
+        await ctx.editMessageText(
+          `✅ <b>Your Deposit Confirmed!</b>\n\n` +
+          `Your challenge has been posted to the group. Waiting for a challenger...`,
+          { parse_mode: 'HTML' }
+        );
+
+        logger.info('[creator_deposit_confirmed] Challenge posted to group', { flipId, groupMessageId: groupMessage.message_id });
+      } catch (error) {
+        logger.error('Error confirming creator deposit', {
+          message: error.message,
+          stack: error.stack,
+          error: error.toString(),
+        });
+        await ctx.answerCbQuery('❌ Error confirming deposit');
+      }
+    });
+
     bot.action(/^start_flip_(.+)_(\d+)$/, async (ctx) => {
       try {
         const { models } = getDB();
