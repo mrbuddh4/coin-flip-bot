@@ -45,69 +45,36 @@ class FlipHandler {
         return;
       }
 
-      // Create CoinFlip record immediately so it can be referenced
-      const flip = await models.CoinFlip.create({
-        groupChatId: groupId,
-        creatorId: userId,
-        tokenNetwork: token.network,
-        tokenAddress: token.address,
-        tokenSymbol: token.symbol,
-        tokenDecimals: token.decimals,
-        wagerAmount: null, // Will be set when creator enters amount
-        status: 'WAITING_CREATOR_WAGER', // Waiting for creator to specify wager amount
-      });
-
-      // Store token and user info in session for tracking
+      // Store token and user info in session for tracking (flip will be created after wager entry)
       const session = await models.BotSession.create({
         userId,
-        coinFlipId: flip.id,
         sessionType: 'INITIATING',
         currentStep: 'AWAITING_WAGER',
         data: {
           tokenInfo: token,
           groupId,
-          flipId: flip.id,
         },
       });
 
-      // Create initial message in group with button linking to the flip
-      const groupMessage = await ctx.reply(
-        `🪙 <b>Coin Flip Challenge Started!</b>\n\n` +
-        `Player: <a href="tg://user?id=${userId}">${ctx.from.first_name}</a>\n` +
-        `Token: ${token.symbol}\n` +
-        `Wager: Pending...\n\n` +
-        `👇 Click below to accept the challenge!`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
-          ]).reply_markup,
-        }
-      );
-
-      // Save message ID to flip for later updates
-      flip.groupMessageId = groupMessage.message_id;
-      await flip.save();
-
-      // Send DM to initiator
+      // Send DM asking for wager amount (flip will be created in processWagerAmount)
       await ctx.telegram.sendMessage(
         userId,
         `Welcome to Coin Flip! 🪙\n\n` +
-        `You've initiated a coin flip for <b>${token.symbol}</b>\n\n` +
+        `You've started a coin flip for <b>${token.symbol}</b> in a group.\n\n` +
         `How much do you want to wager?\n` +
         `Reply with an amount (e.g., 10 for 10 ${token.symbol})`,
         { parse_mode: 'HTML' }
       );
 
-      logger.info('Coin flip started', { userId, groupId, token: token.symbol, flipId: flip.id });
+      logger.info('Coin flip initiated in group', { userId, groupId, token: token.symbol });
     } catch (error) {
-      logger.error('Error starting flip', error);
+      logger.error('Error starting flip in group', error);
       await ctx.reply('❌ Error starting coin flip. Please try again.');
     }
   }
 
   /**
-   * Process wager amount from user in DM
+   * Process wager amount from user in DM (for group flip initiated via /flip)
    */
   static async processWagerAmount(ctx) {
     try {
@@ -115,7 +82,7 @@ class FlipHandler {
       const userId = ctx.from.id;
       const amount = ctx.message.text.trim();
 
-      // Find active session
+      // Find active session from group-initiated flip
       const session = await models.BotSession.findOne({
         where: { userId, sessionType: 'INITIATING' },
         order: [['createdAt', 'DESC']],
@@ -131,20 +98,15 @@ class FlipHandler {
         return;
       }
 
-      // Get or create user
-      let user = await models.User.findByPk(userId);
-      if (!user) {
-        user = await models.User.create({
-          telegramId: userId,
-          username: ctx.from.username,
-          firstName: ctx.from.first_name,
-          lastName: ctx.from.last_name,
-        });
+      const wagerAmount = parseFloat(amount);
+      if (wagerAmount <= 0) {
+        await ctx.reply('❌ Wager must be greater than 0.');
+        return;
       }
 
       const { tokenInfo, groupId } = session.data;
 
-      // Create flip record
+      // Create flip record NOW (after wager confirmed)
       const flip = await models.CoinFlip.create({
         groupChatId: groupId,
         creatorId: userId,
@@ -152,7 +114,7 @@ class FlipHandler {
         tokenAddress: tokenInfo.address,
         tokenSymbol: tokenInfo.symbol,
         tokenDecimals: tokenInfo.decimals,
-        wagerAmount: amount,
+        wagerAmount: wagerAmount.toString(),
         status: 'WAITING_CHALLENGER',
       });
 
@@ -160,24 +122,60 @@ class FlipHandler {
       const blockchainManager = getBlockchainManager();
       const botWalletAddress = blockchainManager.getBotWalletAddress(tokenInfo.network);
 
-      // Update session
+      // Update session with flip ID
+      session.coinFlipId = flip.id;
       session.currentStep = 'AWAITING_DEPOSIT';
       session.data = {
         ...session.data,
         flipId: flip.id,
-        currentStep: 'AWAITING_DEPOSIT',
-        wagerAmount: amount,
+        wagerAmount: wagerAmount.toString(),
       };
       await session.save();
 
-      // Send deposit instructions pointing to bot wallet
+      // NOW post the challenge message in the group with Accept button
+      const groupMessage = await ctx.telegram.sendMessage(
+        groupId,
+        `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+        `<a href="tg://user?id=${userId}">${(await models.User.findByPk(userId))?.firstName || 'A player'}</a> started a flip for:\n\n` +
+        `💰 <b>${wagerAmount} ${tokenInfo.symbol}</b>\n` +
+        `🌐 Network: ${tokenInfo.network}\n\n` +
+        `⏰ Waiting for a challenger...`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+          ]).reply_markup,
+        }
+      );
+
+      // Save message ID to flip
+      flip.groupMessageId = groupMessage.message_id;
+      await flip.save();
+
+      // Send deposit instructions to creator in DM
       await ctx.reply(
-        `✅ Wager confirmed: <b>${amount} ${tokenInfo.symbol}</b>\n\n` +
+        `✅ Wager confirmed: <b>${wagerAmount} ${tokenInfo.symbol}</b>\n\n` +
         `<b>Step 2: Send tokens to this address</b>\n\n` +
         `<code>${botWalletAddress}</code>\n\n` +
         `Network: ${tokenInfo.network}\n` +
         `Token: ${tokenInfo.symbol}\n` +
-        `Amount: ${amount}\n\n` +
+        `Amount: ${wagerAmount}\n\n` +
+        `⏳ You have 3 minutes to complete this.\n\n` +
+        `Reply <code>confirmed</code> when you've sent the tokens.`,
+        { parse_mode: 'HTML' }
+      );
+
+      // Set timeout for creator deposit
+      setTimeout(() => {
+        this.handleDepositTimeout(flip.id, 'creator');
+      }, config.bot.flipTimeoutSeconds * 1000);
+
+      logger.info('Wager confirmed and flip posted to group', { userId, groupId, wagerAmount });
+    } catch (error) {
+      logger.error('Error processing wager', error);
+      await ctx.reply('❌ Error processing wager. Please try again.');
+    }
+  }
         `⏳ You have 3 minutes to complete this.\n\n` +
         `Reply <code>confirmed</code> when you've sent the tokens.`,
         { parse_mode: 'HTML' }
