@@ -3,8 +3,9 @@ FROM node:18-alpine
 WORKDIR /app
 
 # Install dependencies
-COPY package*.json ./
-RUN npm ci --omit=dev
+COPY package.json ./
+COPY package-lock.json ./
+RUN npm install --production
 
 # Copy source code
 COPY src ./src
