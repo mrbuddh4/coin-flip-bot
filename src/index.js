@@ -556,6 +556,8 @@ const handlers = {
       const userId = ctx.from.id;
       const message = ctx.message.text.trim().toLowerCase();
 
+      logger.info('DM message received', { userId, message });
+
       // Find active session
       const activeSession = await models.BotSession.findOne({
         where: { userId },
@@ -563,36 +565,48 @@ const handlers = {
       });
 
       if (!activeSession) {
+        logger.warn('No active session found', { userId });
         await ctx.reply('❌ No active session. Use /flip in a group first.');
         return;
       }
 
+      logger.info('Found active session', { sessionId: activeSession.id, sessionType: activeSession.sessionType, currentStep: activeSession.currentStep });
+
       // Handle INITIATING sessions (wager entry for /flip)
       if (activeSession.sessionType === 'INITIATING') {
         if (activeSession.currentStep === 'AWAITING_WAGER') {
+          logger.info('Processing wager amount for INITIATING session');
           await FlipHandler.processWagerAmount(ctx);
         } else if (activeSession.currentStep === 'AWAITING_DEPOSIT') {
           if (message === 'confirmed') {
+            logger.info('Confirming creator deposit for INITIATING session');
             await FlipHandler.confirmCreatorDeposit(ctx);
           } else {
             await ctx.reply('Please reply with "confirmed" when you\'ve sent the tokens.');
           }
+        } else {
+          logger.warn('INITIATING session but unexpected currentStep', { currentStep: activeSession.currentStep });
         }
       } else if (activeSession.sessionType === 'INITIATING_DM_FLIP') {
         if (activeSession.currentStep === 'AWAITING_WAGER') {
+          logger.info('Processing DM wager for INITIATING_DM_FLIP session');
           await FlipHandler.processDMWagerAmount(ctx, activeSession);
         }
       } else if (activeSession.sessionType === 'CONFIRMING_DEPOSIT') {
         if (message === 'confirmed') {
+          logger.info('Confirming challenger deposit');
           await handleChallengerDepositConfirm(ctx);
         } else {
           await ctx.reply('Please reply with "confirmed" when you\'ve sent the tokens.');
         }
       } else if (activeSession.sessionType === 'CLAIMING_WINNINGS') {
+        logger.info('Processing payout address');
         await ExecutionHandler.processPayoutAddress(ctx);
+      } else {
+        logger.warn('Unknown session type', { sessionType: activeSession.sessionType });
       }
     } catch (error) {
-      logger.error('Error handling DM message', error);
+      logger.error('Error handling DM message', { error: error.message, stack: error.stack, userId: ctx.from.id });
       await ctx.reply('❌ An error occurred processing your message.');
     }
   },
