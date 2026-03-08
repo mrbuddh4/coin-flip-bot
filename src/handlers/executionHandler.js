@@ -2,6 +2,7 @@ const { Markup } = require('telegraf');
 const { getDB } = require('../database');
 const { getBlockchainManager } = require('../blockchain/manager');
 const { performCoinFlip, formatAddress } = require('../utils/helpers');
+const config = require('../config');
 const logger = require('../utils/logger');
 
 class ExecutionHandler {
@@ -35,10 +36,15 @@ class ExecutionHandler {
 
       // Send result to group chat
       const winnerName = result === 0 ? flip.creator.firstName : flip.challenger.firstName;
+      const totalPool = flip.wagerAmount * 2;
+      const winnerPrize = (totalPool * 0.9).toFixed(flip.tokenDecimals);
+      
       await ctx.telegram.sendMessage(
         flip.groupChatId,
         `🎲 <b>Coin Flip Result: ${winnerName} WINS!</b>\n\n` +
-        `winnings: <b>${flip.wagerAmount * 2} ${flip.tokenSymbol}</b>\n\n` +
+        `💰 <b>Winnings: ${winnerPrize} ${flip.tokenSymbol} (90%)</b>\n` +
+        `📊 Total Pool: ${totalPool} ${flip.tokenSymbol}\n` +
+        `⚡ Fees: 10% (5% dev + 5% burn)\n\n` +
         `Click below to claim!`,
         {
           parse_mode: 'HTML',
@@ -52,7 +58,7 @@ class ExecutionHandler {
       await ctx.telegram.sendMessage(
         winnerId,
         `🎉 <b>YOU WON!</b>\n\n` +
-        `Prize: ${flip.wagerAmount * 2} ${flip.tokenSymbol}\n\n` +
+        `Prize: ${winnerPrize} ${flip.tokenSymbol} (90% of pool)\n\n` +
         `Go back to the group chat and click "Claim Winnings"\n` +
         `Or reply with your wallet address here to receive automatically.`,
         { parse_mode: 'HTML' }
@@ -98,10 +104,13 @@ class ExecutionHandler {
       });
 
       // Send DM asking for wallet address
+      const totalPool = flip.wagerAmount * 2;
+      const winnerPrize = (totalPool * 0.9).toFixed(flip.tokenDecimals);
+      
       await ctx.telegram.sendMessage(
         userId,
         `💰 <b>Claim Your Winnings!</b>\n\n` +
-        `Amount: <b>${flip.wagerAmount * 2} ${flip.tokenSymbol}</b>\n\n` +
+        `Amount: <b>${winnerPrize} ${flip.tokenSymbol} (90% of pool)</b>\n\n` +
         `Please reply with your ${flip.tokenNetwork} wallet address.`,
         { parse_mode: 'HTML' }
       );
@@ -154,20 +163,49 @@ class ExecutionHandler {
       // Send payout from bot wallet
       await ctx.reply(`⏳ Processing payout...`);
 
-      const prizeAmount = (parseFloat(flip.wagerAmount) * 2).toString();
+      const totalPool = parseFloat(flip.wagerAmount) * 2;
+      const winnerAmount = (totalPool * 0.9).toFixed(flip.tokenDecimals);
+      const devAmount = (totalPool * 0.05).toFixed(flip.tokenDecimals);
+      const burnAmount = (totalPool * 0.05).toFixed(flip.tokenDecimals);
+
+      const blockchainManager = getBlockchainManager();
+      const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+
+      // Get dev wallet and burn address for this network
+      const devWallet = flip.tokenNetwork === 'EVM' ? config.evm.devWallet : config.solana.devWallet;
+      const burnAddress = flip.tokenNetwork === 'EVM' 
+        ? '0x0000000000000000000000000000000000000001'
+        : '11111111111111111111111111111111';  // Null address for Solana
 
       try {
-        const blockchainManager = getBlockchainManager();
-        const result = await blockchainManager.sendWinnings(
+        // Send winner payout (90%)
+        const winnerTx = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
           flip.tokenAddress,
           walletAddress,
-          prizeAmount,
+          winnerAmount,
           flip.tokenDecimals
         );
 
-        // Record transaction
-        const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+        // Send dev fee (5%)
+        const devTx = await blockchainManager.sendWinnings(
+          flip.tokenNetwork,
+          flip.tokenAddress,
+          devWallet,
+          devAmount,
+          flip.tokenDecimals
+        );
+
+        // Send burn fee (5%)
+        const burnTx = await blockchainManager.sendWinnings(
+          flip.tokenNetwork,
+          flip.tokenAddress,
+          burnAddress,
+          burnAmount,
+          flip.tokenDecimals
+        );
+
+        // Record transactions
         await models.Transaction.create({
           coinFlipId: flip.id,
           userId,
@@ -175,23 +213,51 @@ class ExecutionHandler {
           network: flip.tokenNetwork,
           tokenAddress: flip.tokenAddress,
           tokenSymbol: flip.tokenSymbol,
-          amount: prizeAmount,
+          amount: winnerAmount,
           fromAddress: botWalletAddress,
           toAddress: walletAddress,
-          txHash: result.txHash,
+          txHash: winnerTx.txHash,
+          status: 'CONFIRMED',
+        });
+
+        await models.Transaction.create({
+          coinFlipId: flip.id,
+          userId: null,
+          type: 'FEE_DEV',
+          network: flip.tokenNetwork,
+          tokenAddress: flip.tokenAddress,
+          tokenSymbol: flip.tokenSymbol,
+          amount: devAmount,
+          fromAddress: botWalletAddress,
+          toAddress: devWallet,
+          txHash: devTx.txHash,
+          status: 'CONFIRMED',
+        });
+
+        await models.Transaction.create({
+          coinFlipId: flip.id,
+          userId: null,
+          type: 'FEE_BURN',
+          network: flip.tokenNetwork,
+          tokenAddress: flip.tokenAddress,
+          tokenSymbol: flip.tokenSymbol,
+          amount: burnAmount,
+          fromAddress: botWalletAddress,
+          toAddress: burnAddress,
+          txHash: burnTx.txHash,
           status: 'CONFIRMED',
         });
 
         // Mark as claimed
         flip.claimedByWinner = true;
-        flip.winningTxHash = result.txHash;
+        flip.winningTxHash = winnerTx.txHash;
         flip.status = 'COMPLETED';
         await flip.save();
 
         // Update user stats
         const user = await models.User.findByPk(userId);
         if (user) {
-          user.totalWon = (parseFloat(user.totalWon) + parseFloat(prizeAmount)).toString();
+          user.totalWon = (parseFloat(user.totalWon) + parseFloat(winnerAmount)).toString();
           await user.save();
         }
 
@@ -201,12 +267,15 @@ class ExecutionHandler {
 
         await ctx.reply(
           `✅ <b>Payout Complete!</b>\n\n` +
-          `Amount: ${prizeAmount} ${flip.tokenSymbol}\n` +
-          `Tx: <code>${result.txHash}</code>`,
+          `Your Winnings (90%): <b>${winnerAmount} ${flip.tokenSymbol}</b>\n` +
+          `Tx: <code>${winnerTx.txHash}</code>\n\n` +
+          `📊 <b>Fee Distribution:</b>\n` +
+          `Dev Fee (5%): ${devAmount} ${flip.tokenSymbol}\n` +
+          `Burn Fee (5%): ${burnAmount} ${flip.tokenSymbol}`,
           { parse_mode: 'HTML' }
         );
 
-        logger.info('Payout processed', { userId, flipId, txHash: result.txHash });
+        logger.info('Payout processed', { userId, flipId, txHash: winnerTx.txHash });
       } catch (payoutError) {
         logger.error('Payout failed', payoutError);
         await ctx.reply(
