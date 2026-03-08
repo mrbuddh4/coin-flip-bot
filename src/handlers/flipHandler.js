@@ -68,7 +68,7 @@ class FlipHandler {
 
       logger.info('Coin flip initiated in group', { userId, groupId, token: token.symbol });
     } catch (error) {
-      logger.error('Error starting flip in group', error);
+      logger.error('Error starting flip in group', { error: error.message, stack: error.stack });
       await ctx.reply('❌ Error starting coin flip. Please try again.');
     }
   }
@@ -172,7 +172,7 @@ class FlipHandler {
 
       logger.info('Wager confirmed and flip posted to group', { userId, groupId, wagerAmount });
     } catch (error) {
-      logger.error('Error processing wager', error);
+      logger.error('Error processing wager', { error: error.message, stack: error.stack, userId: ctx.from.id });
       await ctx.reply('❌ Error processing wager. Please try again.');
     }
   }

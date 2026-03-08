@@ -411,7 +411,7 @@ async function initBot() {
         logger.info('Message edited for wager input');
         await ctx.answerCbQuery();
       } catch (error) {
-        logger.error('Error selecting token', error);
+        logger.error('Error selecting token', { error: error.message, stack: error.stack });
         await ctx.answerCbQuery('❌ Error');
       }
     });
