@@ -512,8 +512,8 @@ async function initBot() {
           return;
         }
 
-        // Verify user is the creator
-        if (flip.creatorId !== userId) {
+        // Verify user is the creator (ensure both are numbers for comparison)
+        if (parseInt(flip.creatorId) !== parseInt(userId)) {
           await ctx.answerCbQuery('❌ Only the creator can confirm this');
           return;
         }
