@@ -91,6 +91,30 @@ class BlockchainManager {
   }
 
   /**
+   * Verify deposit with retries (accounts for blockchain indexing delay)
+   */
+  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 4, retryDelayMs = 2000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals);
+      
+      if (result.received) {
+        console.log(`Deposit verified on attempt ${attempt}/${maxRetries}`);
+        return result;
+      }
+
+      // If not last attempt, wait before retrying
+      if (attempt < maxRetries) {
+        console.log(`Deposit not found on attempt ${attempt}/${maxRetries}, retrying in ${retryDelayMs}ms...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      }
+    }
+
+    // After all retries, return the last result
+    console.log('Deposit verification failed after all retries');
+    return await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals);
+  }
+
+  /**
    * Send winnings to winner from bot wallet
    */
   async sendWinnings(network, tokenAddress, winnerAddress, amount, decimals) {

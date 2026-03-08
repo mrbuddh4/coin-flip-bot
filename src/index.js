@@ -427,9 +427,9 @@ async function initBot() {
         logger.info('[deposit_confirmed] Verifying challenger deposit', { flipId, userId });
         await ctx.answerCbQuery('⏳ Verifying deposit...');
 
-        // Verify deposit on blockchain
+        // Verify deposit on blockchain (with retries for blockchain indexing)
         const blockchainManager = getBlockchainManager();
-        const verification = await blockchainManager.verifyDeposit(
+        const verification = await blockchainManager.verifyDepositWithRetry(
           flip.tokenNetwork,
           flip.tokenAddress,
           flip.wagerAmount,
@@ -520,9 +520,9 @@ async function initBot() {
         logger.info('[creator_deposit_confirmed] Verifying creator deposit', { flipId, userId });
         await ctx.answerCbQuery('⏳ Verifying deposit...');
 
-        // Verify deposit on blockchain
+        // Verify deposit on blockchain (with retries for blockchain indexing)
         const blockchainManager = getBlockchainManager();
-        const verification = await blockchainManager.verifyDeposit(
+        const verification = await blockchainManager.verifyDepositWithRetry(
           flip.tokenNetwork,
           flip.tokenAddress,
           flip.wagerAmount,
