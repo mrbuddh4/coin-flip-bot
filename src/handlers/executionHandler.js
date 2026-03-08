@@ -19,12 +19,32 @@ class ExecutionHandler {
         return;
       }
 
+      logger.info('[executeFlip] Starting execution', { 
+        flipId, 
+        creatorId: flip.creatorId, 
+        challengerId: flip.challengerId,
+        status: flip.status 
+      });
+
       // Fetch creator and challenger user records
       const creator = await models.User.findByPk(flip.creatorId);
       const challenger = await models.User.findByPk(flip.challengerId);
 
+      logger.info('[executeFlip] User lookup complete', { 
+        creatorFound: !!creator, 
+        challengerFound: !!challenger,
+        creatorId: flip.creatorId,
+        challengerId: flip.challengerId
+      });
+
       if (!creator || !challenger) {
-        logger.warn('Creator or challenger user not found', { flipId, creatorId: flip.creatorId, challengerId: flip.challengerId });
+        logger.warn('Creator or challenger user not found', { 
+          flipId, 
+          creatorId: flip.creatorId, 
+          challengerId: flip.challengerId,
+          creatorFound: !!creator,
+          challengerFound: !!challenger
+        });
         return;
       }
 
