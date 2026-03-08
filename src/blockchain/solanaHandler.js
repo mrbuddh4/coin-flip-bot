@@ -18,9 +18,18 @@ const config = require('../config');
 class SolanaHandler {
   constructor() {
     this.connection = new Connection(config.solana.rpcUrl, 'confirmed');
-    this.wallet = Keypair.fromSecretKey(
-      new Uint8Array(JSON.parse(config.solana.privateKey))
-    );
+    
+    // Handle both JSON array and Base58 string formats for private key
+    let secretKey;
+    try {
+      // Try JSON array format first
+      secretKey = new Uint8Array(JSON.parse(config.solana.privateKey));
+    } catch (e) {
+      // If JSON parsing fails, assume it's Base58
+      secretKey = bs58.decode(config.solana.privateKey);
+    }
+    
+    this.wallet = Keypair.fromSecretKey(secretKey);
   }
 
   /**
