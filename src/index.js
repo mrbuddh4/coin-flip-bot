@@ -61,6 +61,39 @@ async function initBot() {
     // Admin commands
     AdminHandler.registerCommands(bot);
 
+    // Handle bot joining a group
+    bot.on('my_chat_member', async (ctx) => {
+      try {
+        const status = ctx.update.my_chat_member.new_chat_member.status;
+        const chat = ctx.chat;
+
+        // Bot was added to a group
+        if (status === 'member' && chat.type !== 'private') {
+          const botInfo = await ctx.telegram.getMe();
+          
+          await ctx.reply(
+            `🤖 <b>Welcome to Coin Flip Bot!</b>\n\n` +
+            `I'm here to run fair, transparent coin flip games!\n\n` +
+            `<b>How it works:</b>\n` +
+            `1️⃣ Members start flips in their chat with me\n` +
+            `2️⃣ I send a challenge here with their wager\n` +
+            `3️⃣ Someone accepts the challenge\n` +
+            `4️⃣ I flip a coin 🪙\n` +
+            `5️⃣ Winner claims their prize!\n\n` +
+            `💬 Click the button below to start!`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.url('💬 Start Flip with Bot', `https://t.me/${botInfo.username}`)]
+              ]).reply_markup,
+            }
+          );
+        }
+      } catch (error) {
+        logger.error('Error handling bot group join', error);
+      }
+    });
+
     // Message handlers for DMs
     bot.on('text', async (ctx) => {
       if (ctx.chat.type === 'private') {
