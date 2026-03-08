@@ -368,9 +368,13 @@ class FlipHandler {
       // Format wager amount to remove unnecessary decimals
       const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
+      // Get challenger's username or name
+      const challenger = await models.User.findByPk(challengerId);
+      const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
+
       await ctx.editMessageText(
         `🪙 <b>Challenger Found!</b>\n\n` +
-        `<a href="tg://user?id=${challengerId}">Challenger</a> is reviewing the flip.\n\n` +
+        `<a href="tg://user?id=${challengerId}">${challengerDisplay}</a> is reviewing the flip.\n\n` +
         `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
         `🌐 <b>Network:</b> ${flip.tokenNetwork}`,
         {
