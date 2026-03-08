@@ -183,30 +183,64 @@ async function initBot() {
         const sessionId = ctx.match[1];
         const userId = ctx.from.id;
 
+        logger.info('[confirm_flip] Handler called', { sessionId, userId });
+
         const session = await models.BotSession.findByPk(sessionId);
         if (!session) {
+          logger.info('[confirm_flip] Session not found', { sessionId });
           await ctx.answerCbQuery('❌ Session expired');
           return;
         }
+
+        logger.info('[confirm_flip] Session found', {
+          sessionId,
+          userId: session.userId,
+          currentStep: session.currentStep,
+          sessionType: session.sessionType,
+          hasData: !!session.data,
+        });
 
         // Ensure both are numbers for comparison
         const sessionUserId = parseInt(session.userId);
         const clickingUserId = parseInt(userId);
         
         if (sessionUserId !== clickingUserId) {
+          logger.info('[confirm_flip] User ID mismatch', { sessionUserId, clickingUserId });
           await ctx.answerCbQuery('❌ This button is for someone else');
           return;
         }
 
         if (session.currentStep !== 'AWAITING_CONFIRMATION') {
+          logger.info('[confirm_flip] Wrong step', {
+            currentStep: session.currentStep,
+            expected: 'AWAITING_CONFIRMATION',
+          });
           await ctx.answerCbQuery('❌ Challenge already confirmed or rejected');
           return;
         }
 
-        const flipId = session.data.flipId;
+        const flipId = session.data?.flipId;
+        logger.info('[confirm_flip] Got flipId from session', { flipId, hasFlipId: !!flipId });
+
+        if (!flipId) {
+          logger.warn('[confirm_flip] No flipId in session.data', { sessionData: session.data });
+          await ctx.answerCbQuery('❌ Missing flip information');
+          return;
+        }
+
         const flip = await models.CoinFlip.findByPk(flipId);
+        logger.info('[confirm_flip] Retrieved flip', {
+          flipId,
+          flipExists: !!flip,
+          flipStatus: flip?.status,
+        });
 
         if (!flip || flip.status !== 'WAITING_CHALLENGER') {
+          logger.warn('[confirm_flip] Flip not found or wrong status', {
+            flipExists: !!flip,
+            flipStatus: flip?.status,
+            expectedStatus: 'WAITING_CHALLENGER',
+          });
           await ctx.answerCbQuery('❌ Flip no longer available');
           return;
         }
@@ -215,14 +249,17 @@ async function initBot() {
         flip.challengerId = userId;
         flip.status = 'WAITING_CHALLENGER_DEPOSIT';
         await flip.save();
+        logger.info('[confirm_flip] Flip updated', { flipId, newStatus: flip.status });
 
         // Update session to awaiting deposit
         session.currentStep = 'AWAITING_DEPOSIT';
         await session.save();
+        logger.info('[confirm_flip] Session updated', { sessionId, newStep: session.currentStep });
 
         // Get bot wallet and send deposit instructions
         const blockchainManager = getBlockchainManager();
         const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+        logger.info('[confirm_flip] Got wallet', { network: flip.tokenNetwork, address: botWalletAddress });
 
         await ctx.editMessageText(
           `🎮 <b>Challenge Confirmed!</b>\n\n` +
