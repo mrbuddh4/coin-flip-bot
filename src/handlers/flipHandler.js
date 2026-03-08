@@ -32,7 +32,7 @@ class FlipHandler {
         where: {
           groupChatId: groupId,
           status: {
-            [Op.in]: ['WAITING_CHALLENGER', 'WAITING_CHALLENGER_DEPOSIT', 'WAITING_EXECUTION'],
+            [Op.in]: ['WAITING_CHALLENGER', 'WAITING_CHALLENGER_DEPOSIT', 'WAITING_EXECUTION', 'WAITING_CREATOR_WAGER'],
           },
         },
       });
@@ -45,34 +45,49 @@ class FlipHandler {
         return;
       }
 
-      // Store token and user info in session for DM flow
+      // Create CoinFlip record immediately so it can be referenced
+      const flip = await models.CoinFlip.create({
+        groupChatId: groupId,
+        creatorId: userId,
+        tokenNetwork: token.network,
+        tokenAddress: token.address,
+        tokenSymbol: token.symbol,
+        tokenDecimals: token.decimals,
+        wagerAmount: null, // Will be set when creator enters amount
+        status: 'WAITING_CREATOR_WAGER', // Waiting for creator to specify wager amount
+      });
+
+      // Store token and user info in session for tracking
       const session = await models.BotSession.create({
         userId,
+        coinFlipId: flip.id,
         sessionType: 'INITIATING',
-        currentStep: 'SELECTING_TOKEN',
+        currentStep: 'AWAITING_WAGER',
         data: {
           tokenInfo: token,
           groupId,
+          flipId: flip.id,
         },
       });
 
-      // Create initial message in group
+      // Create initial message in group with button linking to the flip
       const groupMessage = await ctx.reply(
         `🪙 <b>Coin Flip Challenge Started!</b>\n\n` +
         `Player: <a href="tg://user?id=${userId}">${ctx.from.first_name}</a>\n` +
-        `Token: ${token.symbol}\n\n` +
+        `Token: ${token.symbol}\n` +
+        `Wager: Pending...\n\n` +
         `👇 Click below to accept the challenge!`,
         {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('Accept Challenge', `accept_flip_${session.id}`)],
+            [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
           ]).reply_markup,
         }
       );
 
-      // Save message ID for later updates
-      session.data.groupMessageId = groupMessage.message_id;
-      await session.save();
+      // Save message ID to flip for later updates
+      flip.groupMessageId = groupMessage.message_id;
+      await flip.save();
 
       // Send DM to initiator
       await ctx.telegram.sendMessage(
@@ -84,7 +99,7 @@ class FlipHandler {
         { parse_mode: 'HTML' }
       );
 
-      logger.info('Coin flip started', { userId, groupId, token: token.symbol });
+      logger.info('Coin flip started', { userId, groupId, token: token.symbol, flipId: flip.id });
     } catch (error) {
       logger.error('Error starting flip', error);
       await ctx.reply('❌ Error starting coin flip. Please try again.');

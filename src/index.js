@@ -114,15 +114,16 @@ async function initBot() {
     });
 
     bot.action(/^accept_flip_(.+)$/, async (ctx) => {
-      const sessionId = ctx.match[1];
+      const flipId = ctx.match[1];
       const { models } = getDB();
-      const flipSession = await models.BotSession.findByPk(sessionId);
-
-      if (flipSession && flipSession.data.flipId) {
-        await FlipHandler.acceptFlip(ctx, flipSession.data.flipId);
-      } else {
-        await ctx.answerCbQuery('❌ Session expired');
+      
+      const flip = await models.CoinFlip.findByPk(flipId);
+      if (!flip) {
+        await ctx.answerCbQuery('❌ Flip not found or expired.');
+        return;
       }
+
+      await FlipHandler.acceptFlip(ctx, flipId);
     });
 
     bot.action(/^claim_winnings_(.+)$/, async (ctx) => {
@@ -281,6 +282,78 @@ async function initBot() {
         await ctx.answerCbQuery('❌ Error rejecting challenge');
       }
     });
+    bot.action(/^group_flip_token_(.+)_(\d+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const sessionId = ctx.match[1];
+        const tokenIdx = parseInt(ctx.match[2]);
+        const userId = ctx.from.id;
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || session.userId !== userId) {
+          await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+
+        const supportedTokens = await getSupportedTokensList();
+        const token = supportedTokens[tokenIdx];
+
+        if (!token) {
+          await ctx.answerCbQuery('❌ Token not found');
+          return;
+        }
+
+        // In a group - start flip directly
+        await FlipHandler.startFlipInGroup(ctx, token);
+        await session.destroy(); // Clean up selection session
+        await ctx.answerCbQuery('✅ Flip started!');
+      } catch (error) {
+        logger.error('Error selecting token in group', error);
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
+    bot.action(/^dm_flip_token_(.+)_(\d+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const sessionId = ctx.match[1];
+        const tokenIdx = parseInt(ctx.match[2]);
+        const userId = ctx.from.id;
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || session.userId !== userId) {
+          await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+
+        const supportedTokens = await getSupportedTokensList();
+        const token = supportedTokens[tokenIdx];
+
+        if (!token) {
+          await ctx.answerCbQuery('❌ Token not found');
+          return;
+        }
+
+        // Update session with token info and wait for wager amount
+        session.data.tokenInfo = token;
+        session.currentStep = 'AWAITING_WAGER';
+        await session.save();
+
+        await ctx.editMessageText(
+          `💰 <b>Enter Wager Amount</b>\n\n` +
+          `Token: ${token.symbol}\n` +
+          `Network: ${token.network}\n\n` +
+          `Reply in this chat with the amount you want to wager (e.g., 10, 100.5)`,
+          { parse_mode: 'HTML' }
+        );
+        await ctx.answerCbQuery('✅ Token selected');
+      } catch (error) {
+        logger.error('Error selecting token in DM', error);
+        await ctx.answerCbQuery('❌ Error selecting token');
+      }
+    });
+
+    // Keep old select_dm_token handler for backwards compatibility but mark as deprecated
     bot.action(/^select_dm_token_(.+)_(\d+)$/, async (ctx) => {
       try {
         const { models } = getDB();
@@ -324,7 +397,7 @@ async function initBot() {
               `❌ <b>No Group Detected</b>\n\n` +
               `To start a flip, you need to be a member of a group where this bot is active.\n\n` +
               `1️⃣ Add this bot to a group\n` +
-              `2️⃣ Send any message in that group\n` +
+              `2️⃣ Send /flip in that group\n` +
               `3️⃣ Try /flip again`,
               { parse_mode: 'HTML' }
             );
@@ -516,12 +589,11 @@ const handlers = {
         return;
       }
 
-      // Ensure user exists in database before creating session
       const { models } = getDB();
       const userId = ctx.from.id;
       const chatType = ctx.chat.type;
 
-      // Get or create user
+      // Ensure user exists
       let user = await models.User.findByPk(userId);
       if (!user) {
         user = await models.User.create({
@@ -532,32 +604,82 @@ const handlers = {
         });
       }
 
-      // Now create the session
-      const session = await models.BotSession.create({
-        userId,
-        sessionType: 'INITIATING_DM_FLIP',
-        currentStep: 'SELECTING_TOKEN',
-        data: { 
-          chatType,
-          groupChatId: chatType === 'private' ? null : ctx.chat.id,
-        },
-      });
+      if (chatType === 'private') {
+        // ========== DM FLOW ==========
+        // In DM, we need a group context. Try to use LAST_GROUP_ACTIVITY
+        const lastGroupSession = await models.BotSession.findOne({
+          where: {
+            userId,
+            sessionType: 'LAST_GROUP_ACTIVITY',
+          },
+        });
 
-      const tokenButtons = supportedTokens.map((token, idx) => [
-        Markup.button.callback(
-          `${token.symbol} (${token.network})`,
-          `select_dm_token_${session.id}_${idx}`
-        ),
-      ]);
-
-      await ctx.reply(
-        '🪙 <b>Start a Coin Flip!</b>\n\n' +
-        'Select a token:',
-        {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard(tokenButtons).reply_markup,
+        if (!lastGroupSession || !lastGroupSession.data.groupId) {
+          await ctx.reply(
+            `❌ <b>No Group Detected</b>\n\n` +
+            `To start a flip, you need to:\n\n` +
+            `1️⃣ Add this bot to a group\n` +
+            `2️⃣ Send /flip in that group (or use /help to learn more)\n` +
+            `3️⃣ Or click "Accept Challenge" on a flip in a group to establish group context`,
+            { parse_mode: 'HTML' }
+          );
+          return;
         }
-      );
+
+        // User has a group - show token selection for DM flow
+        const session = await models.BotSession.create({
+          userId,
+          sessionType: 'INITIATING_DM_FLIP',
+          currentStep: 'SELECTING_TOKEN',
+          data: {
+            groupChatId: lastGroupSession.data.groupId,
+          },
+        });
+
+        const tokenButtons = supportedTokens.map((token, idx) => [
+          Markup.button.callback(
+            `${token.symbol} (${token.network})`,
+            `dm_flip_token_${session.id}_${idx}`
+          ),
+        ]);
+
+        await ctx.reply(
+          '🪙 <b>Start a Coin Flip!</b>\n\n' +
+          'Select a token:',
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard(tokenButtons).reply_markup,
+          }
+        );
+      } else {
+        // ========== GROUP FLOW ==========
+        // In a group, directly show tokens to start a flip
+        const session = await models.BotSession.create({
+          userId,
+          sessionType: 'INITIATING',
+          currentStep: 'SELECTING_TOKEN',
+          data: {
+            chatType: ctx.chat.type,
+            groupId: ctx.chat.id,
+          },
+        });
+
+        const tokenButtons = supportedTokens.map((token, idx) => [
+          Markup.button.callback(
+            `${token.symbol} (${token.network})`,
+            `group_flip_token_${session.id}_${idx}`
+          ),
+        ]);
+
+        await ctx.reply(
+          '🪙 <b>Start a Coin Flip!</b>\n\n' +
+          'Select a token:',
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard(tokenButtons).reply_markup,
+          }
+        );
+      }
     } catch (error) {
       console.error('[FLIP_ERROR]', error.message, error.stack);
       logger.error('Error starting flip', error);
