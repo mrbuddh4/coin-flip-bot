@@ -45,7 +45,11 @@ function parseSupportedTokens(tokenString) {
   tokenList.forEach(token => {
     const parts = token.trim().split(':');
     if (parts.length === 4) {
-      const [network, address, decimals, symbol] = parts;
+      let [network, address, decimals, symbol] = parts;
+      // Normalize network names to match database enum values
+      if (network?.toUpperCase() === 'SOLANA') {
+        network = 'Solana';
+      }
       const key = `${network}:${address}`;
       tokens[key] = {
         network,
