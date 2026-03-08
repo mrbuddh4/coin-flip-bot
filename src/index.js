@@ -168,10 +168,6 @@ async function initBot() {
       await FlipHandler.acceptFlip(ctx, flipId);
     });
 
-    bot.action(/^claim_winnings_(.+)$/, async (ctx) => {
-      await ExecutionHandler.claimWinnings(ctx, ctx.match[1]);
-    });
-
     bot.action(/^cancel_flip_(.+)$/, async (ctx) => {
       await ExecutionHandler.cancelFlip(ctx, ctx.match[1]);
     });

@@ -28,44 +28,73 @@ class ExecutionHandler {
       const result = performCoinFlip();
       const winnerId = result === 0 ? flip.creatorId : flip.challengerId;
       const flipResultEnum = result === 0 ? 'CREATOR' : 'CHALLENGER';
+      const winnerDepositAddress = result === 0 ? flip.creatorDepositWalletAddress : flip.challengerDepositWalletAddress;
+
+      // Calculate winnings
+      const totalPool = parseFloat(flip.wagerAmount) * 2;
+      const winnerPrize = totalPool * 0.9; // 90% to winner, 10% fees
+      const winnerPrizeFormatted = winnerPrize.toLocaleString('en-US', { maximumFractionDigits: 6 });
+
+      // Send winnings to winner automatically
+      let winningTxHash = null;
+      try {
+        const blockchainManager = getBlockchainManager();
+        const sendResult = await blockchainManager.sendWinnings(
+          flip.tokenNetwork,
+          flip.tokenAddress,
+          winnerDepositAddress,
+          winnerPrize.toString(),
+          flip.tokenDecimals
+        );
+        winningTxHash = sendResult.txHash;
+        logger.info('Winnings sent to winner', { flipId, winnerId, txHash: winningTxHash, amount: winnerPrize });
+      } catch (sendError) {
+        logger.error('Error sending winnings', { flipId, winnerId, error: sendError.message });
+        // Continue even if send fails, we still want to record the flip result
+      }
 
       // Update flip record with result
       flip.flipResult = flipResultEnum;
       flip.winnerId = winnerId;
+      flip.winningTxHash = winningTxHash;
+      flip.claimedByWinner = true; // Mark as claimed since we sent it automatically
       flip.status = 'COMPLETED';
       await flip.save();
 
+      // Generate transaction link based on network
+      const txLink = flip.tokenNetwork === 'EVM'
+        ? `https://etherscan.io/tx/${winningTxHash}`
+        : `https://solscan.io/tx/${winningTxHash}`;
+
       // Send result to group chat
       const winnerName = result === 0 ? flip.creator.firstName : flip.challenger.firstName;
-      const totalPool = parseFloat(flip.wagerAmount) * 2;
-      const winnerPrize = (totalPool * 0.9).toLocaleString('en-US', { maximumFractionDigits: 6 });
-      
+      const txLinkMessage = winningTxHash 
+        ? `\n🔗 <a href="${txLink}">View Transaction</a>`
+        : `\n⏳ Processing winnings...`;
+
       await ctx.telegram.sendMessage(
         flip.groupChatId,
         `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
-        `💰 <b>Winnings: ${winnerPrize} ${flip.tokenSymbol} (90%)</b>\n` +
+        `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
         `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-        `⚡ Fees: 10% (5% dev + 5% burn)\n\n` +
-        `${winnerName} needs to claim their winnings!`,
+        `⚡ Fees: 10% (5% dev + 5% burn)${txLinkMessage}`,
         {
           parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('Claim Winnings', `claim_winnings_${flipId}`)],
-          ]).reply_markup,
         }
       );
 
       // Notify winner in DM
       await ctx.telegram.sendMessage(
         winnerId,
-        `🎉 <b>YOU WON!</b>\n\n` +
-        `Prize: ${winnerPrize} ${flip.tokenSymbol} (90% of pool)\n\n` +
-        `Go back to the group chat and click "Claim Winnings"\n` +
-        `Or reply with your wallet address here to receive automatically.`,
+        `🎉 <b>CONGRATULATIONS!</b>\n\n` +
+        `You won ${winnerPrizeFormatted} ${flip.tokenSymbol} (90% of pool)!\n\n` +
+        (winningTxHash 
+          ? `✅ Winnings sent automatically!\n🔗 <a href="${txLink}">View Transaction</a>`
+          : `⏳ Processing your winnings... You'll receive them shortly.`),
         { parse_mode: 'HTML' }
       );
 
-      logger.info('Flip executed successfully', { flipId, result: flipResultEnum, winnerId, winnerName });
+      logger.info('Flip executed successfully', { flipId, result: flipResultEnum, winnerId, winnerName, txHash: winningTxHash });
     } catch (error) {
       logger.error('Error executing flip', { 
         flipId,
