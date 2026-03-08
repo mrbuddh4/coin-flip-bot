@@ -279,7 +279,7 @@ class FlipHandler {
   }
 
   /**
-   * Accept flip and start challenger flow
+   * Accept flip and immediately show confirmation prompt in DM
    */
   static async acceptFlip(ctx, flipId) {
     try {
@@ -303,6 +303,17 @@ class FlipHandler {
         return;
       }
 
+      // Get or create challenger user
+      let user = await models.User.findByPk(challengerId);
+      if (!user) {
+        user = await models.User.create({
+          telegramId: challengerId,
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        });
+      }
+
       // Record the group where this button was clicked as user's active group
       await models.BotSession.findOrCreate({
         where: {
@@ -319,56 +330,48 @@ class FlipHandler {
         }
       });
 
-      // Set challenger
-      flip.challengerId = challengerId;
-      flip.status = 'WAITING_CHALLENGER_DEPOSIT';
-      await flip.save();
-
-      // Create session for challenger
-      const session = await models.BotSession.create({
+      // Create confirmation session for challenger
+      const confirmSession = await models.BotSession.create({
         userId: challengerId,
         coinFlipId: flipId,
         sessionType: 'CONFIRMING_DEPOSIT',
-        currentStep: 'AWAITING_DEPOSIT',
+        currentStep: 'AWAITING_CONFIRMATION',
         data: {
           flipId,
           groupChatId: flip.groupChatId,
           wagerAmount: flip.wagerAmount,
+          tokenSymbol: flip.tokenSymbol,
+          tokenNetwork: flip.tokenNetwork,
         },
       });
 
-      // Get or create challenger user
-      let user = await models.User.findByPk(challengerId);
-      if (!user) {
-        user = await models.User.create({
-          telegramId: challengerId,
-          username: ctx.from.username,
-          firstName: ctx.from.first_name,
-          lastName: ctx.from.last_name,
-        });
-      }
-
-      // Generate deposit wallet for challenger
-      const blockchainManager = getBlockchainManager();
-      const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
-
-      // Send DM to challenger
+      // Send confirmation prompt to challenger in DM
       await ctx.telegram.sendMessage(
         challengerId,
-        `🎮 <b>Challenge Accepted!</b>\n\n` +
-        `You're challenging a coin flip for:\n` +
-        `<b>${flip.wagerAmount} ${flip.tokenSymbol}</b>\n\n` +
-        `Send tokens to this address:\n\n` +
-        `<code>${botWalletAddress}</code>\n\n` +
-        `⏳ You have 3 minutes.\n\n` +
-        `Reply <code>confirmed</code> when sent.`,
-        { parse_mode: 'HTML' }
+        `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+        `A player is challenging you to a flip:\n\n` +
+        `💰 <b>Wager:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+        `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
+        `<b>How it works:</b>\n` +
+        `1️⃣ Both players send their wager to the bot\n` +
+        `2️⃣ Coin flips 🪙\n` +
+        `3️⃣ Winner takes the pot!\n\n` +
+        `⚠️ <b>Note:</b> By confirming, you agree to send <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [
+              Markup.button.callback('✅ Accept', `confirm_flip_${confirmSession.id}`),
+              Markup.button.callback('❌ Reject', `reject_flip_${confirmSession.id}`),
+            ],
+          ]).reply_markup,
+        }
       );
 
-      // Notify in group
+      // Notify in group that challenger is reviewing
       await ctx.editMessageText(
         `🪙 <b>Challenger Found!</b>\n\n` +
-        `Waiting for both players to confirm deposits...`,
+        `⏳ Waiting for challenger to confirm in DM...`,
         {
           chat_id: ctx.callbackQuery.message.chat.id,
           message_id: ctx.callbackQuery.message.message_id,
@@ -376,17 +379,67 @@ class FlipHandler {
         }
       );
 
-      await ctx.answerCbQuery('✅ Challenge accepted! Check your DMs.');
+      await ctx.answerCbQuery('✅ Check your DMs to confirm the challenge!');
 
-      // Set timeout for challenger deposit
+      // Set timeout for confirmation (30 seconds to confirm)
       setTimeout(() => {
-        this.handleDepositTimeout(flipId, 'challenger');
-      }, config.bot.flipTimeoutSeconds * 1000);
+        this.handleConfirmationTimeout(flipId, 'challenger', confirmSession.id);
+      }, 30 * 1000);
 
-      logger.info('Challenge accepted', { challengerId, flipId });
+      logger.info('Challenge prompt sent', { challengerId, flipId });
     } catch (error) {
       logger.error('Error accepting flip', error);
       await ctx.answerCbQuery('❌ Error accepting challenge.');
+    }
+  }
+
+  /**
+   * Handle confirmation timeout
+   */
+  static async handleConfirmationTimeout(flipId, role, sessionId) {
+    try {
+      const { models } = getDB();
+      const session = await models.BotSession.findByPk(sessionId);
+      
+      if (!session || session.currentStep !== 'AWAITING_CONFIRMATION') {
+        return; // Already confirmed or rejected
+      }
+
+      const flip = await models.CoinFlip.findByPk(flipId);
+      if (!flip) return;
+
+      // Delete the confirmation session
+      await session.destroy();
+
+      // Reset flip if challenger timesout during confirmation
+      if (flip.status === 'WAITING_CHALLENGER_DEPOSIT') {
+        flip.challengerId = null;
+        flip.status = 'WAITING_CHALLENGER';
+        await flip.save();
+
+        // Notify in group
+        try {
+          await Models.telegram.editMessageText(
+            `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+            `<a href="tg://user?id=${flip.creatorId}">${(await models.User.findByPk(flip.creatorId))?.firstName || 'Player'}</a> started a flip for <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>\n\n` +
+            `⏰ Waiting for a challenger...`,
+            {
+              chat_id: flip.groupChatId,
+              message_id: flip.groupMessageId,
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[{ text: 'Accept Challenge', callback_data: `accept_flip_${flip.id}` }]],
+              },
+            }
+          );
+        } catch (err) {
+          logger.warn('Failed to update group message on confirmation timeout', err.message);
+        }
+
+        logger.info('Challenge confirmation timeout', { flipId, role });
+      }
+    } catch (error) {
+      logger.error('Error handling confirmation timeout', error);
     }
   }
 

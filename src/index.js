@@ -133,7 +133,154 @@ async function initBot() {
       await ExecutionHandler.cancelFlip(ctx, ctx.match[1]);
     });
 
-    // DM flip flow: Select token and initiate flip
+    // Confirm flip challenge from DM prompt
+    bot.action(/^confirm_flip_(.+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const sessionId = ctx.match[1];
+        const userId = ctx.from.id;
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || session.userId !== userId) {
+          await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+
+        if (session.currentStep !== 'AWAITING_CONFIRMATION') {
+          await ctx.answerCbQuery('❌ Challenge already confirmed or rejected');
+          return;
+        }
+
+        const flipId = session.data.flipId;
+        const flip = await models.CoinFlip.findByPk(flipId);
+
+        if (!flip || flip.status !== 'WAITING_CHALLENGER') {
+          await ctx.answerCbQuery('❌ Flip no longer available');
+          return;
+        }
+
+        // Update flip status to waiting for deposit
+        flip.challengerId = userId;
+        flip.status = 'WAITING_CHALLENGER_DEPOSIT';
+        await flip.save();
+
+        // Update session to awaiting deposit
+        session.currentStep = 'AWAITING_DEPOSIT';
+        await session.save();
+
+        // Get bot wallet and send deposit instructions
+        const blockchainManager = getBlockchainManager();
+        const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+
+        await ctx.editMessageText(
+          `🎮 <b>Challenge Confirmed!</b>\n\n` +
+          `You have <b>3 minutes</b> to send your wager.\n\n` +
+          `💰 <b>Wager Amount:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+          `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
+          `📮 <b>Send to this address:</b>\n\n` +
+          `<code>${botWalletAddress}</code>\n\n` +
+          `✅ Reply <code>confirmed</code> when sent.`,
+          {
+            parse_mode: 'HTML',
+          }
+        );
+
+        await ctx.answerCbQuery('✅ Challenge confirmed! Send your wager tokens.');
+
+        // Update group message
+        try {
+          await ctx.telegram.editMessageText(
+            flip.groupChatId,
+            flip.groupMessageId,
+            null,
+            `🪙 <b>Challenger Found!</b>\n\n` +
+            `⏳ Waiting for both players to send deposits...\n` +
+            `⏰ Timeout in 3 minutes`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          logger.warn('Failed to update group message on confirmation', err.message);
+        }
+
+        logger.info('Flip challenge confirmed', { userId, flipId });
+      } catch (error) {
+        logger.error('Error confirming flip', error);
+        await ctx.answerCbQuery('❌ Error confirming challenge');
+      }
+    });
+
+    // Reject flip challenge from DM prompt
+    bot.action(/^reject_flip_(.+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const sessionId = ctx.match[1];
+        const userId = ctx.from.id;
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || session.userId !== userId) {
+          await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+
+        if (session.currentStep !== 'AWAITING_CONFIRMATION') {
+          await ctx.answerCbQuery('❌ Challenge already confirmed or rejected');
+          return;
+        }
+
+        const flipId = session.data.flipId;
+        const flip = await models.CoinFlip.findByPk(flipId);
+
+        if (!flip) {
+          await ctx.answerCbQuery('❌ Flip not found');
+          return;
+        }
+
+        // Reset flip to waiting for challenger
+        if (flip.status === 'WAITING_CHALLENGER') {
+          // Nothing to do, just delete session
+        } else if (flip.status.includes('CHALLENGER')) {
+          flip.challengerId = null;
+          flip.status = 'WAITING_CHALLENGER';
+          await flip.save();
+        }
+
+        // Delete confirmation session
+        await session.destroy();
+
+        // Update group message
+        try {
+          await ctx.telegram.editMessageText(
+            flip.groupChatId,
+            flip.groupMessageId,
+            null,
+            `🪙 <b>Coin Flip Challenge</b>\n\n` +
+            `<a href="tg://user?id=${flip.creatorId}">A player</a> started a flip for <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>\n\n` +
+            `⏰ Waiting for another challenger...`,
+            { 
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[{ text: 'Accept Challenge', callback_data: `accept_flip_${flip.id}` }]],
+              },
+            }
+          );
+        } catch (err) {
+          logger.warn('Failed to update group message on rejection', err.message);
+        }
+
+        await ctx.editMessageText(
+          `❌ Challenge rejected.\n\n` +
+          `Waiting for another challenger in the group...`,
+          { parse_mode: 'HTML' }
+        );
+
+        await ctx.answerCbQuery('Challenge rejected');
+
+        logger.info('Flip challenge rejected', { userId, flipId });
+      } catch (error) {
+        logger.error('Error rejecting flip', error);
+        await ctx.answerCbQuery('❌ Error rejecting challenge');
+      }
+    });
     bot.action(/^select_dm_token_(.+)_(\d+)$/, async (ctx) => {
       try {
         const { models } = getDB();
