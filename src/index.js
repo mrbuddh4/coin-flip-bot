@@ -26,15 +26,23 @@ async function initBot() {
 
     // Initialize blockchain
     console.log('Initializing blockchain...');
-    initBlockchainManager();
+    try {
+      initBlockchainManager();
+    } catch (blockchainErr) {
+      console.error('[BLOCKCHAIN_INIT_ERROR]', blockchainErr.message);
+      throw blockchainErr;
+    }
 
     // Create bot instance
+    console.log('Creating Telegraf instance...');
     bot = new Telegraf(config.telegram.token);
 
     // Middleware setup
+    console.log('Setting up middleware...');
     bot.use(middleware.errorHandler);
 
     // Commands
+    console.log('Registering commands...');
     bot.start(handlers.start);
     bot.help(handlers.help);
     bot.command('stats', handlers.stats);
@@ -84,6 +92,8 @@ async function initBot() {
     logger.info('Bot initialized successfully');
     console.log('✅ Bot ready!');
   } catch (error) {
+    console.error('[ERROR DETAILS]', error);
+    console.error('[ERROR STACK]', error.stack);
     logger.error('Failed to initialize bot', error);
     process.exit(1);
   }
