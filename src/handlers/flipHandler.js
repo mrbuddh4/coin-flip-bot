@@ -16,6 +16,17 @@ class FlipHandler {
       const groupId = ctx.chat.id;
       const userId = ctx.from.id;
 
+      // Ensure user exists before creating session
+      let user = await models.User.findByPk(userId);
+      if (!user) {
+        user = await models.User.create({
+          telegramId: userId,
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        });
+      }
+
       // Check if there's already an active flip in this group
       const activeFlip = await models.CoinFlip.findOne({
         where: {

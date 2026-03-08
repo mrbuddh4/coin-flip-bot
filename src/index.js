@@ -516,11 +516,23 @@ const handlers = {
         return;
       }
 
-      // Create session to track this flip attempt (works in both group and DM)
+      // Ensure user exists in database before creating session
       const { models } = getDB();
       const userId = ctx.from.id;
       const chatType = ctx.chat.type;
-      
+
+      // Get or create user
+      let user = await models.User.findByPk(userId);
+      if (!user) {
+        user = await models.User.create({
+          telegramId: userId,
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        });
+      }
+
+      // Now create the session
       const session = await models.BotSession.create({
         userId,
         sessionType: 'INITIATING_DM_FLIP',
