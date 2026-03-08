@@ -176,22 +176,6 @@ class FlipHandler {
       await ctx.reply('❌ Error processing wager. Please try again.');
     }
   }
-        `⏳ You have 3 minutes to complete this.\n\n` +
-        `Reply <code>confirmed</code> when you've sent the tokens.`,
-        { parse_mode: 'HTML' }
-      );
-
-      // Set timeout for creator deposit
-      setTimeout(() => {
-        this.handleDepositTimeout(flip.id, 'creator');
-      }, config.bot.flipTimeoutSeconds * 1000);
-
-      logger.info('Wager amount processed', { userId, amount, tokenSymbol: tokenInfo.symbol });
-    } catch (error) {
-      logger.error('Error processing wager', error);
-      await ctx.reply('❌ Error processing wager. Please try again.');
-    }
-  }
 
   /**
    * Confirm deposit received from creator
