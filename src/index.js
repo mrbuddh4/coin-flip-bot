@@ -475,8 +475,45 @@ const handlers = {
       const { models } = getDB();
       const userId = ctx.from.id;
       
-      // Check if this is a flip session start (from the deeplink button)
+      // Check if this is a flip confirmation (from the challenger deeplink)
       const startParam = ctx.startPayload;
+      if (startParam && startParam.startsWith('confirm_')) {
+        const sessionId = startParam.replace('confirm_', '');
+        
+        try {
+          const session = await models.BotSession.findByPk(sessionId);
+          if (session && parseInt(session.userId) === userId && session.currentStep === 'AWAITING_CONFIRMATION') {
+            // Valid confirmation session
+            const flip = await models.CoinFlip.findByPk(session.data.flipId);
+            
+            await ctx.reply(
+              `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+              `A player is challenging you to a flip:\n\n` +
+              `💰 <b>Wager:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+              `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
+              `<b>How it works:</b>\n` +
+              `1️⃣ Both players send their wager to the bot\n` +
+              `2️⃣ Coin flips 🪙\n` +
+              `3️⃣ Winner takes the pot!\n\n` +
+              `⚠️ <b>Note:</b> By confirming, you agree to send <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [
+                    Markup.button.callback('✅ Accept', `confirm_flip_${sessionId}`),
+                    Markup.button.callback('❌ Reject', `reject_flip_${sessionId}`),
+                  ],
+                ]).reply_markup,
+              }
+            );
+            return;
+          }
+        } catch (error) {
+          logger.error('Error handling confirmation start parameter', { error: error.message, sessionId });
+        }
+      }
+
+      // Check if this is a flip session start (from the deeplink button)
       if (startParam && startParam.startsWith('flip_')) {
         const sessionId = startParam.replace('flip_', '');
         

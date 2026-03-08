@@ -375,45 +375,24 @@ class FlipHandler {
 
       logger.info('Created confirmation session for challenger', { sessionId: confirmSession.id });
 
-      // Send confirmation prompt to challenger in DM
-      try {
-        await ctx.telegram.sendMessage(
-          challengerId,
-          `🪙 <b>Coin Flip Challenge!</b>\n\n` +
-          `A player is challenging you to a flip:\n\n` +
-          `💰 <b>Wager:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
-          `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
-          `<b>How it works:</b>\n` +
-          `1️⃣ Both players send their wager to the bot\n` +
-          `2️⃣ Coin flips 🪙\n` +
-          `3️⃣ Winner takes the pot!\n\n` +
-          `⚠️ <b>Note:</b> By confirming, you agree to send <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [
-                Markup.button.callback('✅ Accept', `confirm_flip_${confirmSession.id}`),
-                Markup.button.callback('❌ Reject', `reject_flip_${confirmSession.id}`),
-              ],
-            ]).reply_markup,
-          }
-        );
-        logger.info('Sent confirmation DM to challenger', { challengerId });
-      } catch (dmError) {
-        logger.error('Failed to send confirmation DM', { error: dmError.message, challengerId });
-        throw dmError;
-      }
+      // Update the group message with a button to confirm in DM (deeplink)
+      const botUsername = (await ctx.telegram.getMe()).username;
+      const deeplink = `https://t.me/${botUsername}?start=confirm_${confirmSession.id}`;
 
-      // Notify in group that challenger is reviewing
       await ctx.editMessageText(
         `🪙 <b>Challenger Found!</b>\n\n` +
-        `⏳ Waiting for challenger to confirm in DM...`,
+        `<a href="tg://user?id=${challengerId}">Challenger</a> is reviewing the flip.\n\n` +
+        `💰 <b>Wager:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+        `🌐 <b>Network:</b> ${flip.tokenNetwork}`,
         {
           parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.url('🔗 Confirm in DM', deeplink)],
+          ]).reply_markup,
         }
       );
 
-      await ctx.answerCbQuery('✅ Challenge accepted! Check your DM.');
+      await ctx.answerCbQuery('✅ Check your DM to confirm the challenge!');
 
       logger.info('Flip acceptance complete', { flipId, challengerId });
     } catch (error) {
