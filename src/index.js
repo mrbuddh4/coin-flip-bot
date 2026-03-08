@@ -684,37 +684,50 @@ const handlers = {
         
         try {
           const session = await models.BotSession.findByPk(sessionId);
+          logger.info('[start] Confirm deeplink clicked', { sessionId, userId, sessionFound: !!session, currentStep: session?.currentStep });
+          
           if (session && parseInt(session.userId) === userId && session.currentStep === 'AWAITING_CONFIRMATION') {
-            // Valid confirmation session
+            // Valid confirmation session - show deposit address immediately
             const flip = await models.CoinFlip.findByPk(session.data.flipId);
             
-            // Format wager amount to remove unnecessary decimals
+            if (!flip) {
+              await ctx.reply('❌ Flip not found');
+              return;
+            }
+            
             const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+            const blockchainManager = getBlockchainManager();
+            const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
 
+            // Update session step
+            session.currentStep = 'AWAITING_DEPOSIT';
+            await session.save();
+
+            // Send deposit instructions directly with button
             await ctx.reply(
-              `🪙 <b>Coin Flip Challenge!</b>\n\n` +
-              `A player is challenging you to a flip:\n\n` +
-              `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-              `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
-              `<b>How it works:</b>\n` +
-              `1️⃣ Both players send their wager to the bot\n` +
-              `2️⃣ Coin flips 🪙\n` +
-              `3️⃣ Winner takes the pot!\n\n` +
-              `⚠️ <b>Note:</b> By confirming, you agree to send <b>${formattedWager} ${flip.tokenSymbol}</b>`,
+              `💰 <b>Send Your Deposit</b>\n\n` +
+              `You have <b>3 minutes</b> to complete this.\n\n` +
+              `<b>Wager Amount:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+              `<b>Network:</b> ${flip.tokenNetwork}\n\n` +
+              `📮 <b>Send to this address:</b>\n\n` +
+              `<code>${botWalletAddress}</code>\n\n` +
+              `Once sent, click the button below:`,
               {
                 parse_mode: 'HTML',
                 reply_markup: Markup.inlineKeyboard([
-                  [
-                    Markup.button.callback('✅ Accept', `confirm_flip_${sessionId}`),
-                    Markup.button.callback('❌ Reject', `reject_flip_${sessionId}`),
-                  ],
+                  [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${sessionId}`)],
                 ]).reply_markup,
               }
             );
             return;
+          } else if (session) {
+            logger.warn('[start] Confirmation session state mismatch', { userId, sessionUserId: session.userId, currentStep: session.currentStep });
+            await ctx.reply('❌ This challenge has already been confirmed or is no longer available.');
+            return;
           }
         } catch (error) {
           logger.error('Error handling confirmation start parameter', { error: error.message, sessionId });
+          await ctx.reply('❌ Error loading challenge');
         }
       }
 
