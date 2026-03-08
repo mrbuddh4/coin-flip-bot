@@ -167,13 +167,14 @@ class FlipHandler {
       await flip.save();
 
       // Send deposit instructions to creator in DM
+      const formattedWagerDisplay = parseFloat(wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
       await ctx.reply(
-        `✅ Wager confirmed: <b>${wagerAmount} ${tokenInfo.symbol}</b>\n\n` +
+        `✅ Wager confirmed: <b>${formattedWagerDisplay} ${tokenInfo.symbol}</b>\n\n` +
         `<b>Step 2: Send tokens to this address</b>\n\n` +
         `<code>${botWalletAddress}</code>\n\n` +
         `Network: ${tokenInfo.network}\n` +
         `Token: ${tokenInfo.symbol}\n` +
-        `Amount: ${wagerAmount}\n\n` +
+        `Amount: ${formattedWagerDisplay}\n\n` +
         `⏳ You have 3 minutes to complete this.\n\n` +
         `Reply <code>confirmed</code> when you've sent the tokens.`,
         { parse_mode: 'HTML' }
@@ -228,9 +229,10 @@ class FlipHandler {
       );
 
       if (!verification.received) {
+        const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
         await ctx.reply(
           `❌ Deposit not detected yet.\n\n` +
-          `Expected: ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+          `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
           `Received: ${verification.amount}\n\n` +
           `Please ensure the tokens have been sent to the correct address.`
         );
@@ -379,10 +381,13 @@ class FlipHandler {
       const botUsername = (await ctx.telegram.getMe()).username;
       const deeplink = `https://t.me/${botUsername}?start=confirm_${confirmSession.id}`;
 
+      // Format wager amount to remove unnecessary decimals
+      const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+
       await ctx.editMessageText(
         `🪙 <b>Challenger Found!</b>\n\n` +
         `<a href="tg://user?id=${challengerId}">Challenger</a> is reviewing the flip.\n\n` +
-        `💰 <b>Wager:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+        `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
         `🌐 <b>Network:</b> ${flip.tokenNetwork}`,
         {
           parse_mode: 'HTML',
@@ -433,7 +438,7 @@ class FlipHandler {
         try {
           await Models.telegram.editMessageText(
             `🪙 <b>Coin Flip Challenge!</b>\n\n` +
-            `<a href="tg://user?id=${flip.creatorId}">${(await models.User.findByPk(flip.creatorId))?.firstName || 'Player'}</a> started a flip for <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>\n\n` +
+            `<a href="tg://user?id=${flip.creatorId}">${(await models.User.findByPk(flip.creatorId))?.firstName || 'Player'}</a> started a flip for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n\n` +
             `⏰ Waiting for a challenger...`,
             {
               chat_id: flip.groupChatId,

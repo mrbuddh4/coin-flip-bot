@@ -261,10 +261,11 @@ async function initBot() {
         const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
         logger.info('[confirm_flip] Got wallet', { network: flip.tokenNetwork, address: botWalletAddress });
 
+        const formattedWagerConfirm = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
         await ctx.editMessageText(
           `🎮 <b>Challenge Confirmed!</b>\n\n` +
           `You have <b>3 minutes</b> to send your wager.\n\n` +
-          `💰 <b>Wager Amount:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+          `💰 <b>Wager Amount:</b> ${formattedWagerConfirm} ${flip.tokenSymbol}\n` +
           `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
           `📮 <b>Send to this address:</b>\n\n` +
           `<code>${botWalletAddress}</code>\n\n` +
@@ -356,7 +357,7 @@ async function initBot() {
             flip.groupMessageId,
             null,
             `🪙 <b>Coin Flip Challenge</b>\n\n` +
-            `<a href="tg://user?id=${flip.creatorId}">A player</a> started a flip for <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>\n\n` +
+            `<a href="tg://user?id=${flip.creatorId}">A player</a> started a flip for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n\n` +
             `⏰ Waiting for another challenger...`,
             { 
               parse_mode: 'HTML',
@@ -486,16 +487,19 @@ const handlers = {
             // Valid confirmation session
             const flip = await models.CoinFlip.findByPk(session.data.flipId);
             
+            // Format wager amount to remove unnecessary decimals
+            const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+
             await ctx.reply(
               `🪙 <b>Coin Flip Challenge!</b>\n\n` +
               `A player is challenging you to a flip:\n\n` +
-              `💰 <b>Wager:</b> ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+              `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
               `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
               `<b>How it works:</b>\n` +
               `1️⃣ Both players send their wager to the bot\n` +
               `2️⃣ Coin flips 🪙\n` +
               `3️⃣ Winner takes the pot!\n\n` +
-              `⚠️ <b>Note:</b> By confirming, you agree to send <b>${flip.wagerAmount} ${flip.tokenSymbol}</b>`,
+              `⚠️ <b>Note:</b> By confirming, you agree to send <b>${formattedWager} ${flip.tokenSymbol}</b>`,
               {
                 parse_mode: 'HTML',
                 reply_markup: Markup.inlineKeyboard([
@@ -856,7 +860,7 @@ async function handleChallengerDepositConfirm(ctx) {
   if (!verification.received) {
     await ctx.reply(
       `❌ Deposit not detected.\n\n` +
-      `Expected: ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+      `Expected: ${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
       `Received: ${verification.amount}`
     );
     return;
