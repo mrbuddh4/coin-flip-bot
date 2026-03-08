@@ -1,0 +1,348 @@
+const { Telegraf, Markup, session } = require('telegraf');
+const config = require('./config');
+const { initDB, getDB } = require('./database');
+const { initBlockchainManager } = require('./blockchain/manager');
+const FlipHandler = require('./handlers/flipHandler');
+const ExecutionHandler = require('./handlers/executionHandler');
+const AdminHandler = require('./handlers/adminHandler');
+const DatabaseUtils = require('./database/utils');
+const logger = require('./utils/logger');
+const { validateConfig } = require('./utils/helpers');
+
+let bot;
+let sessionStore = {};
+
+/**
+ * Initialize the bot
+ */
+async function initBot() {
+  try {
+    // Validate configuration
+    validateConfig();
+
+    // Initialize database
+    console.log('Initializing database...');
+    await initDB();
+
+    // Initialize blockchain
+    console.log('Initializing blockchain...');
+    initBlockchainManager();
+
+    // Create bot instance
+    bot = new Telegraf(config.telegram.token);
+
+    // Middleware setup
+    bot.use(middleware.errorHandler);
+
+    // Commands
+    bot.start(handlers.start);
+    bot.help(handlers.help);
+    bot.command('stats', handlers.stats);
+
+    // Admin commands
+    AdminHandler.registerCommands(bot);
+
+    // Message handlers for DMs
+    bot.on('text', async (ctx) => {
+      if (ctx.chat.type === 'private') {
+        await handlers.dmMessageHandler(ctx);
+      }
+    });
+
+    // Callback handlers
+    bot.action(/^start_flip_(.+)$/, async (ctx) => {
+      const tokenId = parseInt(ctx.match[1]);
+      const supportedTokens = await getSupportedTokensList();
+      const token = supportedTokens[tokenId];
+
+      if (token) {
+        await FlipHandler.startFlipInGroup(ctx, token);
+      }
+      await ctx.answerCbQuery();
+    });
+
+    bot.action(/^accept_flip_(.+)$/, async (ctx) => {
+      const sessionId = ctx.match[1];
+      const { models } = getDB();
+      const flipSession = await models.BotSession.findByPk(sessionId);
+
+      if (flipSession && flipSession.data.flipId) {
+        await FlipHandler.acceptFlip(ctx, flipSession.data.flipId);
+      } else {
+        await ctx.answerCbQuery('❌ Session expired');
+      }
+    });
+
+    bot.action(/^claim_winnings_(.+)$/, async (ctx) => {
+      await ExecutionHandler.claimWinnings(ctx, ctx.match[1]);
+    });
+
+    bot.action(/^cancel_flip_(.+)$/, async (ctx) => {
+      await ExecutionHandler.cancelFlip(ctx, ctx.match[1]);
+    });
+
+    logger.info('Bot initialized successfully');
+    console.log('✅ Bot ready!');
+  } catch (error) {
+    logger.error('Failed to initialize bot', error);
+    process.exit(1);
+  }
+}
+
+/**
+ * Message handlers
+ */
+const handlers = {
+  start: async (ctx) => {
+    if (ctx.chat.type === 'private') {
+      await ctx.reply(
+        `🪙 <b>Welcome to Coin Flip Bot!</b>\n\n` +
+        `Start a coin flip game from any group chat by using the buttons that appear.\n\n` +
+        `<b>How it works:</b>\n` +
+        `1️⃣ Click "Start Flip" button in group\n` +
+        `2️⃣ Enter wager amount in DM\n` +
+        `3️⃣ Send tokens to provided address\n` +
+        `4️⃣ Wait for challenger\n` +
+        `5️⃣ Bot flips a coin\n` +
+        `6️⃣ Winner claims prizes!\n\n` +
+        `<b>Supported Networks:</b> EVM (Ethereum, BSC, etc.), Solana\n\n` +
+        `/help for more info`,
+        { parse_mode: 'HTML' }
+      );
+    } else {
+      // In group chat
+      const { models } = getDB();
+
+      // Get supported tokens for this group/network
+      const supportedTokens = await getSupportedTokensList();
+
+      if (supportedTokens.length === 0) {
+        await ctx.reply('⚠️ No tokens configured for this bot yet.');
+        return;
+      }
+
+      const inlineButtons = supportedTokens.map(token => [
+        Markup.button.callback(
+          `${token.symbol} (${token.network})`,
+          `start_flip_${token.id}`
+        ),
+      ]);
+
+      await ctx.reply(
+        '🪙 <b>Welcome to Coin Flip!</b>\n\n' +
+        'Select a token to start a flip:',
+        {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(inlineButtons).reply_markup,
+        }
+      );
+    }
+  },
+
+  help: async (ctx) => {
+    await ctx.reply(
+      `<b>🪙 Coin Flip Bot Help</b>\n\n` +
+      `<b>Commands:</b>\n` +
+      `/start - Welcome message\n` +
+      `/help - This message\n` +
+      `/stats - Your statistics\n` +
+      `/deposit - Deposit tokens to your wallet\n\n` +
+      `<b>How to Play:</b>\n` +
+      `1. Start a flip with /start in a group\n` +
+      `2. Specify your wager in DM\n` +
+      `3. Send tokens to the provided address\n` +
+      `4. Respond with "confirmed"\n` +
+      `5. Wait for a challenger\n` +
+      `6. Challenger follows same process\n` +
+      `7. Bot flips a coin\n` +
+      `8. Winner claims their prizes\n\n` +
+      `<b>Rules:</b>\n` +
+      `⏱️ 3 minutes to confirm each step\n` +
+      `🚫 Only one active flip per group\n` +
+      `👤 Creator can cancel if no challenger\n` +
+      `💰 Winnings = 2x wager amount`,
+      { parse_mode: 'HTML' }
+    );
+  },
+
+  stats: async (ctx) => {
+    try {
+      const userId = ctx.from.id;
+      const stats = await DatabaseUtils.getUserStats(userId);
+
+      await ctx.reply(
+        `📊 <b>Your Stats</b>\n\n` +
+        `Total Games: ${stats.totalGames}\n` +
+        `Wins: ${stats.wins}\n` +
+        `Losses: ${stats.losses}\n` +
+        `Win Rate: ${stats.winRate}%`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      logger.error('Error getting user stats', error);
+      await ctx.reply('❌ Error retrieving statistics.');
+    }
+  },
+
+  dmMessageHandler: async (ctx) => {
+    try {
+      const { models } = getDB();
+      const userId = ctx.from.id;
+      const message = ctx.message.text.trim().toLowerCase();
+
+      // Find active session
+      const activeSession = await models.BotSession.findOne({
+        where: { userId },
+        order: [['createdAt', 'DESC']],
+      });
+
+      if (!activeSession) {
+        await ctx.reply('❌ No active session. Start from group chat.');
+        return;
+      }
+
+      if (activeSession.sessionType === 'INITIATING') {
+        if (activeSession.currentStep === 'SELECTING_TOKEN') {
+          // User should provide wager
+          await FlipHandler.processWagerAmount(ctx);
+        } else if (activeSession.currentStep === 'AWAITING_DEPOSIT') {
+          if (message === 'confirmed') {
+            await FlipHandler.confirmCreatorDeposit(ctx);
+          } else {
+            await ctx.reply('Please reply with "confirmed" when you\'ve sent the tokens.');
+          }
+        }
+      } else if (activeSession.sessionType === 'CONFIRMING_DEPOSIT') {
+        if (message === 'confirmed') {
+          await handleChallengerDepositConfirm(ctx);
+        } else {
+          await ctx.reply('Please reply with "confirmed" when you\'ve sent the tokens.');
+        }
+      } else if (activeSession.sessionType === 'CLAIMING_WINNINGS') {
+        await ExecutionHandler.processPayoutAddress(ctx);
+      }
+    } catch (error) {
+      logger.error('Error handling DM message', error);
+      await ctx.reply('❌ An error occurred processing your message.');
+    }
+  },
+};
+
+/**
+ * Middleware
+ */
+const middleware = {
+  errorHandler: async (ctx, next) => {
+    try {
+      await next();
+    } catch (error) {
+      logger.error('Bot error', error);
+      try {
+        await ctx.reply('❌ An error occurred. Please try again.');
+      } catch (replyError) {
+        logger.error('Failed to send error message', replyError);
+      }
+    }
+  },
+};
+
+/**
+ * Handle challenger deposit confirmation
+ */
+async function handleChallengerDepositConfirm(ctx) {
+  const { models } = getDB();
+  const userId = ctx.from.id;
+
+  const session = await models.BotSession.findOne({
+    where: { userId, sessionType: 'CONFIRMING_DEPOSIT' },
+    order: [['createdAt', 'DESC']],
+  });
+
+  if (!session || !session.data.flipId) {
+    await ctx.reply('❌ No active flip.');
+    return;
+  }
+
+  const flip = await models.CoinFlip.findByPk(session.data.flipId);
+
+  if (!flip) {
+    await ctx.reply('❌ Flip not found.');
+    return;
+  }
+
+  // Verify deposit on bot's wallet
+  const { getBlockchainManager } = require('./blockchain/manager');
+  const blockchainManager = getBlockchainManager();
+  const verification = await blockchainManager.verifyDeposit(
+    flip.tokenNetwork,
+    flip.tokenAddress,
+    flip.wagerAmount,
+    flip.tokenDecimals
+  );
+
+  if (!verification.received) {
+    await ctx.reply(
+      `❌ Deposit not detected.\n\n` +
+      `Expected: ${flip.wagerAmount} ${flip.tokenSymbol}\n` +
+      `Received: ${verification.amount}`
+    );
+    return;
+  }
+
+  // Mark challenger deposit confirmed
+  flip.challengerDepositConfirmed = true;
+  flip.status = 'COMPLETED';
+  await flip.save();
+
+  await ctx.reply(`✅ Deposit confirmed! Executing flip...`);
+
+  // Execute the flip
+  await ExecutionHandler.executeFlip(flip.id, ctx);
+}
+
+/**
+ * Get supported tokens list
+ */
+async function getSupportedTokensList() {
+  // Parse supported tokens from config
+  const tokens = [];
+  let id = 0;
+
+  Object.entries(config.supportedTokens).forEach(([key, token]) => {
+    tokens.push({
+      id: id++,
+      network: token.network,
+      address: token.address,
+      symbol: token.symbol,
+      decimals: token.decimals,
+    });
+  });
+
+  return tokens;
+}
+
+/**
+ * Main entry point
+ */
+async function main() {
+  try {
+    await initBot();
+    await bot.launch();
+
+    console.log('🚀 Bot launched successfully');
+
+    // Graceful shutdown
+    process.once('SIGINT', () => bot.stop('SIGINT'));
+    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+  } catch (error) {
+    logger.error('Fatal error', error);
+    process.exit(1);
+  }
+}
+
+module.exports = { initBot, bot };
+
+// Run if this is the main module
+if (require.main === module) {
+  main();
+}
