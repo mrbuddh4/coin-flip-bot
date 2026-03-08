@@ -133,52 +133,6 @@ async function initBot() {
       await ExecutionHandler.cancelFlip(ctx, ctx.match[1]);
     });
 
-    // DM flip flow: Select group from list
-    bot.action(/^select_dm_group_(.+)_(\d+)$/, async (ctx) => {
-      try {
-        const { models } = getDB();
-        const sessionId = ctx.match[1];
-        const groupIdx = parseInt(ctx.match[2]);
-        const userId = ctx.from.id;
-
-        const session = await models.BotSession.findByPk(sessionId);
-        if (!session || session.userId !== userId) {
-          await ctx.answerCbQuery('❌ Session expired');
-          return;
-        }
-
-        const groupIds = session.data.availableGroups;
-        const groupChatId = groupIds[groupIdx];
-
-        // Update session with selected group
-        session.data.groupChatId = groupChatId;
-        session.currentStep = 'SELECTING_TOKEN';
-        await session.save();
-
-        // Show token options
-        const supportedTokens = await getSupportedTokensList();
-        const tokenButtons = supportedTokens.map((token, idx) => [
-          Markup.button.callback(
-            `${token.symbol} (${token.network})`,
-            `select_dm_token_${session.id}_${idx}`
-          ),
-        ]);
-
-        await ctx.editMessageText(
-          '🪙 <b>Start a Coin Flip!</b>\n\n' +
-          'Select a token:',
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard(tokenButtons).reply_markup,
-          }
-        );
-        await ctx.answerCbQuery('✅ Group selected');
-      } catch (error) {
-        logger.error('Error selecting group', error);
-        await ctx.answerCbQuery('❌ Error');
-      }
-    });
-
     // DM flip flow: Select token and initiate flip
     bot.action(/^select_dm_token_(.+)_(\d+)$/, async (ctx) => {
       try {
@@ -375,72 +329,32 @@ const handlers = {
 
   flip: async (ctx) => {
     if (ctx.chat.type === 'private') {
-      // DM: Check if user already has an active flip session with group info
+      // DM: Get the user's last active group
       const { models } = getDB();
       const userId = ctx.from.id;
 
       try {
-        // Check for active flip invitation
-        const activeSession = await models.BotSession.findOne({
+        // Get user's last active group
+        const lastGroupSession = await models.BotSession.findOne({
           where: {
             userId,
-            sessionType: 'CONFIRMING_DEPOSIT',
+            sessionType: 'LAST_GROUP_ACTIVITY',
           },
-          order: [['createdAt', 'DESC']],
         });
 
         let groupChatId = null;
 
-        if (activeSession && activeSession.data.groupChatId) {
-          // User was invited from a group - use that group
-          groupChatId = activeSession.data.groupChatId;
+        if (lastGroupSession && lastGroupSession.data.groupId) {
+          groupChatId = lastGroupSession.data.groupId;
         } else {
-          // No active flip invitation, show recent groups
-          const recentFlips = await models.CoinFlip.findAll({
-            where: {
-              [Op.or]: [{ creatorId: userId }, { challengerId: userId }],
-            },
-            order: [['createdAt', 'DESC']],
-            limit: 10,
-            raw: true,
-          });
-
-          // Get unique group IDs
-          const groupIds = [...new Set(recentFlips.map(f => f.groupChatId))].slice(0, 5);
-
-          if (groupIds.length === 0) {
-            await ctx.reply(
-              '❌ You haven\'t participated in any groups yet.\n\n' +
-              'Join a group where this bot is active and participate in a flip first!'
-            );
-            return;
-          }
-
-          // Create session for group selection
-          const session = await models.BotSession.create({
-            userId,
-            sessionType: 'INITIATING_DM_FLIP',
-            currentStep: 'SELECTING_GROUP',
-            data: { availableGroups: groupIds },
-          });
-
-          // Show group selection buttons
-          const groupButtons = groupIds.map((gid, idx) => [
-            Markup.button.callback(`Group #${idx + 1}`, `select_dm_group_${session.id}_${idx}`),
-          ]);
-
           await ctx.reply(
-            '🪙 <b>Start a Coin Flip!</b>\n\n' +
-            'Select a group to send the challenge:',
-            {
-              parse_mode: 'HTML',
-              reply_markup: Markup.inlineKeyboard(groupButtons).reply_markup,
-            }
+            '❌ No group detected!\n\n' +
+            'Please send a message in a group where this bot is active first, then come back and use /flip'
           );
           return;
         }
 
-        // User already has group selected, show token options
+        // User has group detected, show token options
         const supportedTokens = await getSupportedTokensList();
         if (supportedTokens.length === 0) {
           await ctx.reply('⚠️ No tokens configured for this bot yet.');
@@ -464,6 +378,7 @@ const handlers = {
 
         await ctx.reply(
           '🪙 <b>Start a Coin Flip!</b>\n\n' +
+          `✅ Group detected! Sending challenge there.\n\n` +
           'Select a token:',
           {
             parse_mode: 'HTML',

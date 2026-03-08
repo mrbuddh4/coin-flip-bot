@@ -285,6 +285,7 @@ class FlipHandler {
     try {
       const { models } = getDB();
       const challengerId = ctx.from.id;
+      const groupId = ctx.chat.id; // Store which group the button was clicked in
 
       const flip = await models.CoinFlip.findByPk(flipId);
       if (!flip) {
@@ -301,6 +302,22 @@ class FlipHandler {
         await ctx.answerCbQuery('❌ You cannot challenge your own flip.');
         return;
       }
+
+      // Record the group where this button was clicked as user's active group
+      await models.BotSession.findOrCreate({
+        where: {
+          userId: challengerId,
+          sessionType: 'LAST_GROUP_ACTIVITY',
+        },
+        defaults: {
+          data: { groupId },
+        },
+      }).then(([session]) => {
+        if (session.sessionType === 'LAST_GROUP_ACTIVITY') {
+          session.data = { groupId };
+          session.save();
+        }
+      });
 
       // Set challenger
       flip.challengerId = challengerId;
