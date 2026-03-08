@@ -125,7 +125,7 @@ const defineModels = (sequelize) => {
     },
     userId: DataTypes.BIGINT,
     coinFlipId: DataTypes.UUID,
-    sessionType: DataTypes.ENUM('INITIATING', 'CONFIRMING_DEPOSIT', 'CLAIMING_WINNINGS'),
+    sessionType: DataTypes.ENUM('INITIATING', 'CONFIRMING_DEPOSIT', 'CLAIMING_WINNINGS', 'INITIATING_DM_FLIP', 'LAST_GROUP_ACTIVITY'),
     currentStep: DataTypes.STRING,
     data: DataTypes.JSON,
     expiresAt: DataTypes.DATE,
