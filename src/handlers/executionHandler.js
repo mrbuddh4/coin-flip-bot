@@ -27,25 +27,26 @@ class ExecutionHandler {
       // Perform coin flip (0 = creator wins, 1 = challenger wins)
       const result = performCoinFlip();
       const winnerId = result === 0 ? flip.creatorId : flip.challengerId;
+      const flipResultEnum = result === 0 ? 'CREATOR' : 'CHALLENGER';
 
-      // Update flip record
-      flip.flipResult = result;
+      // Update flip record with result
+      flip.flipResult = flipResultEnum;
       flip.winnerId = winnerId;
-      flip.status = 'WAITING_EXECUTION';
+      flip.status = 'COMPLETED';
       await flip.save();
 
       // Send result to group chat
       const winnerName = result === 0 ? flip.creator.firstName : flip.challenger.firstName;
-      const totalPool = flip.wagerAmount * 2;
-      const winnerPrize = (totalPool * 0.9).toFixed(flip.tokenDecimals);
+      const totalPool = parseFloat(flip.wagerAmount) * 2;
+      const winnerPrize = (totalPool * 0.9).toLocaleString('en-US', { maximumFractionDigits: 6 });
       
       await ctx.telegram.sendMessage(
         flip.groupChatId,
-        `🎲 <b>Coin Flip Result: ${winnerName} WINS!</b>\n\n` +
+        `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
         `💰 <b>Winnings: ${winnerPrize} ${flip.tokenSymbol} (90%)</b>\n` +
-        `📊 Total Pool: ${totalPool} ${flip.tokenSymbol}\n` +
+        `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
         `⚡ Fees: 10% (5% dev + 5% burn)\n\n` +
-        `Click below to claim!`,
+        `${winnerName} needs to claim their winnings!`,
         {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
@@ -64,9 +65,14 @@ class ExecutionHandler {
         { parse_mode: 'HTML' }
       );
 
-      logger.info('Flip executed', { flipId, result, winnerId });
+      logger.info('Flip executed successfully', { flipId, result: flipResultEnum, winnerId, winnerName });
     } catch (error) {
-      logger.error('Error executing flip', error);
+      logger.error('Error executing flip', { 
+        flipId,
+        message: error.message, 
+        stack: error.stack,
+        error: error.toString()
+      });
     }
   }
 
