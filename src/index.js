@@ -638,6 +638,24 @@ async function initBot() {
           logger.warn('Failed to edit creator confirmation message', err.message);
         }
 
+        // Delete the old "Start a Coin Flip!" message from the group before posting the challenge
+        const session = await models.BotSession.findOne({
+          where: {
+            userId,
+            sessionType: 'INITIATING',
+            coinFlipId: flip.id,
+          },
+        });
+        
+        if (session?.data?.initialGroupMessageId) {
+          try {
+            await ctx.telegram.deleteMessage(flip.groupChatId, session.data.initialGroupMessageId);
+            logger.info('[creator_deposit_confirmed] Deleted initial group message', { flipId, messageId: session.data.initialGroupMessageId });
+          } catch (err) {
+            logger.warn('[creator_deposit_confirmed] Failed to delete initial message', err.message);
+          }
+        }
+
         // Now post the challenge message to the group
         const userRecord = await models.User.findByPk(userId);
         const groupMessage = await ctx.telegram.sendMessage(
@@ -1109,7 +1127,7 @@ const handlers = {
         // Get bot info for deeplink
         const botInfo = await ctx.telegram.getMe();
 
-        await ctx.reply(
+        const groupMsg = await ctx.reply(
           '🪙 <b>Start a Coin Flip!</b>\n\n' +
           'Click below to set up your flip in DM (for privacy)',
           {
@@ -1119,6 +1137,10 @@ const handlers = {
             ]).reply_markup,
           }
         );
+
+        // Store the message ID so we can delete it later when challenge is posted
+        session.data.initialGroupMessageId = groupMsg.message_id;
+        await session.save();
       } else {
         // In DM: Check if user has a group context
         const lastGroupSession = await models.BotSession.findOne({
