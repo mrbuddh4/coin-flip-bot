@@ -26,6 +26,22 @@ class ExecutionHandler {
         status: flip.status 
       });
 
+      // Update group message to show flip is executing
+      try {
+        await ctx.telegram.editMessageText(
+          flip.groupChatId,
+          flip.groupMessageId,
+          null,
+          `🎲 <b>Executing Flip...</b>\n\n` +
+          `Both players confirmed deposits. Flipping coin...`,
+          {
+            parse_mode: 'HTML',
+          }
+        );
+      } catch (err) {
+        logger.warn('Failed to update group message for execution', { flipId, error: err.message });
+      }
+
       // Fetch creator and challenger user records
       const creator = await models.User.findByPk(flip.creatorId);
       const challenger = await models.User.findByPk(flip.challengerId);
