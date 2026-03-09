@@ -130,50 +130,15 @@ class FlipHandler {
         },
       });
 
-      // Only block if: (1) there's an active flip AND (2) user is the creator of it
-      // This allows the challenger or other users to start new flips
-      if (activeFlip && activeFlip.creatorId === userId) {
-        logger.warn('User tried to create second flip while having an active one', { 
-          groupId, 
-          userId,
-          activeFlipId: activeFlip.id,
-        });
+      if (activeFlip) {
+        logger.warn('Attempted to create flip while one is active', { groupId, activeFlipId: activeFlip.id });
         await ctx.reply(
-          `⏸️ <b>You already have a flip in progress!</b>\n\n` +
-          `Please wait for it to complete before starting a new one.`,
+          `⏸️ <b>A flip is already in progress!</b>\n\n` +
+          `Only one coin flip can happen at a time in this group.\n` +
+          `Please wait for the current flip to complete.`,
           { parse_mode: 'HTML' }
         );
         return;
-      }
-
-      // If there's an active flip but user is not the creator, allow them to accept it
-      if (activeFlip && activeFlip.creatorId !== userId) {
-        logger.info('User (challenger) attempting to start flip while creator flip is active', { 
-          groupId, 
-          userId,
-          creatorFlipId: activeFlip.id,
-          creatorId: activeFlip.creatorId,
-        });
-        
-        // Only show this message if flip is still accepting challengers
-        if (activeFlip.status === 'WAITING_CHALLENGER') {
-          await ctx.reply(
-            `ℹ️ <b>A flip is already waiting for a challenger!</b>\n\n` +
-            `Click the button below to accept this flip instead, or wait for it to complete before starting your own.`,
-            Markup.inlineKeyboard([
-              [Markup.button.callback('✅ Accept Challenge', `accept_flip_${activeFlip.id}`)],
-            ]).reply_markup
-          );
-          return;
-        } else {
-          // Flip is waiting for deposit/execution, not accepting new challengers
-          await ctx.reply(
-            `⏳ <b>A flip is already in progress!</b>\n\n` +
-            `Please wait for it to complete before starting your own.`,
-            { parse_mode: 'HTML' }
-          );
-          return;
-        }
       }
 
       // Create flip record with WAITING_CREATOR_DEPOSIT status (won't post to group yet)

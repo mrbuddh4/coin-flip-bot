@@ -193,81 +193,6 @@ class AdminHandler {
   }
 
   /**
-   * Cleanup - cancel stuck flips and clear sessions for user
-   */
-  static async cleanup(ctx) {
-    try {
-      const { models } = getDB();
-      const userId = ctx.from.id;
-      const { Op } = require('sequelize');
-
-      logger.info('Cleanup requested', { userId });
-
-      // Clean only the user's own flips
-      const stuckFlips = await models.CoinFlip.findAll({
-        where: {
-          [Op.or]: [
-            { creatorId: userId },
-            { challengerId: userId },
-          ],
-          status: {
-            [Op.notIn]: ['COMPLETED', 'CANCELLED'],
-          },
-        },
-      });
-
-      logger.info('Found stuck flips for cleanup', { userId, count: stuckFlips.length });
-
-      // Cancel all stuck flips
-      const cancelledCount = await models.CoinFlip.update(
-        { status: 'CANCELLED' },
-        {
-          where: {
-            [Op.or]: [
-              { creatorId: userId },
-              { challengerId: userId },
-            ],
-            status: {
-              [Op.notIn]: ['COMPLETED', 'CANCELLED'],
-            },
-          },
-        }
-      );
-
-      // Clear all active sessions for this user
-      const clearedSessions = await models.BotSession.destroy({
-        where: {
-          userId,
-          sessionType: {
-            [Op.ne]: 'LAST_GROUP_ACTIVITY',
-          },
-        },
-      });
-
-      logger.info('Cleanup completed', { userId, flipsCancelled: cancelledCount[0], sessionsClear: clearedSessions });
-
-      let message = `🧹 <b>Cleanup Complete</b>\n\n`;
-      message += `Flips Cancelled: ${cancelledCount[0]}\n`;
-      message += `Sessions Cleared: ${clearedSessions}\n`;
-
-      if (stuckFlips.length > 0) {
-        message += `\n<b>Cancelled Flips:</b>\n`;
-        stuckFlips.forEach(flip => {
-          message += `• ${flip.id.substring(0, 8)}: `;
-          if (flip.creatorId === userId) message += 'Creator';
-          if (flip.challengerId === userId) message += 'Challenger';
-          message += `\n`;
-        });
-      }
-
-      await ctx.reply(message, { parse_mode: 'HTML' });
-    } catch (error) {
-      logger.error('Error during cleanup', error);
-      await ctx.reply(`❌ Cleanup error: ${error.message}`);
-    }
-  }
-
-  /**
    * Register admin commands
    */
   static registerCommands(bot) {
@@ -276,7 +201,6 @@ class AdminHandler {
     bot.command('admin_users', ctx => this.users(ctx));
     bot.command('admin_broadcast', ctx => this.broadcast(ctx));
     bot.command('admin_debug', ctx => this.debug(ctx));
-    bot.command('admin_cleanup', ctx => this.cleanup(ctx));
 
     // For flip details: /flip_<id>
     bot.hears(/^\/flip_(.+)$/, (ctx) => {
