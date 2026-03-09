@@ -42,6 +42,17 @@ const initDB = async () => {
     await sequelize.authenticate();
     console.log('Database connection authenticated');
 
+    // Fix enum types if needed
+    try {
+      await sequelize.query(`
+        ALTER TYPE "enum_BotSessions_sessionType" ADD VALUE IF NOT EXISTS 'UPDATING_WALLET'
+      `);
+      console.log('Updated BotSession sessionType enum');
+    } catch (err) {
+      // Enum might already exist, continue
+      console.log('Enum update skipped (likely already exists)');
+    }
+
     await sequelize.sync({ alter: false });
     console.log('Database models synchronized');
 
