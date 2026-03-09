@@ -47,6 +47,7 @@ async function initBot() {
       { command: 'stats', description: '📊 Your game statistics' },
       { command: 'flip', description: '🪙 Start a coin flip' },
       { command: 'wallet', description: '💳 Manage wallet addresses' },
+      { command: 'cancel', description: '❌ Cancel current flip' },
     ]);
 
     // Middleware setup
@@ -60,6 +61,7 @@ async function initBot() {
     bot.command('stats', handlers.stats);
     bot.command('flip', handlers.flip);
     bot.command('wallet', handlers.wallet);
+    bot.command('cancel', handlers.cancel);
 
     // Admin commands
     AdminHandler.registerCommands(bot);
@@ -842,6 +844,47 @@ const handlers = {
               );
             }
             return;
+          } else if (session && parseInt(session.userId) === userId && session.currentStep === 'AWAITING_DEPOSIT') {
+            // Already confirmed and in deposit phase, show deposit instructions
+            const flip = await models.CoinFlip.findByPk(session.data?.flipId);
+            if (flip) {
+              logger.info('[start] Resending deposit instructions', { flipId: flip.id, currentStep: session.currentStep });
+
+              const blockchainManager = getBlockchainManager();
+              const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+              const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+
+              await ctx.reply(
+                `💰 <b>Send Your Deposit</b>\n\n` +
+                `You have <b>3 minutes</b> to complete this.\n\n` +
+                `<b>Wager Amount:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+                `<b>Network:</b> ${flip.tokenNetwork}\n\n` +
+                `📮 <b>Send to this address:</b>\n\n` +
+                `<code>${botWalletAddress}</code>\n\n` +
+                `Once sent, click the button below:`,
+                {
+                  parse_mode: 'HTML',
+                  reply_markup: Markup.inlineKeyboard([
+                    [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${session.id}`)],
+                  ]).reply_markup,
+                }
+              );
+            }
+            return;
+          } else if (session && parseInt(session.userId) === userId && session.currentStep === 'AWAITING_WALLET_ADDRESS') {
+            // Wallet address needed - remind user to set it up
+            const flip = await models.CoinFlip.findByPk(session.data?.flipId);
+            if (flip) {
+              logger.info('[start] Reminding user to set wallet', { flipId: flip.id });
+
+              await ctx.reply(
+                `❌ <b>Wallet Address Still Required</b>\n\n` +
+                `We need your ${flip.tokenNetwork} wallet address to send you your winnings!\n\n` +
+                `Use /wallet to add your receiving addresses for this network.`,
+                { parse_mode: 'HTML' }
+              );
+            }
+            return;
           } else if (session) {
             logger.warn('[start] Confirmation session state mismatch', { userId, sessionUserId: session.userId, currentStep: session.currentStep });
             await ctx.reply('❌ This challenge has already been confirmed or is no longer available.');
@@ -981,6 +1024,62 @@ const handlers = {
   wallet: async (ctx) => {
     ctx.state.models = getDB().models;
     await WalletHandler.handleWalletCommand(ctx);
+  },
+
+  cancel: async (ctx) => {
+    try {
+      const { models } = getDB();
+      const userId = ctx.from.id;
+
+      // Delete all active sessions for this user (except LAST_GROUP_ACTIVITY)
+      const deleted = await models.BotSession.destroy({
+        where: {
+          userId,
+          sessionType: {
+            [Op.ne]: 'LAST_GROUP_ACTIVITY',
+          },
+        },
+      });
+
+      logger.info('Cancelled sessions for user', { userId, sessionsDeleted: deleted });
+
+      // If in a group or DM that's involved with a flip, find and cancel the flip
+      if (ctx.chat.type !== 'private') {
+        const activeFlip = await models.CoinFlip.findOne({
+          where: {
+            groupChatId: ctx.chat.id,
+            status: {
+              [Op.notIn]: ['COMPLETED', 'CANCELLED'],
+            },
+          },
+        });
+
+        if (activeFlip && (activeFlip.creatorId === userId || activeFlip.challengerId === userId)) {
+          activeFlip.status = 'CANCELLED';
+          await activeFlip.save();
+
+          logger.info('Cancelled flip from group', { flipId: activeFlip.id, userId });
+
+          await ctx.reply(
+            `✅ Your active flip has been cancelled.\n\n` +
+            `You can start a new one anytime with /flip`,
+            { parse_mode: 'HTML' }
+          );
+        } else {
+          await ctx.reply('No active session to cancel.');
+        }
+      } else {
+        // In DM
+        await ctx.reply(
+          `✅ Your active session has been cleared!\n\n` +
+          `You can start a new flip anytime with /flip`,
+          { parse_mode: 'HTML' }
+        );
+      }
+    } catch (error) {
+      logger.error('Error canceling session', error);
+      await ctx.reply('❌ Error canceling session. Please try again.');
+    }
   },
 
   dmMessageHandler: async (ctx) => {
