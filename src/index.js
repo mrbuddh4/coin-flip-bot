@@ -247,36 +247,20 @@ async function initBot() {
         await flip.save();
         logger.info('[confirm_flip] Flip updated', { flipId, newStatus: flip.status });
 
-        // Update session to awaiting deposit
-        session.currentStep = 'AWAITING_DEPOSIT';
+        // Update session to awaiting wallet address
+        session.currentStep = 'AWAITING_WALLET_ADDRESS';
         await session.save();
-        logger.info('[confirm_flip] Session updated', { sessionId, newStep: session.currentStep });
+        logger.info('[confirm_flip] Session updated to await wallet', { sessionId, newStep: session.currentStep });
 
-        // Get bot wallet and send deposit instructions
-        const blockchainManager = getBlockchainManager();
-        const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
-        logger.info('[confirm_flip] Got wallet', { network: flip.tokenNetwork, address: botWalletAddress });
-
-        const formattedWagerConfirm = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-        
-        // Send deposit instructions with confirmation button
+        // Ask for wallet address first
+        const tokenNetwork = flip.tokenNetwork;
         await ctx.reply(
-          `💰 <b>Send Your Deposit</b>\n\n` +
-          `You have <b>3 minutes</b> to complete this.\n\n` +
-          `<b>Wager Amount:</b> ${formattedWagerConfirm} ${flip.tokenSymbol}\n` +
-          `<b>Network:</b> ${flip.tokenNetwork}\n\n` +
-          `📮 <b>Send to this address:</b>\n\n` +
-          `<code>${botWalletAddress}</code>\n\n` +
-          `Once sent, click the button below:`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${sessionId}`)],
-            ]).reply_markup,
-          }
+          `before you send the deposit, please provide your <b>${tokenNetwork} wallet address</b> where you'd like to receive your winnings.\n\n` +
+          `Simply reply with your wallet address (e.g., 0x... for EVM or ... for Solana)`,
+          { parse_mode: 'HTML' }
         );
 
-        await ctx.answerCbQuery('✅ Challenge confirmed! Send your wager tokens.');
+        await ctx.answerCbQuery('✅ Challenge confirmed! Please provide your wallet address.');
 
         // Update group message
         try {
@@ -710,30 +694,17 @@ const handlers = {
             flip.status = 'WAITING_CHALLENGER_DEPOSIT';
             await flip.save();
             logger.info('[start] Set challengerId on flip', { flipId: flip.id, challengerId: userId });
-            
-            const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-            const blockchainManager = getBlockchainManager();
-            const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
 
-            // Update session step
-            session.currentStep = 'AWAITING_DEPOSIT';
+            // Update session to ask for wallet address first
+            session.currentStep = 'AWAITING_WALLET_ADDRESS';
             await session.save();
 
-            // Send deposit instructions directly with button
+            // Ask for wallet address
+            const tokenNetwork = flip.tokenNetwork;
             await ctx.reply(
-              `💰 <b>Send Your Deposit</b>\n\n` +
-              `You have <b>3 minutes</b> to complete this.\n\n` +
-              `<b>Wager Amount:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-              `<b>Network:</b> ${flip.tokenNetwork}\n\n` +
-              `📮 <b>Send to this address:</b>\n\n` +
-              `<code>${botWalletAddress}</code>\n\n` +
-              `Once sent, click the button below:`,
-              {
-                parse_mode: 'HTML',
-                reply_markup: Markup.inlineKeyboard([
-                  [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${sessionId}`)],
-                ]).reply_markup,
-              }
+              `Before you send the deposit, please provide your <b>${tokenNetwork} wallet address</b> where you'd like to receive your winnings.\n\n` +
+              `Simply reply with your wallet address (e.g., 0x... for EVM or ... for Solana)`,
+              { parse_mode: 'HTML' }
             );
             return;
           } else if (session) {
@@ -899,6 +870,41 @@ const handlers = {
         if (activeSession.currentStep === 'AWAITING_WAGER') {
           logger.info('Processing wager amount for INITIATING session');
           await FlipHandler.processWagerAmount(ctx);
+        } else if (activeSession.currentStep === 'AWAITING_WALLET_ADDRESS') {
+          logger.info('Processing creator wallet address');
+          // Store the wallet address in the flip record
+          const flipId = activeSession.data?.flipId;
+          const flip = await models.CoinFlip.findByPk(flipId);
+          if (flip) {
+            flip.creatorDepositWalletAddress = message;
+            await flip.save();
+            logger.info('Stored creator wallet address', { flipId, userId });
+            
+            // Now show deposit instructions
+            const blockchainManager = getBlockchainManager();
+            const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+            const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+            
+            // Update session to awaiting deposit
+            activeSession.currentStep = 'AWAITING_DEPOSIT';
+            await activeSession.save();
+            
+            await ctx.reply(
+              `💰 <b>Send Your Deposit</b>\n\n` +
+              `You have <b>3 minutes</b> to complete this.\n\n` +
+              `<b>Wager Amount:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+              `<b>Network:</b> ${flip.tokenNetwork}\n\n` +
+              `📮 <b>Send to this address:</b>\n\n` +
+              `<code>${botWalletAddress}</code>\n\n` +
+              `Once sent, click the button below:`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.callback('✅ I Sent the Deposit', `creator_deposit_confirmed_${flipId}`)],
+                ]).reply_markup,
+              }
+            );
+          }
         } else if (activeSession.currentStep === 'AWAITING_DEPOSIT') {
           if (message === 'confirmed') {
             logger.info('Confirming creator deposit for INITIATING session');
@@ -915,7 +921,42 @@ const handlers = {
           await FlipHandler.processDMWagerAmount(ctx, activeSession);
         }
       } else if (activeSession.sessionType === 'CONFIRMING_DEPOSIT') {
-        if (message === 'confirmed') {
+        if (activeSession.currentStep === 'AWAITING_WALLET_ADDRESS') {
+          logger.info('Processing wallet address for challenger');
+          // Store the wallet address in the flip record
+          const flipId = activeSession.data?.flipId;
+          const flip = await models.CoinFlip.findByPk(flipId);
+          if (flip) {
+            flip.challengerDepositWalletAddress = message;
+            await flip.save();
+            logger.info('Stored challenger wallet address', { flipId, userId });
+            
+            // Now show deposit instructions
+            const blockchainManager = getBlockchainManager();
+            const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+            const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+            
+            // Update session to awaiting deposit
+            activeSession.currentStep = 'AWAITING_DEPOSIT';
+            await activeSession.save();
+            
+            await ctx.reply(
+              `💰 <b>Send Your Deposit</b>\n\n` +
+              `You have <b>3 minutes</b> to complete this.\n\n` +
+              `<b>Wager Amount:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+              `<b>Network:</b> ${flip.tokenNetwork}\n\n` +
+              `📮 <b>Send to this address:</b>\n\n` +
+              `<code>${botWalletAddress}</code>\n\n` +
+              `Once sent, click the button below:`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${activeSession.id}`)],
+                ]).reply_markup,
+              }
+            );
+          }
+        } else if (message === 'confirmed') {
           logger.info('Confirming challenger deposit');
           await handleChallengerDepositConfirm(ctx);
         } else {

@@ -138,7 +138,7 @@ class FlipHandler {
 
       // Update session with flip ID
       session.coinFlipId = flip.id;
-      session.currentStep = 'AWAITING_DEPOSIT';
+      session.currentStep = 'AWAITING_WALLET_ADDRESS';
       session.data = {
         ...session.data,
         flipId: flip.id,
@@ -146,22 +146,11 @@ class FlipHandler {
       };
       await session.save();
 
-      // Send deposit instructions to creator in DM with confirmation button (don't post to group yet)
-      const formattedWagerDisplay = parseFloat(wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+      // Ask for wallet address first
       await ctx.reply(
-        `💰 <b>Send Your Deposit</b>\n\n` +
-        `You have <b>3 minutes</b> to complete this.\n\n` +
-        `<b>Wager Amount:</b> ${formattedWagerDisplay} ${tokenInfo.symbol}\n` +
-        `<b>Network:</b> ${tokenInfo.network}\n\n` +
-        `📮 <b>Send to this address:</b>\n\n` +
-        `<code>${botWalletAddress}</code>\n\n` +
-        `Once sent, click the button below:`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('✅ I Sent the Deposit', `creator_deposit_confirmed_${flip.id}`)],
-          ]).reply_markup,
-        }
+        `Before you send the deposit, please provide your <b>${tokenInfo.network} wallet address</b> where you'd like to receive your winnings.\n\n` +
+        `Simply reply with your wallet address (e.g., 0x... for EVM or ... for Solana)`,
+        { parse_mode: 'HTML' }
       );
 
       // Set timeout for creator deposit
@@ -169,7 +158,7 @@ class FlipHandler {
         this.handleDepositTimeout(flip.id, 'creator');
       }, config.bot.flipTimeoutSeconds * 1000);
 
-      logger.info('Flip created waiting for creator deposit', { userId, groupId, wagerAmount, flipId: flip.id });
+      logger.info('Flip created, awaiting creator wallet address', { userId, groupId, wagerAmount, flipId: flip.id });
     } catch (error) {
       logger.error('Error processing wager', { error: error.message, stack: error.stack, userId: ctx.from.id });
       await ctx.reply('❌ Error processing wager. Please try again.');
