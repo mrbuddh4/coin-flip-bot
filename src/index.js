@@ -937,7 +937,6 @@ const handlers = {
       }
 
       // Regular start message
-      const { models } = getDB();
       
       // Check if user has wallet addresses set up
       const userProfile = await models.UserProfile.findByPk(userId);
@@ -977,7 +976,6 @@ const handlers = {
       );
     } else {
       // In group chat
-      const { models } = getDB();
 
       // Get supported tokens for this group/network
       const supportedTokens = await getSupportedTokensList();
