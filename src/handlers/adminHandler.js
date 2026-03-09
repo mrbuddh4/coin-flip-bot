@@ -193,7 +193,7 @@ class AdminHandler {
   }
 
   /**
-   * Admin cleanup - cancel stuck flips and clear sessions (works for any user to clean their own)
+   * Cleanup - cancel stuck flips and clear sessions for user
    */
   static async cleanup(ctx) {
     try {
@@ -203,39 +203,30 @@ class AdminHandler {
 
       logger.info('Cleanup requested', { userId });
 
-      // If user is admin, clean ALL flips
-      // If user is not admin, clean only THEIR flips
-      const isAdmin = this.isAdmin(userId);
-
-      let flipWhere = {};
-      if (!isAdmin) {
-        // Non-admin: only clean their own flips
-        flipWhere = {
+      // Clean only the user's own flips
+      const stuckFlips = await models.CoinFlip.findAll({
+        where: {
           [Op.or]: [
             { creatorId: userId },
             { challengerId: userId },
           ],
-        };
-      }
-
-      // Get all stuck flips for this user (or all if admin)
-      const stuckFlips = await models.CoinFlip.findAll({
-        where: {
-          ...flipWhere,
           status: {
             [Op.notIn]: ['COMPLETED', 'CANCELLED'],
           },
         },
       });
 
-      logger.info('Found stuck flips for cleanup', { userId, isAdmin, count: stuckFlips.length });
+      logger.info('Found stuck flips for cleanup', { userId, count: stuckFlips.length });
 
       // Cancel all stuck flips
       const cancelledCount = await models.CoinFlip.update(
         { status: 'CANCELLED' },
         {
           where: {
-            ...flipWhere,
+            [Op.or]: [
+              { creatorId: userId },
+              { challengerId: userId },
+            ],
             status: {
               [Op.notIn]: ['COMPLETED', 'CANCELLED'],
             },
@@ -243,43 +234,29 @@ class AdminHandler {
         }
       );
 
-      // Clear all active sessions for this user (or all if admin)
-      let sessionWhere = { userId };
-      if (isAdmin) {
-        sessionWhere = {
-          sessionType: {
-            [Op.ne]: 'LAST_GROUP_ACTIVITY',
-          },
-        };
-      } else {
-        sessionWhere = {
+      // Clear all active sessions for this user
+      const clearedSessions = await models.BotSession.destroy({
+        where: {
           userId,
           sessionType: {
             [Op.ne]: 'LAST_GROUP_ACTIVITY',
           },
-        };
-      }
-
-      const clearedSessions = await models.BotSession.destroy({
-        where: sessionWhere,
+        },
       });
 
-      logger.info('Cleanup completed', { userId, isAdmin, flipsCancelled: cancelledCount[0], sessionsClear: clearedSessions });
+      logger.info('Cleanup completed', { userId, flipsCancelled: cancelledCount[0], sessionsClear: clearedSessions });
 
       let message = `🧹 <b>Cleanup Complete</b>\n\n`;
       message += `Flips Cancelled: ${cancelledCount[0]}\n`;
       message += `Sessions Cleared: ${clearedSessions}\n`;
-      
-      if (!isAdmin) {
-        message += `\n<i>(Only your own flips/sessions were cleaned)</i>`;
-      } else {
-        message += `\n<i>(Admin: All flips/sessions cleaned)</i>`;
-      }
 
       if (stuckFlips.length > 0) {
-        message += `\n\n<b>Cancelled Flips:</b>\n`;
+        message += `\n<b>Cancelled Flips:</b>\n`;
         stuckFlips.forEach(flip => {
-          message += `• ${flip.id.substring(0, 8)}: Creator ${flip.creatorId}, Challenger ${flip.challengerId || 'None'}\n`;
+          message += `• ${flip.id.substring(0, 8)}: `;
+          if (flip.creatorId === userId) message += 'Creator';
+          if (flip.challengerId === userId) message += 'Challenger';
+          message += `\n`;
         });
       }
 
