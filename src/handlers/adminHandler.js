@@ -195,12 +195,58 @@ class AdminHandler {
   /**
    * Register admin commands
    */
+  /**
+   * Cancel all active flips
+   */
+  static async cancelAllFlips(ctx) {
+    if (!this.isAdmin(ctx.from.id)) {
+      await ctx.reply('❌ Not authorized.');
+      return;
+    }
+
+    try {
+      const { models } = getDB();
+      const { Op } = require('sequelize');
+
+      // Find all active flips
+      const activeFlips = await models.CoinFlip.findAll({
+        where: {
+          status: {
+            [Op.notIn]: ['COMPLETED', 'CANCELLED'],
+          },
+        },
+      });
+
+      if (activeFlips.length === 0) {
+        await ctx.reply('✅ No active flips to cancel.');
+        return;
+      }
+
+      // Cancel all flips
+      for (const flip of activeFlips) {
+        flip.status = 'CANCELLED';
+        await flip.save();
+        logger.info('Admin cancelled flip', { flipId: flip.id });
+      }
+
+      await ctx.reply(
+        `✅ <b>Cancelled ${activeFlips.length} flip(s)</b>\n\n` +
+        activeFlips.map(f => `• Flip ${f.id.substring(0, 8)}... (${f.status})`).join('\n'),
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      logger.error('Error cancelling flips', error);
+      await ctx.reply('❌ Error cancelling flips.');
+    }
+  }
+
   static registerCommands(bot) {
     bot.command('admin_stats', ctx => this.stats(ctx));
     bot.command('admin_health', ctx => this.health(ctx));
     bot.command('admin_users', ctx => this.users(ctx));
     bot.command('admin_broadcast', ctx => this.broadcast(ctx));
     bot.command('admin_debug', ctx => this.debug(ctx));
+    bot.command('admin_cancel_all', ctx => this.cancelAllFlips(ctx));
 
     // For flip details: /flip_<id>
     bot.hears(/^\/flip_(.+)$/, (ctx) => {
