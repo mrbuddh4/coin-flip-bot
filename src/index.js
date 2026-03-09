@@ -1035,20 +1035,9 @@ const handlers = {
 
       logger.info('Cancel command initiated', { userId, chatId, isGroup });
 
-      // Find active sessions first
-      const activeSessions = await models.BotSession.findAll({
-        where: {
-          userId,
-          sessionType: {
-            [Op.ne]: 'LAST_GROUP_ACTIVITY',
-          },
-        },
-      });
-
-      logger.info('Found active sessions', { userId, sessionCount: activeSessions.length, sessions: activeSessions.map(s => ({ id: s.id, type: s.sessionType, coinFlipId: s.coinFlipId })) });
-
-      // Find active flip
+      // Find any active flip involving this user (by creatorId or challengerId)
       let activeFlip = null;
+      
       if (isGroup) {
         // In group: find flip by groupChatId
         activeFlip = await models.CoinFlip.findOne({
@@ -1060,23 +1049,22 @@ const handlers = {
           },
         });
       } else {
-        // In DM: find flip through session coinFlipId
-        for (const session of activeSessions) {
-          if (session.coinFlipId) {
-            const flip = await models.CoinFlip.findByPk(session.coinFlipId);
-            if (flip && flip.status && !['COMPLETED', 'CANCELLED'].includes(flip.status)) {
-              activeFlip = flip;
-              break;
-            }
-          }
-        }
+        // In DM: find ANY flip where user is creator or challenger
+        activeFlip = await models.CoinFlip.findOne({
+          where: {
+            [Op.or]: [
+              { creatorId: userId },
+              { challengerId: userId },
+            ],
+            status: {
+              [Op.notIn]: ['COMPLETED', 'CANCELLED'],
+            },
+          },
+          order: [['createdAt', 'DESC']],
+        });
       }
 
-      logger.info('Found active flip', { flipId: activeFlip?.id, creatorId: activeFlip?.creatorId, challengerId: activeFlip?.challengerId });
-
-      // Check if user is involved with the flip
-      const isUserInvolved = activeFlip && (activeFlip.creatorId === userId || activeFlip.challengerId === userId);
-      logger.info('User involvement check', { isUserInvolved, userId, flipId: activeFlip?.id });
+      logger.info('Found active flip', { flipId: activeFlip?.id, creatorId: activeFlip?.creatorId, challengerId: activeFlip?.challengerId, userIdCheck: userId });
 
       // Delete all active sessions for this user
       const deleted = await models.BotSession.destroy({
@@ -1090,8 +1078,8 @@ const handlers = {
 
       logger.info('Cancelled sessions for user', { userId, sessionsDeleted: deleted });
 
-      // Cancel flip if user is involved
-      if (isUserInvolved) {
+      // Cancel flip if found
+      if (activeFlip) {
         activeFlip.status = 'CANCELLED';
         await activeFlip.save();
         logger.info('Cancelled flip', { flipId: activeFlip.id, userId });
@@ -1101,9 +1089,6 @@ const handlers = {
           `You can start a new one anytime with /flip`,
           { parse_mode: 'HTML' }
         );
-      } else if (activeFlip) {
-        // Flip exists but user is not involved
-        await ctx.reply(`❌ You're not involved in the active flip.`);
       } else {
         // No active flip
         const message = `✅ Your active session has been cleared!\n\nYou can start a new flip anytime with /flip`;
