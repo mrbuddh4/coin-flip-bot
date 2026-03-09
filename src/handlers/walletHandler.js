@@ -1,5 +1,5 @@
 const { Markup } = require('telegraf');
-const logger = require('../logger');
+const logger = require('../utils/logger');
 
 class WalletHandler {
   static async handleWalletCommand(ctx) {
