@@ -1224,8 +1224,13 @@ const handlers = {
         if (activeFlip && activeFlip.status === 'WAITING_CHALLENGER') {
           await ctx.reply(
             `ℹ️ <b>A flip is waiting for a challenger!</b>\n\n` +
-            `Accept the challenge above or wait for it to complete.`,
-            { parse_mode: 'HTML' }
+            `Click below to accept this challenge, or wait for it to complete.`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('Accept Challenge', `accept_flip_${activeFlip.id}`)],
+              ]).reply_markup,
+            }
           );
           return;
         }
@@ -1301,8 +1306,13 @@ const handlers = {
         if (activeFlip && activeFlip.status === 'WAITING_CHALLENGER') {
           await ctx.reply(
             `ℹ️ <b>A flip is waiting for a challenger!</b>\n\n` +
-            `Accept the challenge above or wait for it to complete.`,
-            { parse_mode: 'HTML' }
+            `Click below to accept this challenge, or wait for it to complete.`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('Accept Challenge', `accept_flip_${activeFlip.id}`)],
+              ]).reply_markup,
+            }
           );
           return;
         }
