@@ -91,21 +91,42 @@ class ExecutionHandler {
         ? `https://etherscan.io/tx/${winningTxHash}`
         : `https://solscan.io/tx/${winningTxHash}`;
 
-      // Send result to group chat
+      // Send result to group chat by editing the existing message
       const txLinkMessage = winningTxHash 
         ? `\n🔗 <a href="${txLink}">View Transaction</a>`
         : `\n⏳ Processing winnings...`;
 
-      await ctx.telegram.sendMessage(
-        flip.groupChatId,
-        `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
-        `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
-        `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-        `⚡ Fees: 10% (5% dev + 5% burn)${txLinkMessage}`,
-        {
-          parse_mode: 'HTML',
+      try {
+        await ctx.telegram.editMessageText(
+          flip.groupChatId,
+          flip.groupMessageId,
+          null,
+          `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
+          `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
+          `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+          `⚡ Fees: 10% (5% dev + 5% burn)${txLinkMessage}`,
+          {
+            parse_mode: 'HTML',
+          }
+        );
+      } catch (editErr) {
+        logger.warn('Failed to edit group message with result', { flipId, error: editErr.message });
+        // Fallback: send a new message if edit fails
+        try {
+          await ctx.telegram.sendMessage(
+            flip.groupChatId,
+            `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
+            `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
+            `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+            `⚡ Fees: 10% (5% dev + 5% burn)${txLinkMessage}`,
+            {
+              parse_mode: 'HTML',
+            }
+          );
+        } catch (err) {
+          logger.error('Failed to send flip result to group', { flipId, error: err.message });
         }
-      );
+      }
 
       // Notify winner in DM
       await ctx.telegram.sendMessage(
