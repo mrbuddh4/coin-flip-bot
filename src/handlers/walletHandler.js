@@ -1,5 +1,6 @@
 const { Markup } = require('telegraf');
 const logger = require('../utils/logger');
+const { Op } = require('sequelize');
 
 class WalletHandler {
   static async handleWalletCommand(ctx) {
@@ -149,6 +150,9 @@ class WalletHandler {
         profile = await models.UserProfile.create({ userId });
       }
 
+      const { getBlockchainManager } = require('../blockchain/manager');
+      const { getDB } = require('../database');
+
       if (session.currentStep === 'AWAITING_EVM_ADDRESS') {
         // Basic validation for EVM address
         if (!/^0x[a-fA-F0-9]{40}$/.test(message)) {
@@ -172,6 +176,9 @@ class WalletHandler {
           `<code>${message}</code>`,
           { parse_mode: 'HTML' }
         );
+
+        // Find and continue any pending flip
+        await this.continueFlipAfterWallet(ctx, userId, models, 'EVM');
 
         return true;
       } else if (session.currentStep === 'AWAITING_SOLANA_ADDRESS') {
@@ -198,6 +205,9 @@ class WalletHandler {
           { parse_mode: 'HTML' }
         );
 
+        // Find and continue any pending flip
+        await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');
+
         return true;
       }
 
@@ -206,6 +216,79 @@ class WalletHandler {
       logger.error('Error in processWalletAddressInput:', error);
       await ctx.reply('❌ Error processing wallet address. Please try again.');
       return true;
+    }
+  }
+
+  static async continueFlipAfterWallet(ctx, userId, models, network) {
+    try {
+      // Find an active flip session
+      const flipSession = await models.BotSession.findOne({
+        where: {
+          userId,
+          sessionType: { [Op.in]: ['INITIATING', 'CONFIRMING_DEPOSIT'] },
+        },
+      });
+
+      if (!flipSession) {
+        logger.info('No active flip to continue', { userId, network });
+        return;
+      }
+
+      const flip = await models.CoinFlip.findByPk(flipSession.data?.flipId || flipSession.coinFlipId);
+      if (!flip) {
+        logger.warn('Flip not found for continuation', { flipSessionId: flipSession.id });
+        return;
+      }
+
+      // Check if this is the right network
+      if (flip.tokenNetwork !== network) {
+        logger.info('Flip network mismatch, skipping auto-continue', { flipNetwork: flip.tokenNetwork, userNetwork: network });
+        return;
+      }
+
+      logger.info('Continuing flip after wallet update', { flipId: flip.id, userId, network });
+
+      // Update session to awaiting deposit
+      flipSession.currentStep = 'AWAITING_DEPOSIT';
+      await flipSession.save();
+
+      // Show deposit instructions
+      const blockchainManager = require('../blockchain/manager').getBlockchainManager();
+      const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+      const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+
+      // Store wallet address in flip
+      if (flipSession.sessionType === 'INITIATING') {
+        flip.creatorDepositWalletAddress = network === 'EVM' ? 
+          (await models.UserProfile.findByPk(userId))?.evmWalletAddress :
+          (await models.UserProfile.findByPk(userId))?.solanaWalletAddress;
+      } else if (flipSession.sessionType === 'CONFIRMING_DEPOSIT') {
+        flip.challengerDepositWalletAddress = network === 'EVM' ? 
+          (await models.UserProfile.findByPk(userId))?.evmWalletAddress :
+          (await models.UserProfile.findByPk(userId))?.solanaWalletAddress;
+      }
+      await flip.save();
+
+      await ctx.reply(
+        `💰 <b>Send Your Deposit</b>\n\n` +
+        `You have <b>3 minutes</b> to complete this.\n\n` +
+        `<b>Wager Amount:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+        `<b>Network:</b> ${flip.tokenNetwork}\n\n` +
+        `📮 <b>Send to this address:</b>\n\n` +
+        `<code>${botWalletAddress}</code>\n\n` +
+        `Once sent, click the button below:`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback(
+              '✅ I Sent the Deposit',
+              flipSession.sessionType === 'INITIATING' ? `creator_deposit_confirmed_${flip.id}` : `deposit_confirmed_${flipSession.id}`
+            )],
+          ]).reply_markup,
+        }
+      );
+    } catch (error) {
+      logger.error('Error continuing flip after wallet update:', error);
     }
   }
 }
