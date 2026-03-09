@@ -195,6 +195,7 @@ async function initBot() {
     bot.action(/^accept_flip_(.+)$/, async (ctx) => {
       const flipId = ctx.match[1];
       const { models } = getDB();
+      const userId = ctx.from.id;
       
       const flip = await models.CoinFlip.findByPk(flipId);
       if (!flip) {
@@ -203,10 +204,28 @@ async function initBot() {
       }
 
       try {
+        logger.info('Accept flip action triggered', { flipId, userId });
+        
+        // Show loading popup
+        await ctx.answerCbQuery('⏳ Accepting challenge...');
+        
+        // Call the flip handler (which sends auto-DM)
         await FlipHandler.acceptFlip(ctx, flipId);
+        
+        // Delete the message button to clean up group
         await ctx.deleteMessage().catch(() => {});
+        
+        // Also send a follow-up to the user in the group to explain        
+        await ctx.reply(
+          '✅ <b>Challenge Accepted!</b>\n\n' +
+          'Check your DM with the bot to confirm and send your deposit.',
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+        
+        logger.info('Accept flip completed', { flipId, userId });
       } catch (error) {
-        logger.error('Error accepting flip', error);
+        logger.error('Error accepting flip', { error: error.message, flipId, userId });
+        await ctx.answerCbQuery('❌ Error accepting challenge').catch(() => {});
       }
     });
 

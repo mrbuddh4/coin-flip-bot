@@ -437,13 +437,23 @@ class FlipHandler {
 
       // Send confirmation prompt directly to challenger's DM
       try {
-        await ctx.telegram.sendMessage(
+        const botInfo = await ctx.telegram.getMe();
+        const deeplink = `https://t.me/${botInfo.username}?start=confirm_${confirmSession.id}`;
+        
+        logger.info('Sending confirmation DM to challenger', { 
+          challengerId, 
+          flipId, 
+          sessionId: confirmSession.id,
+          deeplink 
+        });
+        
+        const dmResult = await ctx.telegram.sendMessage(
           challengerId,
           `🪙 <b>Challenge Accepted!</b>\n\n` +
           `${creatorDisplay} challenged you to a flip!\n\n` +
           `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
           `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
-          `Click the button below to confirm:`,
+          `Tap the button below to confirm and send your deposit:`,
           {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([
@@ -451,9 +461,19 @@ class FlipHandler {
             ]).reply_markup,
           }
         );
-        logger.info('Sent confirmation DM to challenger', { challengerId, flipId });
+        logger.info('Sent confirmation DM to challenger', { challengerId, flipId, messageId: dmResult.message_id });
       } catch (dmErr) {
-        logger.warn('Failed to send confirmation DM', { error: dmErr.message, challengerId });
+        logger.error('Failed to send confirmation DM', { error: dmErr.message, dmErrCode: dmErr.code, challengerId, flipId });
+        // If DM fails, try to send a group message instead
+        try {
+          await ctx.reply(
+            `⚠️ <b>Couldn't send DM to challenger</b>\n\n` +
+            `${challengerDisplay}, please open a DM with the bot and use /start to continue.`,
+            { parse_mode: 'HTML' }
+          );
+        } catch (err) {
+          logger.warn('Failed to send group fallback message', err.message);
+        }
       }
 
       await ctx.answerCbQuery('✅ Check your DM to confirm the challenge!');
