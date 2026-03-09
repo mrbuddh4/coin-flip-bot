@@ -1080,9 +1080,20 @@ const handlers = {
 
       // Cancel flip if found
       if (activeFlip) {
+        const flipIdBefore = activeFlip.id;
+        const statusBefore = activeFlip.status;
+        
         activeFlip.status = 'CANCELLED';
         await activeFlip.save();
-        logger.info('Cancelled flip', { flipId: activeFlip.id, userId });
+        
+        // Verify it was saved
+        const verifyFlip = await models.CoinFlip.findByPk(flipIdBefore);
+        logger.info('Flip cancellation verification', { 
+          flipId: flipIdBefore, 
+          statusBefore, 
+          statusAfter: verifyFlip.status,
+          saved: verifyFlip.status === 'CANCELLED'
+        });
 
         await ctx.reply(
           `✅ Your active flip has been cancelled.\n\n` +

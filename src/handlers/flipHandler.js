@@ -131,7 +131,15 @@ class FlipHandler {
       });
 
       if (activeFlip) {
-        logger.warn('Attempted to create flip while one is active', { groupId, activeFlipId: activeFlip.id });
+        logger.warn('Attempted to create flip while one is active', { 
+          groupId, 
+          activeFlipId: activeFlip.id,
+          activeFlipStatus: activeFlip.status,
+          activeFlipCreatorId: activeFlip.creatorId,
+          activeFlipChallengerId: activeFlip.challengerId,
+          userId,
+          createdAt: activeFlip.createdAt,
+        });
         await ctx.reply(
           `⏸️ <b>A flip is already in progress!</b>\n\n` +
           `Only one coin flip can happen at a time in this group.\n` +
