@@ -786,6 +786,17 @@ async function initBot() {
       }
     });
 
+    // Handle wallet menu button from /start
+    bot.action('open_wallet_menu', async (ctx) => {
+      try {
+        ctx.state.models = getDB().models;
+        await WalletHandler.handleWalletCommand(ctx);
+      } catch (error) {
+        logger.error('Error opening wallet menu', { error: error.message });
+        await ctx.answerCbQuery('❌ Error opening wallet menu');
+      }
+    });
+
     logger.info('Bot initialized successfully');
     console.log('✅ Bot ready!');
   } catch (error) {
@@ -926,6 +937,30 @@ const handlers = {
       }
 
       // Regular start message
+      const { models } = getDB();
+      
+      // Check if user has wallet addresses set up
+      const userProfile = await models.UserProfile.findByPk(userId);
+      const hasWallets = userProfile?.evmWalletAddress || userProfile?.solanaWalletAddress;
+      
+      if (!hasWallets) {
+        // First time user - prompt to add wallets
+        await ctx.reply(
+          `🪙 <b>Welcome to Coin Flip Bot!</b>\n\n` +
+          `Before you can start playing, please set up your wallet addresses.\n\n` +
+          `These will be used to send you your winnings automatically.\n\n` +
+          `Tap the button below to add your wallets:`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('💳 Add Wallet Addresses', 'open_wallet_menu')],
+            ]).reply_markup,
+          }
+        );
+        return;
+      }
+      
+      // User already has wallets - show welcome message
       await ctx.reply(
         `🪙 <b>Welcome to Coin Flip Bot!</b>\n\n` +
         `Start a coin flip game from any group chat by using the buttons that appear.\n\n` +
