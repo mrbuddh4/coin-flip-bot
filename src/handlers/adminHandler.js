@@ -193,6 +193,71 @@ class AdminHandler {
   }
 
   /**
+   * Admin cleanup - cancel stuck flips and clear sessions
+   */
+  static async cleanup(ctx) {
+    if (!this.isAdmin(ctx.from.id)) {
+      await ctx.reply('❌ Not authorized.');
+      return;
+    }
+
+    try {
+      const { models } = getDB();
+      const { Op } = require('sequelize');
+
+      // Get all active flips before cleanup
+      const activeFlips = await models.CoinFlip.findAll({
+        where: {
+          status: {
+            [Op.notIn]: ['COMPLETED', 'CANCELLED'],
+          },
+        },
+      });
+
+      logger.info('Cleanup: Found active flips', { count: activeFlips.length, flips: activeFlips.map(f => ({ id: f.id, status: f.status, creator: f.creatorId, challenger: f.challengerId })) });
+
+      // Cancel all active flips
+      const cancelledCount = await models.CoinFlip.update(
+        { status: 'CANCELLED' },
+        {
+          where: {
+            status: {
+              [Op.notIn]: ['COMPLETED', 'CANCELLED'],
+            },
+          },
+        }
+      );
+
+      // Clear all active sessions (except LAST_GROUP_ACTIVITY)
+      const clearedSessions = await models.BotSession.destroy({
+        where: {
+          sessionType: {
+            [Op.ne]: 'LAST_GROUP_ACTIVITY',
+          },
+        },
+      });
+
+      logger.info('Cleanup completed', { flipsC cancelled: cancelledCount[0], sessionsClear: clearedSessions });
+
+      let message = `🧹 <b>Cleanup Complete</b>\n\n`;
+      message += `Flips Cancelled: ${cancelledCount[0]}\n`;
+      message += `Sessions Cleared: ${clearedSessions}\n\n`;
+
+      if (activeFlips.length > 0) {
+        message += `<b>Cancelled Flips:</b>\n`;
+        activeFlips.forEach(flip => {
+          message += `• ${flip.id.substring(0, 8)}: Creator ${flip.creatorId}, Challenger ${flip.challengerId || 'None'}\n`;
+        });
+      }
+
+      await ctx.reply(message, { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.error('Error during cleanup', error);
+      await ctx.reply(`❌ Cleanup error: ${error.message}`);
+    }
+  }
+
+  /**
    * Register admin commands
    */
   static registerCommands(bot) {
@@ -201,6 +266,7 @@ class AdminHandler {
     bot.command('admin_users', ctx => this.users(ctx));
     bot.command('admin_broadcast', ctx => this.broadcast(ctx));
     bot.command('admin_debug', ctx => this.debug(ctx));
+    bot.command('admin_cleanup', ctx => this.cleanup(ctx));
 
     // For flip details: /flip_<id>
     bot.hears(/^\/flip_(.+)$/, (ctx) => {

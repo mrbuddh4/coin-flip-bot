@@ -1206,11 +1206,19 @@ const handlers = {
           },
         });
 
-        if (activeFlip) {
+        if (activeFlip && activeFlip.creatorId === ctx.from.id) {
           await ctx.reply(
-            `⏸️ <b>A flip is already in progress!</b>\n\n` +
-            `Only one coin flip can happen at a time.\n` +
-            `Please wait for the current flip to complete.`,
+            `⏸️ <b>You already have a flip in progress!</b>\n\n` +
+            `Please wait for it to complete before starting another one.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        if (activeFlip && activeFlip.status === 'WAITING_CHALLENGER') {
+          await ctx.reply(
+            `ℹ️ <b>A flip is waiting for a challenger!</b>\n\n` +
+            `Accept the challenge above or wait for it to complete.`,
             { parse_mode: 'HTML' }
           );
           return;
@@ -1275,11 +1283,19 @@ const handlers = {
           },
         });
 
-        if (activeFlip) {
+        if (activeFlip && activeFlip.creatorId === userId) {
           await ctx.reply(
-            `⏸️ <b>A flip is already in progress!</b>\n\n` +
-            `Only one coin flip can happen at a time.\n` +
-            `Please wait for the current flip to complete.`,
+            `⏸️ <b>You already have a flip in progress!</b>\n\n` +
+            `Please wait for it to complete before starting another one.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        if (activeFlip && activeFlip.status === 'WAITING_CHALLENGER') {
+          await ctx.reply(
+            `ℹ️ <b>A flip is waiting for a challenger!</b>\n\n` +
+            `Accept the challenge above or wait for it to complete.`,
             { parse_mode: 'HTML' }
           );
           return;
