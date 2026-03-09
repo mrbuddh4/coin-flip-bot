@@ -120,6 +120,27 @@ class FlipHandler {
         return;
       }
 
+      // Check if there's already an active flip in this group
+      const activeFlip = await models.CoinFlip.findOne({
+        where: {
+          groupChatId: groupId,
+          status: {
+            [require('sequelize').Op.notIn]: ['COMPLETED', 'CANCELLED'],
+          },
+        },
+      });
+
+      if (activeFlip) {
+        logger.warn('Attempted to create flip while one is active', { groupId, activeFlipId: activeFlip.id });
+        await ctx.reply(
+          `⏸️ <b>A flip is already in progress!</b>\n\n` +
+          `Only one coin flip can happen at a time in this group.\n` +
+          `Please wait for the current flip to complete.`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
       // Create flip record with WAITING_CREATOR_DEPOSIT status (won't post to group yet)
       const flip = await models.CoinFlip.create({
         groupChatId: groupId,
@@ -497,18 +518,23 @@ class FlipHandler {
       const token = session.data.tokenInfo;
       const groupChatId = session.data.groupChatId;
 
-      // Check for active flip in this group
+      // Check for active flip in this group (any flip not completed or cancelled)
       const activeFlip = await models.CoinFlip.findOne({
         where: {
           groupChatId,
           status: {
-            [Op.in]: ['WAITING_CHALLENGER', 'WAITING_CHALLENGER_DEPOSIT', 'WAITING_EXECUTION'],
+            [Op.notIn]: ['COMPLETED', 'CANCELLED'],
           },
         },
       });
 
       if (activeFlip) {
-        await ctx.reply('⏳ A coin flip is already in progress in that group.');
+        await ctx.reply(
+          `⏸️ <b>A flip is already in progress!</b>\n\n` +
+          `Only one coin flip can happen at a time in this group.\n` +
+          `Please wait for the current flip to complete.`,
+          { parse_mode: 'HTML' }
+        );
         return;
       }
 

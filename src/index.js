@@ -1043,6 +1043,26 @@ const handlers = {
       }
 
       if (isGroup) {
+        // Check if there's already an active flip in this group
+        const activeFlip = await models.CoinFlip.findOne({
+          where: {
+            groupChatId: ctx.chat.id,
+            status: {
+              [Op.notIn]: ['COMPLETED', 'CANCELLED'],
+            },
+          },
+        });
+
+        if (activeFlip) {
+          await ctx.reply(
+            `⏸️ <b>A flip is already in progress!</b>\n\n` +
+            `Only one coin flip can happen at a time.\n` +
+            `Please wait for the current flip to complete.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
         // In group: Create a session and post a button to start flip in DM
         const session = await models.BotSession.create({
           userId,
@@ -1087,6 +1107,26 @@ const handlers = {
           await ctx.reply(
             `❌ I don't know which group to post to!\n\n` +
             `Please use /flip in a group first to set up your group context.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        // Check if there's already an active flip in this group
+        const activeFlip = await models.CoinFlip.findOne({
+          where: {
+            groupChatId: lastGroupSession.data.groupId,
+            status: {
+              [Op.notIn]: ['COMPLETED', 'CANCELLED'],
+            },
+          },
+        });
+
+        if (activeFlip) {
+          await ctx.reply(
+            `⏸️ <b>A flip is already in progress!</b>\n\n` +
+            `Only one coin flip can happen at a time.\n` +
+            `Please wait for the current flip to complete.`,
             { parse_mode: 'HTML' }
           );
           return;
