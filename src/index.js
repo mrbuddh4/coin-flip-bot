@@ -1119,10 +1119,16 @@ const handlers = {
 
       logger.info('DM message received', { userId, message });
 
-      // Find active session
+      // Find most recently UPDATED active session (not just created)
+      // Exclude LAST_GROUP_ACTIVITY which are just tracking group context
       const activeSession = await models.BotSession.findOne({
-        where: { userId },
-        order: [['createdAt', 'DESC']],
+        where: { 
+          userId,
+          sessionType: {
+            [Op.ne]: 'LAST_GROUP_ACTIVITY',
+          },
+        },
+        order: [['updatedAt', 'DESC']],
       });
 
       if (!activeSession) {
