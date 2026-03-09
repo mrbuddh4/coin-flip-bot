@@ -182,8 +182,8 @@ class WalletHandler {
 
         return true;
       } else if (session.currentStep === 'AWAITING_SOLANA_ADDRESS') {
-        // Basic validation for Solana address
-        if (!/^[1-9A-HJ-NP-Z]{32,44}$/.test(message)) {
+        // Basic validation for Solana address (Base58: no I, O, l, o)
+        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(message)) {
           await ctx.reply(
             `❌ Invalid Solana address format.\n\n` +
             `Please provide a valid Solana wallet address (Base58 encoded, 32-44 characters)`,
