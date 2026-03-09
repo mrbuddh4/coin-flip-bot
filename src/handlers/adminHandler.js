@@ -237,7 +237,7 @@ class AdminHandler {
         },
       });
 
-      logger.info('Cleanup completed', { flipsC cancelled: cancelledCount[0], sessionsClear: clearedSessions });
+      logger.info('Cleanup completed', { flipsCancelled: cancelledCount[0], sessionsClear: clearedSessions });
 
       let message = `🧹 <b>Cleanup Complete</b>\n\n`;
       message += `Flips Cancelled: ${cancelledCount[0]}\n`;
