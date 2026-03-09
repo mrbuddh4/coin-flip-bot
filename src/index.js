@@ -1030,6 +1030,28 @@ const handlers = {
     try {
       const { models } = getDB();
       const userId = ctx.from.id;
+      const chatId = ctx.chat.id;
+      const isGroup = ctx.chat.type !== 'private';
+
+      logger.info('Cancel command initiated', { userId, chatId, isGroup });
+
+      // Find active flip first (before deleting sessions)
+      let activeFlip = null;
+      if (isGroup) {
+        activeFlip = await models.CoinFlip.findOne({
+          where: {
+            groupChatId: chatId,
+            status: {
+              [Op.notIn]: ['COMPLETED', 'CANCELLED'],
+            },
+          },
+        });
+        logger.info('Found active flip in group', { flipId: activeFlip?.id, creatorId: activeFlip?.creatorId, challengerId: activeFlip?.challengerId });
+      }
+
+      // Check if user is involved with the flip
+      const isUserInvolved = activeFlip && (activeFlip.creatorId === userId || activeFlip.challengerId === userId);
+      logger.info('User involvement check', { isUserInvolved, userId });
 
       // Delete all active sessions for this user (except LAST_GROUP_ACTIVITY)
       const deleted = await models.BotSession.destroy({
@@ -1043,41 +1065,30 @@ const handlers = {
 
       logger.info('Cancelled sessions for user', { userId, sessionsDeleted: deleted });
 
-      // If in a group or DM that's involved with a flip, find and cancel the flip
-      if (ctx.chat.type !== 'private') {
-        const activeFlip = await models.CoinFlip.findOne({
-          where: {
-            groupChatId: ctx.chat.id,
-            status: {
-              [Op.notIn]: ['COMPLETED', 'CANCELLED'],
-            },
-          },
-        });
+      // Cancel flip if user is involved
+      if (isUserInvolved) {
+        activeFlip.status = 'CANCELLED';
+        await activeFlip.save();
+        logger.info('Cancelled flip', { flipId: activeFlip.id, userId });
 
-        if (activeFlip && (activeFlip.creatorId === userId || activeFlip.challengerId === userId)) {
-          activeFlip.status = 'CANCELLED';
-          await activeFlip.save();
-
-          logger.info('Cancelled flip from group', { flipId: activeFlip.id, userId });
-
-          await ctx.reply(
-            `✅ Your active flip has been cancelled.\n\n` +
-            `You can start a new one anytime with /flip`,
-            { parse_mode: 'HTML' }
-          );
-        } else {
-          await ctx.reply('No active session to cancel.');
-        }
-      } else {
-        // In DM
         await ctx.reply(
-          `✅ Your active session has been cleared!\n\n` +
-          `You can start a new flip anytime with /flip`,
+          `✅ Your active flip has been cancelled.\n\n` +
+          `You can start a new one anytime with /flip`,
           { parse_mode: 'HTML' }
         );
+      } else if (isGroup && activeFlip) {
+        // Flip exists but user is not involved
+        await ctx.reply(`❌ You're not involved in the active flip here.`);
+      } else {
+        // No active flip
+        const message = isGroup 
+          ? `✅ Your sessions have been cleared!\n\nYou can start a new flip anytime with /flip`
+          : `✅ Your active session has been cleared!\n\nYou can start a new flip anytime with /flip`;
+        
+        await ctx.reply(message, { parse_mode: 'HTML' });
       }
     } catch (error) {
-      logger.error('Error canceling session', error);
+      logger.error('Error canceling session', { error: error.message, stack: error.stack });
       await ctx.reply('❌ Error canceling session. Please try again.');
     }
   },
