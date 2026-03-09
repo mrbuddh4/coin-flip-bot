@@ -111,6 +111,7 @@ async function initBot() {
       try {
         ctx.state.models = getDB().models;
         await WalletHandler.handleUpdateEVM(ctx);
+        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error updating EVM wallet', error);
         await ctx.answerCbQuery('Error', true);
@@ -121,6 +122,7 @@ async function initBot() {
       try {
         ctx.state.models = getDB().models;
         await WalletHandler.handleUpdateSolana(ctx);
+        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error updating Solana wallet', error);
         await ctx.answerCbQuery('Error', true);
@@ -131,6 +133,7 @@ async function initBot() {
       try {
         ctx.state.models = getDB().models;
         await WalletHandler.handleRemoveAll(ctx);
+        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error removing wallets', error);
         await ctx.answerCbQuery('Error', true);
@@ -199,11 +202,21 @@ async function initBot() {
         return;
       }
 
-      await FlipHandler.acceptFlip(ctx, flipId);
+      try {
+        await FlipHandler.acceptFlip(ctx, flipId);
+        await ctx.deleteMessage().catch(() => {});
+      } catch (error) {
+        logger.error('Error accepting flip', error);
+      }
     });
 
     bot.action(/^cancel_flip_(.+)$/, async (ctx) => {
-      await ExecutionHandler.cancelFlip(ctx, ctx.match[1]);
+      try {
+        await ExecutionHandler.cancelFlip(ctx, ctx.match[1]);
+        await ctx.deleteMessage().catch(() => {});
+      } catch (error) {
+        logger.error('Error canceling flip', error);
+      }
     });
 
     // Confirm flip challenge from DM prompt
@@ -350,6 +363,9 @@ async function initBot() {
         }
 
         logger.info('Flip challenge confirmed', { userId, flipId });
+        
+        // Delete the original message with the button
+        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error confirming flip', {
           message: error.message,
@@ -436,6 +452,9 @@ async function initBot() {
         await ctx.answerCbQuery('Challenge rejected');
 
         logger.info('Flip challenge rejected', { userId, flipId });
+        
+        // Delete the original message with the button
+        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error rejecting flip', {
           message: error.message,
@@ -551,6 +570,9 @@ async function initBot() {
         });
         await ctx.answerCbQuery('❌ Error confirming deposit');
       }
+      
+      // Delete the button message after handling
+      await ctx.deleteMessage().catch(() => {});
     });
 
     // Handle creator deposit confirmation - posts challenge to group after creator deposit verified
@@ -645,6 +667,9 @@ async function initBot() {
         );
 
         logger.info('[creator_deposit_confirmed] Challenge posted to group', { flipId, groupMessageId: groupMessage.message_id });
+        
+        // Delete the button message after handling
+        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error confirming creator deposit', {
           message: error.message,
