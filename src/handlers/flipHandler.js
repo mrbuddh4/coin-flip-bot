@@ -138,20 +138,56 @@ class FlipHandler {
 
       // Update session with flip ID
       session.coinFlipId = flip.id;
-      session.currentStep = 'AWAITING_WALLET_ADDRESS';
       session.data = {
         ...session.data,
         flipId: flip.id,
         wagerAmount: wagerAmount.toString(),
       };
-      await session.save();
+      
+      // Check if user has a wallet address in their profile
+      const userProfile = await models.UserProfile.findByPk(userId);
+      const walletField = tokenInfo.network === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
+      const storedWallet = userProfile?.[walletField];
 
-      // Ask for wallet address first
-      await ctx.reply(
-        `Before you send the deposit, please provide your <b>${tokenInfo.network} wallet address</b> where you'd like to receive your winnings.\n\n` +
-        `Simply reply with your wallet address (e.g., 0x... for EVM or ... for Solana)`,
-        { parse_mode: 'HTML' }
-      );
+      if (storedWallet) {
+        // Use stored wallet address
+        flip.creatorDepositWalletAddress = storedWallet;
+        await flip.save();
+
+        logger.info('Using stored wallet address for creator', { flipId: flip.id, network: tokenInfo.network });
+
+        session.currentStep = 'AWAITING_DEPOSIT';
+        await session.save();
+
+        // Show deposit instructions directly
+        const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+        await ctx.reply(
+          `💰 <b>Send Your Deposit</b>\n\n` +
+          `You have <b>3 minutes</b> to complete this.\n\n` +
+          `<b>Wager Amount:</b> ${formattedWager} ${tokenInfo.symbol}\n` +
+          `<b>Network:</b> ${tokenInfo.network}\n\n` +
+          `📮 <b>Send to this address:</b>\n\n` +
+          `<code>${botWalletAddress}</code>\n\n` +
+          `Once sent, click the button below:`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('✅ I Sent the Deposit', `creator_deposit_confirmed_${flip.id}`)],
+            ]).reply_markup,
+          }
+        );
+      } else {
+        // No stored wallet - ask user to set it up
+        session.currentStep = 'AWAITING_WALLET_ADDRESS';
+        await session.save();
+
+        await ctx.reply(
+          `❌ <b>Wallet Address Required</b>\n\n` +
+          `We need your ${tokenInfo.network} wallet address to send you your winnings!\n\n` +
+          `Use /wallet to add your receiving addresses, then come back here to continue.`,
+          { parse_mode: 'HTML' }
+        );
+      }
 
       // Set timeout for creator deposit
       setTimeout(() => {

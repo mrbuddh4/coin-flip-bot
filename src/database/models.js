@@ -133,11 +133,25 @@ const defineModels = (sequelize) => {
     updatedAt: DataTypes.DATE,
   });
 
+  // UserProfile Model - stores wallet addresses for receiving winnings
+  const UserProfile = sequelize.define('UserProfile', {
+    userId: {
+      type: DataTypes.BIGINT,
+      primaryKey: true,
+      allowNull: false,
+    },
+    evmWalletAddress: DataTypes.STRING,
+    solanaWalletAddress: DataTypes.STRING,
+    createdAt: DataTypes.DATE,
+    updatedAt: DataTypes.DATE,
+  });
+
   return {
     User,
     CoinFlip,
     Transaction,
     BotSession,
+    UserProfile,
   };
 };
 
