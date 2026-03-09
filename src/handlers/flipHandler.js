@@ -414,13 +414,17 @@ class FlipHandler {
       // Format wager amount to remove unnecessary decimals
       const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
+      // Get creator's and challenger's user info for display
+      const creator = await models.User.findByPk(flip.creatorId);
+      const creatorDisplay = creator?.username ? `@${creator.username}` : creator?.firstName || 'A player';
+      
       // Get challenger's username or name
       const challenger = await models.User.findByPk(challengerId);
-      const challengerDisplay = challenger?.username ? challenger.username : challenger?.firstName || 'Challenger';
+      const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
 
       await ctx.editMessageText(
         `🪙 <b>Challenger Found!</b>\n\n` +
-        `<a href="tg://user?id=${challengerId}">${challengerDisplay}</a> is reviewing the flip.\n\n` +
+        `${challengerDisplay} is reviewing the flip.\n\n` +
         `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
         `🌐 <b>Network:</b> ${flip.tokenNetwork}`,
         {
@@ -430,6 +434,27 @@ class FlipHandler {
           ]).reply_markup,
         }
       );
+
+      // Send confirmation prompt directly to challenger's DM
+      try {
+        await ctx.telegram.sendMessage(
+          challengerId,
+          `🪙 <b>Challenge Accepted!</b>\n\n` +
+          `${creatorDisplay} challenged you to a flip!\n\n` +
+          `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+          `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
+          `Click the button below to confirm:`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.url('✅ Confirm Challenge', deeplink)],
+            ]).reply_markup,
+          }
+        );
+        logger.info('Sent confirmation DM to challenger', { challengerId, flipId });
+      } catch (dmErr) {
+        logger.warn('Failed to send confirmation DM', { error: dmErr.message, challengerId });
+      }
 
       await ctx.answerCbQuery('✅ Check your DM to confirm the challenge!');
 
