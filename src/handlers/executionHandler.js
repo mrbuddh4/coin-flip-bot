@@ -9,7 +9,7 @@ class ExecutionHandler {
   /**
    * Execute the coin flip once both deposits are confirmed
    */
-  static async executeFlip(flipId, ctx) {
+  static async executeFlip(flipId, ctx, videoMessageId) {
     try {
       const { models } = getDB();
       const flip = await models.CoinFlip.findByPk(flipId);
@@ -222,6 +222,16 @@ class ExecutionHandler {
             parse_mode: 'HTML',
           }
         );
+        
+        // Delete the video message now that result is displayed
+        if (videoMessageId) {
+          try {
+            await ctx.telegram.deleteMessage(flip.groupChatId, videoMessageId);
+            logger.info('Deleted video message after flip result', { flipId, videoMessageId });
+          } catch (deleteErr) {
+            logger.warn('Failed to delete video message', { flipId, videoMessageId, error: deleteErr.message });
+          }
+        }
       } catch (editErr) {
         logger.warn('Failed to edit group message with result', { flipId, error: editErr.message });
         // Fallback: send a new message if edit fails
@@ -233,6 +243,16 @@ class ExecutionHandler {
               parse_mode: 'HTML',
             }
           );
+          
+          // Delete the video message now that result is displayed
+          if (videoMessageId) {
+            try {
+              await ctx.telegram.deleteMessage(flip.groupChatId, videoMessageId);
+              logger.info('Deleted video message after flip result', { flipId, videoMessageId });
+            } catch (deleteErr) {
+              logger.warn('Failed to delete video message', { flipId, videoMessageId, error: deleteErr.message });
+            }
+          }
         } catch (err) {
           logger.error('Failed to send flip result to group', { flipId, error: err.message });
         }

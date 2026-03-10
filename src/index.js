@@ -685,13 +685,14 @@ async function initBot() {
           clearChallengeTimeout(flipId);
 
           // Send coin flip video to group before revealing result
+          let videoMessageId = null;
           try {
             const fs = require('fs');
             const path = require('path');
             const videoPath = path.join(__dirname, '../assets/coinflip.MP4');
             
             if (fs.existsSync(videoPath)) {
-              await ctx.telegram.sendVideo(
+              const sentMessage = await ctx.telegram.sendVideo(
                 flip.groupChatId,
                 { source: fs.createReadStream(videoPath) },
                 {
@@ -699,13 +700,14 @@ async function initBot() {
                   parse_mode: 'HTML',
                 }
               );
+              videoMessageId = sentMessage.message_id;
             }
           } catch (videoErr) {
             logger.warn('Failed to send flip video', { flipId, error: videoErr.message });
           }
 
-          // Execute the flip
-          await ExecutionHandler.executeFlip(flipId, ctx);
+          // Execute the flip and pass video message ID to delete it after result
+          await ExecutionHandler.executeFlip(flipId, ctx, videoMessageId);
         } else {
 
           // Notify creator in group
@@ -1486,7 +1488,7 @@ async function handleChallengerDepositConfirm(ctx) {
   clearChallengeTimeout(flip.id);
 
   // Execute the flip
-  await ExecutionHandler.executeFlip(flip.id, ctx);
+  await ExecutionHandler.executeFlip(flip.id, ctx, null);
 }
 
 /**
