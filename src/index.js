@@ -70,19 +70,34 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
               flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenge expired (no acceptances within 4 minutes)' };
               await flipCheck.save();
 
-              // Notify group
+              // Notify group - try caption edit first (for photos), then text edit (for text messages)
               try {
-                await telegram.editMessageText(
-                  groupId,
-                  groupMessageId,
-                  null,
+                await telegram.editMessageCaption(
                   `❌ <b>Challenge Expired</b>\n\n` +
                   `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
                   `expired because no one accepted it.`,
-                  { parse_mode: 'HTML' }
+                  {
+                    chat_id: groupId,
+                    message_id: groupMessageId,
+                    parse_mode: 'HTML'
+                  }
                 );
-              } catch (err) {
-                logger.warn('[challengeTimeout] Failed to update group message', { flipId, error: err.message });
+              } catch (captionErr) {
+                // If caption edit fails, try text edit
+                logger.info('[challengeTimeout] Caption edit failed, trying text edit', { error: captionErr.message });
+                try {
+                  await telegram.editMessageText(
+                    groupId,
+                    groupMessageId,
+                    null,
+                    `❌ <b>Challenge Expired</b>\n\n` +
+                    `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
+                    `expired because no one accepted it.`,
+                    { parse_mode: 'HTML' }
+                  );
+                } catch (textErr) {
+                  logger.warn('[challengeTimeout] Both caption and text edits failed', { flipId, captionErr: captionErr.message, textErr: textErr.message });
+                }
               }
             }
             delete challengeTimeouts[flipId];
