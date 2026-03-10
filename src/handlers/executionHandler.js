@@ -148,6 +148,7 @@ class ExecutionHandler {
         logger.info('[executeFlip] Sending burn fee', { flipId, burnAddress, burnFeeAmount, tokenAddress: flip.tokenAddress, tokenDecimals: flip.tokenDecimals });
         console.log(`[executeFlip] BURN FEE - Amount: ${burnFeeAmount}, To: ${burnAddress}, Token: ${flip.tokenAddress}`);
         const blockchainManager = getBlockchainManager();
+        logger.info('[executeFlip] About to call sendWinnings for burn', { burnAddress, burnFeeAmount });
         const burnResult = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
           flip.tokenAddress,
@@ -159,7 +160,7 @@ class ExecutionHandler {
         console.log(`[SUCCESS] Burn fee sent with txHash: ${burnResult.txHash}`);
       } catch (burnFeeError) {
         logger.error('[executeFlip] ERROR SENDING BURN FEE', { flipId, burnAddress, burnFeeAmount, error: burnFeeError.message, stack: burnFeeError.stack });
-        console.error(`[ERROR] Burn fee failed:`, burnFeeError.message);
+        console.error(`[ERROR] Burn fee failed:`, burnFeeError.message, burnFeeError.stack);
       }
 
       // Update flip record with result
