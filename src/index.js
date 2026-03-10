@@ -1342,7 +1342,15 @@ const handlers = {
 
           logger.info('[start] Accepted flip via deeplink', { flipId, userId });
 
-          // Update group message to show "Challenger Found!"
+          // Delete the original challenge message
+          try {
+            await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
+            logger.info('Deleted original challenge message', { flipId, groupMessageId: flip.groupMessageId });
+          } catch (delErr) {
+            logger.warn('Failed to delete original challenge message', { error: delErr.message });
+          }
+
+          // Send new "Challenger Found!" message
           try {
             const challenger = await models.User.findByPk(userId);
             const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
@@ -1354,31 +1362,14 @@ const handlers = {
               `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}\n\n` +
               `⏳ Processing deposits...`;
 
-            // Try to edit the original message
-            try {
-              await ctx.telegram.editMessageCaption(
-                groupText,
-                {
-                  chat_id: flip.groupChatId,
-                  message_id: flip.groupMessageId,
-                  parse_mode: 'HTML',
-                }
-              );
-            } catch (captionErr) {
-              // If caption edit fails, try text edit
-              await ctx.telegram.editMessageText(
-                groupText,
-                {
-                  chat_id: flip.groupChatId,
-                  message_id: flip.groupMessageId,
-                  parse_mode: 'HTML',
-                }
-              ).catch((textErr) => {
-                logger.warn('Both caption and text edits failed on group message', { error: textErr.message });
-              });
-            }
-          } catch (updateErr) {
-            logger.warn('Failed to update group message with acceptance', { error: updateErr.message });
+            await ctx.telegram.sendMessage(
+              flip.groupChatId,
+              groupText,
+              { parse_mode: 'HTML' }
+            );
+            logger.info('Sent new challenger found message', { flipId });
+          } catch (sendErr) {
+            logger.warn('Failed to send new challenger message', { error: sendErr.message });
           }
 
           // Check if user has a wallet address in their profile
@@ -1528,6 +1519,23 @@ const handlers = {
         try {
           const session = await models.BotSession.findByPk(sessionId);
           if (session && parseInt(session.userId) === userId) {
+            // Delete the original "Start a Coin Flip!" message from the group
+            if (session.data?.initialGroupMessageId && session.data?.groupId) {
+              try {
+                await ctx.telegram.deleteMessage(
+                  session.data.groupId,
+                  session.data.initialGroupMessageId
+                );
+                logger.info('Deleted initial Start Flip message from group', { 
+                  sessionId, 
+                  messageId: session.data.initialGroupMessageId,
+                  groupId: session.data.groupId
+                });
+              } catch (delErr) {
+                logger.warn('Failed to delete initial Start Flip message', { error: delErr.message });
+              }
+            }
+
             // Valid flip session, send token selection
             const supportedTokens = await getSupportedTokensList();
             
