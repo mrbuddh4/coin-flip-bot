@@ -869,6 +869,13 @@ async function initBot() {
           return;
         }
 
+        // Check if deposit already confirmed to prevent duplicate messages
+        if (flip.creatorDepositConfirmed) {
+          logger.info('[creator_deposit_confirmed] Deposit already confirmed, ignoring duplicate', { flipId, userId });
+          await ctx.answerCbQuery('✅ Already confirmed!');
+          return;
+        }
+
         logger.info('[creator_deposit_confirmed] Verifying creator deposit', { flipId, userId });
         await ctx.answerCbQuery('⏳ Verifying deposit...');
 
@@ -909,6 +916,17 @@ async function initBot() {
           );
         } catch (err) {
           logger.warn('Failed to edit creator confirmation message', err.message);
+        }
+
+        // Check if challenge was already posted (prevent duplicate posts from webhook retries)
+        if (flip.groupMessageId) {
+          logger.info('[creator_deposit_confirmed] Challenge already posted, skipping duplicate', { flipId, groupMessageId: flip.groupMessageId });
+          await ctx.editMessageText(
+            `✅ <b>Your Deposit Confirmed!</b>\n\n` +
+            `Your challenge has been posted to the group. Waiting for a challenger...`,
+            { parse_mode: 'HTML' }
+          );
+          return;
         }
 
         // Delete the old "Start a Coin Flip!" message from the group before posting the challenge
