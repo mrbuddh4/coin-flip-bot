@@ -630,6 +630,9 @@ class FlipHandler {
 
       // Send challenge message to group
       try {
+        const botInfo = await ctx.telegram.getMe();
+        const deeplink = `https://t.me/${botInfo.username}?start=accept_${flip.id}`;
+        
         const supportedTokens = Array.from(
           new Map(
             Object.entries(config.supportedTokens).map(([key, val]) => [val.symbol, val])
@@ -651,7 +654,7 @@ class FlipHandler {
           {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+              [Markup.button.url('Accept Challenge', deeplink)],
             ]).reply_markup,
           }
         );

@@ -43,6 +43,8 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
 
         try {
           // Send alert message to group
+          const botInfo = await telegram.getMe();
+          const deeplink = `https://t.me/${botInfo.username}?start=accept_${flipId}`;
           await telegram.sendMessage(
             groupId,
             `⏰ <b>Challenge Expiring!</b>\n\n` +
@@ -52,7 +54,7 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
             {
               parse_mode: 'HTML',
               reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('Accept Challenge', `accept_flip_${flipId}`)],
+                [Markup.button.url('Accept Challenge', deeplink)],
               ]).reply_markup,
             }
           );
@@ -251,6 +253,8 @@ async function initBot() {
               logger.info('[startup-timeout] Sending alert for active challenge', { flipId: flip.id });
               
               try {
+                const botInfo = await bot.telegram.getMe();
+                const deeplink = `https://t.me/${botInfo.username}?start=accept_${flipCheck.id}`;
                 await bot.telegram.sendMessage(
                   flipCheck.groupChatId,
                   `⏰ <b>Challenge Expiring!</b>\n\n` +
@@ -260,7 +264,7 @@ async function initBot() {
                   {
                     parse_mode: 'HTML',
                     reply_markup: Markup.inlineKeyboard([
-                      [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+                      [Markup.button.url('Accept Challenge', deeplink)],
                     ]).reply_markup,
                   }
                 );
@@ -726,6 +730,9 @@ async function initBot() {
         const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
         
         try {
+          const botInfo = await ctx.telegram.getMe();
+          const deeplink = `https://t.me/${botInfo.username}?start=accept_${flip.id}`;
+          
           const resetText = `🪙 <b>Coin Flip Challenge</b>\n\n` +
             `<a href="tg://user?id=${flip.creatorId}">A player</a> started a flip for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n\n` +
             `⏰ Waiting for another challenger...`;
@@ -747,7 +754,7 @@ async function initBot() {
                   caption: resetText,
                   parse_mode: 'HTML',
                   reply_markup: {
-                    inline_keyboard: [[{ text: 'Accept Challenge', callback_data: `accept_flip_${flip.id}` }]],
+                    inline_keyboard: [[{ text: 'Accept Challenge', url: deeplink }]],
                   },
                 }
               );
@@ -760,7 +767,7 @@ async function initBot() {
                 { 
                   parse_mode: 'HTML',
                   reply_markup: {
-                    inline_keyboard: [[{ text: 'Accept Challenge', callback_data: `accept_flip_${flip.id}` }]],
+                    inline_keyboard: [[{ text: 'Accept Challenge', url: deeplink }]],
                   },
                 }
               );
@@ -774,7 +781,7 @@ async function initBot() {
               { 
                 parse_mode: 'HTML',
                 reply_markup: {
-                  inline_keyboard: [[{ text: 'Accept Challenge', callback_data: `accept_flip_${flip.id}` }]],
+                  inline_keyboard: [[{ text: 'Accept Challenge', url: deeplink }]],
                 },
               }
             );
@@ -1092,6 +1099,9 @@ async function initBot() {
         const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
         const userRecord = await models.User.findByPk(userId);
         
+        const botInfo = await ctx.telegram.getMe();
+        const deeplink = `https://t.me/${botInfo.username}?start=accept_${flip.id}`;
+        
         let groupMessage;
         try {
           if (fs.existsSync(imagePath)) {
@@ -1106,7 +1116,7 @@ async function initBot() {
                 `⏰ Waiting for a challenger...`,
                 parse_mode: 'HTML',
                 reply_markup: Markup.inlineKeyboard([
-                  [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+                  [Markup.button.url('Accept Challenge', deeplink)],
                 ]).reply_markup,
               }
             );
@@ -1121,7 +1131,7 @@ async function initBot() {
               {
                 parse_mode: 'HTML',
                 reply_markup: Markup.inlineKeyboard([
-                  [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+                  [Markup.button.url('Accept Challenge', deeplink)],
                 ]).reply_markup,
               }
             );
@@ -1138,7 +1148,7 @@ async function initBot() {
             {
               parse_mode: 'HTML',
               reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+                [Markup.button.url('Accept Challenge', `https://t.me/${botInfo.username}?start=accept_${flip.id}`)],
               ]).reply_markup,
             }
           );
@@ -1271,8 +1281,124 @@ const handlers = {
       const { models } = getDB();
       const userId = ctx.from.id;
       
-      // Check if this is a flip confirmation (from the challenger deeplink)
+      // Check if this is accepting a flip (from the button deeplink)
       const startParam = ctx.startPayload;
+      if (startParam && startParam.startsWith('accept_')) {
+        const flipId = startParam.replace('accept_', '');
+        
+        try {
+          const flip = await models.CoinFlip.findByPk(flipId);
+          logger.info('[start] Accept deeplink clicked', { flipId, userId, flipFound: !!flip, status: flip?.status });
+          
+          if (!flip) {
+            await ctx.reply('❌ Flip not found');
+            return;
+          }
+
+          if (flip.status !== 'WAITING_CHALLENGER') {
+            if (flip.status === 'CANCELLED') {
+              await ctx.reply('❌ This challenge has expired');
+            } else {
+              await ctx.reply('❌ This flip is no longer available');
+            }
+            return;
+          }
+
+          if (flip.creatorId === userId) {
+            await ctx.reply('❌ You cannot challenge your own flip');
+            return;
+          }
+
+          // Get or create user
+          let user = await models.User.findByPk(userId);
+          if (!user) {
+            user = await models.User.create({
+              telegramId: userId,
+              username: ctx.from.username,
+              firstName: ctx.from.first_name,
+              lastName: ctx.from.last_name,
+            });
+          }
+
+          // Create confirmation session for challenger
+          const confirmSession = await models.BotSession.create({
+            userId,
+            coinFlipId: flipId,
+            sessionType: 'CONFIRMING_DEPOSIT',
+            currentStep: 'AWAITING_CONFIRMATION',
+            data: {
+              flipId,
+              groupChatId: flip.groupChatId,
+              wagerAmount: flip.wagerAmount,
+              tokenSymbol: flip.tokenSymbol,
+              tokenNetwork: flip.tokenNetwork,
+            },
+          });
+
+          // Set the challengerId
+          flip.challengerId = userId;
+          flip.status = 'WAITING_CHALLENGER_DEPOSIT';
+          await flip.save();
+
+          logger.info('[start] Accepted flip via deeplink', { flipId, userId });
+
+          // Check if user has a wallet address in their profile
+          const userProfile = await models.UserProfile.findByPk(userId);
+          const walletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
+          const storedWallet = userProfile?.[walletField];
+
+          if (storedWallet) {
+            // Use stored wallet address
+            flip.challengerDepositWalletAddress = storedWallet;
+            await flip.save();
+
+            logger.info('[start] Using stored wallet for challenger', { flipId, network: flip.tokenNetwork });
+
+            confirmSession.currentStep = 'AWAITING_DEPOSIT';
+            await confirmSession.save();
+
+            // Show deposit instructions
+            const blockchainManager = getBlockchainManager();
+            const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+            const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+
+            await ctx.reply(
+              `💰 <b>Send Your Deposit</b>\n\n` +
+              `You have <b>3 minutes</b> to complete this.\n\n` +
+              `<b>Wager Amount:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+              `<b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}\n\n` +
+              `📮 <b>Send to this address:</b>\n\n` +
+              `<code>${botWalletAddress}</code>\n\n` +
+              `Once sent, click the button below:`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${confirmSession.id}`)],
+                ]).reply_markup,
+              }
+            );
+          } else {
+            // No stored wallet - ask user to set it up
+            confirmSession.currentStep = 'AWAITING_WALLET_ADDRESS';
+            await confirmSession.save();
+
+            logger.info('[start] No stored wallet for challenger, asking to set up', { flipId, network: flip.tokenNetwork });
+
+            await ctx.reply(
+              `❌ <b>Wallet Address Required</b>\n\n` +
+              `We need your ${flip.tokenNetwork} wallet address to send you your winnings!\n\n` +
+              `Use /wallet to add your receiving addresses, then come back here to continue.`,
+              { parse_mode: 'HTML' }
+            );
+          }
+          return;
+        } catch (error) {
+          logger.error('Error handling accept start parameter', { error: error.message, flipId });
+          await ctx.reply('❌ Error accepting challenge');
+        }
+      }
+
+      // Check if this is a flip confirmation (from the challenger deeplink)
       if (startParam && startParam.startsWith('confirm_')) {
         const sessionId = startParam.replace('confirm_', '');
         
