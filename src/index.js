@@ -485,54 +485,53 @@ async function initBot() {
           await ctx.answerCbQuery('✅ Challenge confirmed! Please set up your wallet.');
         }
 
-        // Update group message with image - delete old and send new
-        const fs = require('fs');
-        const path = require('path');
-        const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
-        
-        try {
-          const challengerText = `🪙 <b>Challenger Found!</b>\n\n` +
-            `⏳ Waiting for both players to send deposits...\n` +
-            `⏰ Timeout in 3 minutes`;
+          // Update group message with image - delete old and send new
+          const fs = require('fs');
+          const path = require('path');
+          const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
           
-          // Delete old message
           try {
-            await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
-          } catch (delErr) {
-            logger.warn('Failed to delete old message', { error: delErr.message });
-          }
-          
-          // Try to send photo
-          if (fs.existsSync(imagePath)) {
+            const challengerText = `🪙 <b>Challenger Found!</b>\n\n` +
+              `⏳ Waiting for both players to send deposits...\n` +
+              `⏰ Timeout in 3 minutes`;
+            
+            // Delete old message
             try {
-              const imageBuffer = fs.readFileSync(imagePath);
-              await ctx.telegram.sendPhoto(
-                flip.groupChatId,
-                imageBuffer,
-                {
-                  caption: challengerText,
-                  parse_mode: 'HTML',
-                }
-              );
-            } catch (photoErr) {
-              logger.warn('Failed to send challenger found photo, falling back to text', { flipId, error: photoErr.message });
+              await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
+            } catch (delErr) {
+              logger.warn('Failed to delete old message', { error: delErr.message });
+            }
+            
+            // Try to send photo
+            if (fs.existsSync(imagePath)) {
+              try {
+                await ctx.telegram.sendPhoto(
+                  flip.groupChatId,
+                  { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
+                  {
+                    caption: challengerText,
+                    parse_mode: 'HTML',
+                  }
+                );
+              } catch (photoErr) {
+                logger.warn('Failed to send challenger found photo, falling back to text', { flipId, error: photoErr.message });
+                await ctx.telegram.sendMessage(
+                  flip.groupChatId,
+                  challengerText,
+                  { parse_mode: 'HTML' }
+                );
+              }
+            } else {
+              logger.warn('Image not found at path', { imagePath });
               await ctx.telegram.sendMessage(
                 flip.groupChatId,
                 challengerText,
                 { parse_mode: 'HTML' }
               );
             }
-          } else {
-            // Image not found, send text
-            await ctx.telegram.sendMessage(
-              flip.groupChatId,
-              challengerText,
-              { parse_mode: 'HTML' }
-            );
+          } catch (err) {
+            logger.warn('Failed to update group message on confirmation', err.message);
           }
-        } catch (err) {
-          logger.warn('Failed to update group message on confirmation', err.message);
-        }
 
         logger.info('Flip challenge confirmed', { userId, flipId });
         
@@ -598,7 +597,7 @@ async function initBot() {
         // Update group message with image - delete old and send new
         const fs = require('fs');
         const path = require('path');
-        const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+        const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
         
         try {
           const resetText = `🪙 <b>Coin Flip Challenge</b>\n\n` +
@@ -615,10 +614,9 @@ async function initBot() {
           // Try to send new photo message
           if (fs.existsSync(imagePath)) {
             try {
-              const imageBuffer = fs.readFileSync(imagePath);
               await ctx.telegram.sendPhoto(
                 flip.groupChatId,
-                imageBuffer,
+                { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
                 {
                   caption: resetText,
                   parse_mode: 'HTML',
@@ -642,6 +640,7 @@ async function initBot() {
               );
             }
           } else {
+            logger.warn('Image not found at path', { imagePath });
             // Image not found, send text
             await ctx.telegram.sendMessage(
               flip.groupChatId,
@@ -766,13 +765,12 @@ async function initBot() {
           try {
             const fs = require('fs');
             const path = require('path');
-            const videoPath = path.join(__dirname, '../assets/coinflip.MP4');
+            const videoPath = path.join(process.cwd(), 'assets/coinflip.MP4');
             
             if (fs.existsSync(videoPath)) {
-              const videoBuffer = fs.readFileSync(videoPath);
               const sentMessage = await ctx.telegram.sendVideo(
                 flip.groupChatId,
-                videoBuffer,
+                { filename: 'coinflip.MP4', source: fs.createReadStream(videoPath) },
                 {
                   caption: '🎬 <b>EXECUTING FLIP...</b>',
                   parse_mode: 'HTML',
@@ -791,7 +789,7 @@ async function initBot() {
           // Notify creator in group with image - delete old and send new
           const fs = require('fs');
           const path = require('path');
-          const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+          const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
           
           try {
             const statusText = `🪙 <b>Challenger Found!</b>\n\n` +
@@ -810,7 +808,7 @@ async function initBot() {
               try {
                 await ctx.telegram.sendPhoto(
                   flip.groupChatId,
-                  { source: fs.createReadStream(imagePath) },
+                  { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
                   {
                     caption: statusText,
                     parse_mode: 'HTML',
@@ -934,7 +932,7 @@ async function initBot() {
         // Now post the challenge message to the group with image
         const fs = require('fs');
         const path = require('path');
-        const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+        const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
         const userRecord = await models.User.findByPk(userId);
         
         let groupMessage;
@@ -942,7 +940,7 @@ async function initBot() {
           if (fs.existsSync(imagePath)) {
             groupMessage = await ctx.telegram.sendPhoto(
               flip.groupChatId,
-              { source: fs.createReadStream(imagePath) },
+              { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
               {
                 caption: `🪙 <b>Coin Flip Challenge!</b>\n\n` +
                 `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
@@ -1485,17 +1483,13 @@ const handlers = {
 
         const fs = require('fs');
         const path = require('path');
-        const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
-        
-        logger.info('Image path debug', { __dirname, imagePath, exists: fs.existsSync(imagePath) });
+        const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
         
         let groupMsg;
         try {
           if (fs.existsSync(imagePath)) {
-            const imageBuffer = fs.readFileSync(imagePath);
-            logger.info('Attempting to send photo', { bufferSize: imageBuffer.length });
             groupMsg = await ctx.replyWithPhoto(
-              imageBuffer,
+              { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
               {
                 caption: '🪙 <b>Start a Coin Flip!</b>\n\n' +
                 'Click below to set up your flip in DM (for privacy)',
@@ -1511,7 +1505,7 @@ const handlers = {
             throw new Error('Image not found');
           }
         } catch (imgErr) {
-          logger.warn('Failed to send Start Flip photo', { error: imgErr.message, stack: imgErr.stack });
+          logger.warn('Failed to send Start Flip photo', { error: imgErr.message, imagePath });
           groupMsg = await ctx.reply(
             '🪙 <b>Start a Coin Flip!</b>\n\n' +
             'Click below to set up your flip in DM (for privacy)',

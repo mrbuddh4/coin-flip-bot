@@ -127,26 +127,41 @@ class LeaderboardHandler {
       // Try to send with image
       const fs = require('fs');
       const path = require('path');
-      const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+      const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
       
       try {
         if (fs.existsSync(imagePath)) {
-          const imageBuffer = fs.readFileSync(imagePath);
-          await ctx.replyWithPhoto(
-            imageBuffer,
-            {
-              caption: leaderboardMessage,
+          try {
+            await ctx.replyWithPhoto(
+              { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
+              {
+                caption: leaderboardMessage,
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.callback('🔄 Refresh', 'refresh_leaderboard')],
+                ]).reply_markup,
+              }
+            );
+          } catch (photoErr) {
+            logger.warn('Failed to send leaderboard with photo, falling back to text', { error: photoErr.message });
+            await ctx.reply(leaderboardMessage, {
               parse_mode: 'HTML',
               reply_markup: Markup.inlineKeyboard([
                 [Markup.button.callback('🔄 Refresh', 'refresh_leaderboard')],
               ]).reply_markup,
-            }
-          );
+            });
+          }
         } else {
-          throw new Error('Image not found');
+          logger.warn('Image not found at path', { imagePath });
+          await ctx.reply(leaderboardMessage, {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🔄 Refresh', 'refresh_leaderboard')],
+            ]).reply_markup,
+          });
         }
       } catch (imgErr) {
-        logger.warn('Failed to send leaderboard with photo, falling back to text', { error: imgErr.message });
+        logger.warn('Failed to send leaderboard, general error', { error: imgErr.message });
         await ctx.reply(leaderboardMessage, {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([

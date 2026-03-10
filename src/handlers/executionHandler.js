@@ -214,16 +214,15 @@ class ExecutionHandler {
 
       const fs = require('fs');
       const path = require('path');
-      const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+      const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
 
       try {
         // Try to send with image first
         if (fs.existsSync(imagePath)) {
           try {
-            const imageBuffer = fs.readFileSync(imagePath);
             await ctx.telegram.sendPhoto(
               flip.groupChatId,
-              imageBuffer,
+              { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
               {
                 caption: resultMessageText,
                 parse_mode: 'HTML',
