@@ -122,6 +122,7 @@ class ExecutionHandler {
       if (devWallet) {
         try {
           logger.info('[executeFlip] Sending dev fee', { flipId, devWallet, devFeeAmount, tokenAddress: flip.tokenAddress, tokenDecimals: flip.tokenDecimals });
+          console.log(`[executeFlip] DEV FEE - Amount: ${devFeeAmount}, To: ${devWallet}, Token: ${flip.tokenAddress}`);
           const blockchainManager = getBlockchainManager();
           const devResult = await blockchainManager.sendWinnings(
             flip.tokenNetwork,
@@ -131,16 +132,20 @@ class ExecutionHandler {
             flip.tokenDecimals
           );
           logger.info('[executeFlip] Dev fee SENT', { flipId, devWallet: `${devWallet.substring(0, 10)}...`, txHash: devResult.txHash, amount: devFeeAmount });
+          console.log(`[SUCCESS] Dev fee sent with txHash: ${devResult.txHash}`);
         } catch (devFeeError) {
           logger.error('[executeFlip] ERROR SENDING DEV FEE', { flipId, devWallet, devFeeAmount, error: devFeeError.message, stack: devFeeError.stack });
+          console.error(`[ERROR] Dev fee failed:`, devFeeError.message);
         }
       } else {
         logger.warn('[executeFlip] DEV WALLET NOT CONFIGURED', { network: flip.tokenNetwork, envVarEVM: 'EVM_DEV_WALLET', envVarSolana: 'SOL_DEV_WALLET' });
+        console.warn(`[WARN] DEV WALLET NOT SET - EVM_DEV_WALLET: ${process.env.EVM_DEV_WALLET}, SOL_DEV_WALLET: ${process.env.SOL_DEV_WALLET}`);
       }
       
       // Send 5% to burn address
       try {
         logger.info('[executeFlip] Sending burn fee', { flipId, burnAddress, burnFeeAmount, tokenAddress: flip.tokenAddress, tokenDecimals: flip.tokenDecimals });
+        console.log(`[executeFlip] BURN FEE - Amount: ${burnFeeAmount}, To: ${burnAddress}, Token: ${flip.tokenAddress}`);
         const blockchainManager = getBlockchainManager();
         const burnResult = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
@@ -150,8 +155,10 @@ class ExecutionHandler {
           flip.tokenDecimals
         );
         logger.info('[executeFlip] Burn fee SENT', { flipId, burnAddress: `${burnAddress.substring(0, 10)}...`, txHash: burnResult.txHash, amount: burnFeeAmount });
+        console.log(`[SUCCESS] Burn fee sent with txHash: ${burnResult.txHash}`);
       } catch (burnFeeError) {
         logger.error('[executeFlip] ERROR SENDING BURN FEE', { flipId, burnAddress, burnFeeAmount, error: burnFeeError.message, stack: burnFeeError.stack });
+        console.error(`[ERROR] Burn fee failed:`, burnFeeError.message);
       }
 
       // Update flip record with result

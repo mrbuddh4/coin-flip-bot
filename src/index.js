@@ -332,10 +332,10 @@ async function initBot() {
         // Delete the message button to clean up group
         await ctx.deleteMessage().catch(() => {});
         
-        // Also send a follow-up to the user in the group to explain        
+        // Send a message that challenger is reviewing the flip
+        const challengerName = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
         await ctx.reply(
-          '✅ <b>Challenge Accepted!</b>\n\n' +
-          'Check your DM with the bot to confirm and send your deposit.',
+          `${challengerName} has accepted and is reviewing the flip.`,
           { parse_mode: 'HTML' }
         ).catch(() => {});
         

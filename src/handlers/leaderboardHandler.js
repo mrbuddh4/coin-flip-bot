@@ -46,60 +46,83 @@ class LeaderboardHandler {
         .sort((a, b) => b.losses - a.losses)
         .slice(0, 5);
 
-      // Calculate total burned across all completed flips
-      const allFlips = await models.CoinFlip.findAll({
+      // Calculate total burned by token across all completed flips
+      const allFlipsWithTokens = await models.CoinFlip.findAll({
         where: {
           status: 'COMPLETED',
         },
-        attributes: ['wagerAmount'],
+        attributes: ['wagerAmount', 'tokenSymbol', 'tokenNetwork'],
         raw: true,
       });
 
-      const totalBurned = allFlips.reduce((sum, flip) => {
-        return sum + parseFloat(flip.wagerAmount) * 0.05;
-      }, 0);
-
-      // Format top winners section
-      let winnersText = '🏆 <b>TOP 5 WINNERS</b>\n\n';
+      // Format winners section
+      let winnersText = '🏆 <b>TOP WINNERS</b>\n';
       if (topWinners.length === 0) {
-        winnersText += 'No winners yet!\n\n';
+        winnersText += 'No winners yet\n\n';
       } else {
-        topWinners.forEach((winner, idx) => {
-          const displayName = winner.username ? `@${winner.username}` : winner.firstName || 'Unknown';
-          const winnings = parseFloat(winner.totalWon).toLocaleString('en-US', {
-            maximumFractionDigits: 4,
+        topWinners.forEach((winner, index) => {
+          const displayName = winner.username ? `@${winner.username}` : winner.firstName;
+          const amount = parseFloat(winner.totalWon).toLocaleString('en-US', {
+            maximumFractionDigits: 6,
             minimumFractionDigits: 0,
           });
-          winnersText += `${idx + 1}. ${displayName}: <b>+${winnings}</b>\n`;
+          winnersText += `${index + 1}. ${displayName} - ${amount}\n`;
         });
+        winnersText += '\n';
       }
 
-      winnersText += '\n';
-
-      // Format top losers section
-      let losersText = '📉 <b>TOP 5 LOSERS</b>\n\n';
+      // Format losers section
+      let losersText = '📉 <b>TOP LOSERS</b>\n';
       if (usersWithLosses.length === 0) {
-        losersText += 'No losers yet!\n\n';
+        losersText += 'No losers yet\n\n';
       } else {
-        usersWithLosses.forEach((loser, idx) => {
-          const displayName = loser.username ? `@${loser.username}` : loser.firstName || 'Unknown';
-          const losses = loser.losses.toLocaleString('en-US', {
-            maximumFractionDigits: 4,
+        usersWithLosses.forEach((loser, index) => {
+          const displayName = loser.username ? `@${loser.username}` : loser.firstName;
+          const losses = parseFloat(loser.losses).toLocaleString('en-US', {
+            maximumFractionDigits: 6,
             minimumFractionDigits: 0,
           });
-          losersText += `${idx + 1}. ${displayName}: <b>-${losses}</b>\n`;
+          losersText += `${index + 1}. ${displayName} - ${losses}\n`;
         });
+        losersText += '\n';
       }
 
-      losersText += '\n';
+      // Group burned amounts by token (symbol + network for uniqueness)
+      const burnedByToken = {};
+      allFlipsWithTokens.forEach(flip => {
+        const tokenKey = `${flip.tokenSymbol}_${flip.tokenNetwork}`;
+        const burned = parseFloat(flip.wagerAmount) * 0.05;
+        if (!burnedByToken[tokenKey]) {
+          burnedByToken[tokenKey] = {
+            symbol: flip.tokenSymbol,
+            network: flip.tokenNetwork,
+            amount: 0,
+          };
+        }
+        burnedByToken[tokenKey].amount += burned;
+      });
 
-      // Add total burned section
-      const burnedText = `🔥 <b>TOTAL BURNED</b>\n${totalBurned.toLocaleString('en-US', {
-        maximumFractionDigits: 4,
-        minimumFractionDigits: 0,
-      })}\n\n`;
+      // Format total burned section with breakdown by token
+      let burnedText = '🔥 <b>TOTAL BURNED</b>\n';
+      const tokenList = Object.values(burnedByToken);
+      if (tokenList.length === 0) {
+        burnedText += 'None yet\n\n';
+      } else {
+        tokenList.forEach(token => {
+          const amount = token.amount.toLocaleString('en-US', {
+            maximumFractionDigits: 6,
+            minimumFractionDigits: 0,
+          });
+          burnedText += `${amount} ${token.symbol}`;
+          if (token.network) {
+            burnedText += ` (${token.network})`;
+          }
+          burnedText += '\n';
+        });
+        burnedText += '\n';
+      }
 
-      const leaderboardMessage = burnedText + winnersText + losersText;
+      const leaderboardMessage = winnersText + losersText + burnedText;
 
       await ctx.reply(leaderboardMessage, {
         parse_mode: 'HTML',
@@ -112,7 +135,7 @@ class LeaderboardHandler {
         userId: ctx.from.id,
         winnersCount: topWinners.length,
         losersCount: usersWithLosses.length,
-        totalBurned,
+        tokensBurned: Object.keys(burnedByToken).length,
       });
     } catch (error) {
       logger.error('[leaderboard] Error fetching leaderboard', { error: error.message, stack: error.stack });
