@@ -46,39 +46,85 @@ class LeaderboardHandler {
         .sort((a, b) => b.losses - a.losses)
         .slice(0, 5);
 
+      // Calculate burned amounts for top winners
+      const winnersWithBurned = await Promise.all(
+        topWinners.map(async (winner) => {
+          const flips = await models.CoinFlip.findAll({
+            where: {
+              [Op.or]: [{ creatorId: winner.telegramId }, { challengerId: winner.telegramId }],
+              status: 'COMPLETED',
+            },
+            attributes: ['wagerAmount'],
+            raw: true,
+          });
+
+          // Calculate 5% burned per flip
+          const totalBurned = flips.reduce((sum, flip) => {
+            return sum + parseFloat(flip.wagerAmount) * 0.05;
+          }, 0);
+
+          return { ...winner, totalBurned };
+        })
+      );
+
+      // Calculate burned amounts for top losers
+      const losersWithBurned = await Promise.all(
+        usersWithLosses.map(async (loser) => {
+          const flips = await models.CoinFlip.findAll({
+            where: {
+              [Op.or]: [{ creatorId: loser.telegramId }, { challengerId: loser.telegramId }],
+              status: 'COMPLETED',
+            },
+            attributes: ['wagerAmount'],
+            raw: true,
+          });
+
+          // Calculate 5% burned per flip
+          const totalBurned = flips.reduce((sum, flip) => {
+            return sum + parseFloat(flip.wagerAmount) * 0.05;
+          }, 0);
+
+          return { ...loser, totalBurned };
+        })
+      );
+
       // Format top winners section
       let winnersText = '🏆 <b>TOP 5 WINNERS</b>\n\n';
-      if (topWinners.length === 0) {
+      if (winnersWithBurned.length === 0) {
         winnersText += 'No winners yet!\n\n';
       } else {
-        topWinners.forEach((winner, idx) => {
+        winnersWithBurned.forEach((winner, idx) => {
           const displayName = winner.username ? `@${winner.username}` : winner.firstName || 'Unknown';
           const winnings = parseFloat(winner.totalWon).toLocaleString('en-US', {
             maximumFractionDigits: 4,
             minimumFractionDigits: 0,
           });
-          winnersText += `${idx + 1}. ${displayName}: <b>+${winnings}</b>\n`;
+          const burned = winner.totalBurned.toLocaleString('en-US', {
+            maximumFractionDigits: 4,
+            minimumFractionDigits: 0,
+          });
+          winnersText += `${idx + 1}. ${displayName}\n   💰 Won: <b>+${winnings}</b>\n   🔥 Burned: <b>${burned}</b>\n\n`;
         });
       }
 
-      winnersText += '\n';
-
       // Format top losers section
       let losersText = '📉 <b>TOP 5 LOSERS</b>\n\n';
-      if (usersWithLosses.length === 0) {
+      if (losersWithBurned.length === 0) {
         losersText += 'No losers yet!\n\n';
       } else {
-        usersWithLosses.forEach((loser, idx) => {
+        losersWithBurned.forEach((loser, idx) => {
           const displayName = loser.username ? `@${loser.username}` : loser.firstName || 'Unknown';
           const losses = loser.losses.toLocaleString('en-US', {
             maximumFractionDigits: 4,
             minimumFractionDigits: 0,
           });
-          losersText += `${idx + 1}. ${displayName}: <b>-${losses}</b>\n`;
+          const burned = loser.totalBurned.toLocaleString('en-US', {
+            maximumFractionDigits: 4,
+            minimumFractionDigits: 0,
+          });
+          losersText += `${idx + 1}. ${displayName}\n   📊 Lost: <b>-${losses}</b>\n   🔥 Burned: <b>${burned}</b>\n\n`;
         });
       }
-
-      losersText += '\n';
 
       const leaderboardMessage = winnersText + losersText;
 
@@ -91,8 +137,8 @@ class LeaderboardHandler {
 
       logger.info('[leaderboard] Leaderboard displayed', {
         userId: ctx.from.id,
-        winnersCount: topWinners.length,
-        losersCount: usersWithLosses.length,
+        winnersCount: winnersWithBurned.length,
+        losersCount: losersWithBurned.length,
       });
     } catch (error) {
       logger.error('[leaderboard] Error fetching leaderboard', { error: error.message, stack: error.stack });
