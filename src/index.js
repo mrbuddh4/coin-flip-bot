@@ -819,22 +819,62 @@ async function initBot() {
           }
         }
 
-        // Now post the challenge message to the group
+        // Now post the challenge message to the group with image
+        const fs = require('fs');
+        const path = require('path');
+        const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
         const userRecord = await models.User.findByPk(userId);
-        const groupMessage = await ctx.telegram.sendMessage(
-          flip.groupChatId,
-          `🪙 <b>Coin Flip Challenge!</b>\n\n` +
-          `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
-          `💰 <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n` +
-          `🌐 Network: ${flip.tokenNetwork}\n\n` +
-          `⏰ Waiting for a challenger...`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
-            ]).reply_markup,
+        
+        let groupMessage;
+        try {
+          if (fs.existsSync(imagePath)) {
+            groupMessage = await ctx.telegram.sendPhoto(
+              flip.groupChatId,
+              { source: fs.createReadStream(imagePath) },
+              {
+                caption: `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+                `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
+                `💰 <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n` +
+                `🌐 Network: ${flip.tokenNetwork}\n\n` +
+                `⏰ Waiting for a challenger...`,
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+                ]).reply_markup,
+              }
+            );
+          } else {
+            groupMessage = await ctx.telegram.sendMessage(
+              flip.groupChatId,
+              `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+              `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
+              `💰 <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n` +
+              `🌐 Network: ${flip.tokenNetwork}\n\n` +
+              `⏰ Waiting for a challenger...`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+                ]).reply_markup,
+              }
+            );
           }
-        );
+          logger.warn('Failed to send photo, falling back to text', { flipId, error: imgErr.message });
+          groupMessage = await ctx.telegram.sendMessage(
+            flip.groupChatId,
+            `🪙 <b>Coin Flip Challenge!</b>\n\n` +
+            `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
+            `💰 <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n` +
+            `🌐 Network: ${flip.tokenNetwork}\n\n` +
+            `⏰ Waiting for a challenger...`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+              ]).reply_markup,
+            }
+          );
+        }
 
         // Save message ID to flip
         flip.groupMessageId = groupMessage.message_id;
