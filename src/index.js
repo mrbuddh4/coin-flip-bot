@@ -68,38 +68,91 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
             const flipCheck = await models.CoinFlip.findByPk(flipId);
             if (flipCheck && flipCheck.status === 'WAITING_CHALLENGER') {
               logger.info('[challengeTimeout] Auto-cancelling expired challenge', { flipId });
+              
+              // Mark as cancelled
               flipCheck.status = 'CANCELLED';
               flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenge expired (no acceptances within 4 minutes)' };
               await flipCheck.save();
 
-              // Notify group - try caption edit first (for photos), then text edit (for text messages)
+              // Refund creator's deposit
               try {
-                await telegram.editMessageCaption(
-                  `❌ <b>Challenge Expired</b>\n\n` +
-                  `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
-                  `expired because no one accepted it.`,
+                const creator = await models.User.findByPk(flipCheck.creatorId);
+                const userProfile = await models.UserProfile.findByPk(flipCheck.creatorId);
+                
+                if (creator && userProfile) {
+                  const walletField = flipCheck.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
+                  const creatorWallet = userProfile[walletField];
+                  
+                  if (creatorWallet) {
+                    const blockchainManager = getBlockchainManager();
+                    
+                    try {
+                      // Refund the exact wager amount - get token config to find token address
+                      const supportedTokens = config.supportedTokens;
+                      let tokenAddress = 'NATIVE';
+                      let tokenDecimals = 18;
+                      
+                      for (const key in supportedTokens) {
+                        if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
+                          tokenAddress = supportedTokens[key].address || 'NATIVE';
+                          tokenDecimals = supportedTokens[key].decimals || 18;
+                          break;
+                        }
+                      }
+
+                      const txHash = await blockchainManager.sendWinnings(
+                        flipCheck.tokenNetwork,
+                        tokenAddress,
+                        creatorWallet,
+                        flipCheck.wagerAmount,
+                        tokenDecimals
+                      );
+                      
+                      logger.info('[challengeTimeout] Refunded creator deposit', { 
+                        flipId, 
+                        creatorId: flipCheck.creatorId,
+                        amount: flipCheck.wagerAmount,
+                        token: flipCheck.tokenSymbol,
+                        txHash 
+                      });
+                    } catch (refundErr) {
+                      logger.error('[challengeTimeout] Failed to refund creator', { 
+                        flipId, 
+                        error: refundErr.message 
+                      });
+                    }
+                  } else {
+                    logger.warn('[challengeTimeout] Creator has no wallet address stored', { 
+                      flipId, 
+                      creatorId: flipCheck.creatorId 
+                    });
+                  }
+                }
+              } catch (creatorErr) {
+                logger.error('[challengeTimeout] Error processing creator refund', { flipId, error: creatorErr.message });
+              }
+
+              // Send timeout notification to group with start new challenge button
+              try {
+                const botInfo = await telegram.getMe();
+                const formattedWager = parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+                
+                await telegram.sendMessage(
+                  groupId,
+                  `⏰ <b>Challenge Expired</b>\n\n` +
+                  `No one accepted the challenge for <b>${formattedWager} ${flipCheck.tokenSymbol}</b>.\n` +
+                  `Funds have been refunded to the creator.\n\n` +
+                  `Would you like to start a new challenge?`,
                   {
-                    chat_id: groupId,
-                    message_id: groupMessageId,
-                    parse_mode: 'HTML'
+                    parse_mode: 'HTML',
+                    reply_markup: Markup.inlineKeyboard([
+                      [Markup.button.url('🪙 Start a Challenge', `https://t.me/${botInfo.username}?start=flip`)],
+                    ]).reply_markup,
                   }
                 );
-              } catch (captionErr) {
-                // If caption edit fails, try text edit
-                logger.info('[challengeTimeout] Caption edit failed, trying text edit', { error: captionErr.message });
-                try {
-                  await telegram.editMessageText(
-                    groupId,
-                    groupMessageId,
-                    null,
-                    `❌ <b>Challenge Expired</b>\n\n` +
-                    `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
-                    `expired because no one accepted it.`,
-                    { parse_mode: 'HTML' }
-                  );
-                } catch (textErr) {
-                  logger.warn('[challengeTimeout] Both caption and text edits failed', { flipId, captionErr: captionErr.message, textErr: textErr.message });
-                }
+                logger.info('[challengeTimeout] Sent expiration message to group', { flipId });
+              } catch (msgErr) {
+                logger.error('[challengeTimeout] Failed to send expiration message', { flipId, error: msgErr.message });
               }
             }
             delete challengeTimeouts[flipId];
