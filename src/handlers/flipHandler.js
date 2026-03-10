@@ -352,6 +352,20 @@ class FlipHandler {
         const excessAmount = receivedAmount - wagerAmount;
         logger.info('Excess deposit detected, will refund', { flipId, excess: excessAmount, sender: verification.depositSender });
         
+        // Notify user about overpayment and refund
+        const formattedReceived = receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
+        const formattedWager = wagerAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
+        const formattedExcess = excessAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
+        
+        await ctx.reply(
+          `⚠️ <b>Overpayment Detected</b>\n\n` +
+          `You sent: ${formattedReceived} ${flip.tokenSymbol}\n` +
+          `Wager amount: ${formattedWager} ${flip.tokenSymbol}\n\n` +
+          `<b>Refunding excess: ${formattedExcess} ${flip.tokenSymbol}</b>\n\n` +
+          `The refund will be sent to your wallet shortly.`,
+          { parse_mode: 'HTML' }
+        );
+        
         try {
           if (verification.depositSender) {
             const blockchainManager = getBlockchainManager();
