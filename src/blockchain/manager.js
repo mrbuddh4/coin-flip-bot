@@ -72,6 +72,14 @@ class BlockchainManager {
         const variance = expectedAmountNum * 0.01;
         const hasDeposit = receivedAmount >= (expectedAmountNum - variance);
 
+        console.log('[verifyDeposit] Blockchain transaction found', {
+          network,
+          received: receivedAmount,
+          expected: expectedAmountNum,
+          sender: depositInfo.sender,
+          hasDeposit,
+        });
+
         return {
           received: hasDeposit,
           amount: receivedAmount,
@@ -85,7 +93,7 @@ class BlockchainManager {
       }
 
       // Fallback: Check bot wallet balance if no recent transaction found
-      console.warn('No recent deposit transaction found, checking balance fallback');
+      console.warn('[verifyDeposit] No recent deposit transaction found, checking balance fallback');
       let balance;
       if (tokenAddress === 'NATIVE') {
         balance = await handler.getNativeBalance(botWallet);
@@ -105,8 +113,16 @@ class BlockchainManager {
       try {
         fallbackSender = await handler.getRecentDepositSender(botWallet, expectedAmount * 0.5, tokenAddress); // Try with 50% of amount for more matches
       } catch (err) {
-        console.warn('Could not detect sender in fallback:', err.message);
+        console.warn('[verifyDeposit] Could not detect sender in fallback:', err.message);
       }
+
+      console.log('[verifyDeposit] Using balance fallback', {
+        network,
+        received: receivedAmount,
+        expected: expectedAmountNum,
+        hasSender: !!fallbackSender?.sender,
+        hasDeposit,
+      });
 
       return {
         received: hasDeposit,
@@ -118,7 +134,7 @@ class BlockchainManager {
         verified: 'balance', // Fallback to balance verification
       };
     } catch (error) {
-      console.error('Error verifying deposit:', error);
+      console.error('[verifyDeposit] Error verifying deposit:', error);
       return {
         received: false,
         error: error.message,

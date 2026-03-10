@@ -251,9 +251,99 @@ class SolanaHandler {
 
           // Look for transfers in the transaction
           if (tokenMint) {
-            // For SPL tokens, would need to parse token instructions
-            // This is complex, so returning null for now
-            continue;
+            // For SPL tokens, parse token program instructions
+            // Look for token transfer instructions where bot's account receives tokens
+            if (tx.message && tx.message.instructions) {
+              for (const instruction of tx.message.instructions) {
+                try {
+                  // Check if this is a token program instruction
+                  const programId = tx.message.accountKeys[instruction.programIdIndex];
+                  if (!programId) continue;
+                  
+                  const programIdStr = programId.toBase58();
+                  // Solana Token Program ID: TokenkegQfeZyiNwAJsyFbPVwwQQfuls8PsPkkP7gC9j
+                  const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJsyFbPVwwQQfuls8PsPkkP7gC9j';
+                  
+                  if (programIdStr === TOKEN_PROGRAM_ID && instruction.accounts) {
+                    // Instruction account 0 = source, 1 = destination, 2 = authority/owner
+                    const sourceIndex = instruction.accounts[0];
+                    const destIndex = instruction.accounts[1];
+                    
+                    if (destIndex !== undefined && sourceIndex !== undefined) {
+                      const destAccount = tx.message.accountKeys[destIndex];
+                      const sourceAccount = tx.message.accountKeys[sourceIndex];
+                      
+                      // Check if this is the bot's token account receiving tokens
+                      if (destAccount && sourceAccount) {
+                        const destStr = destAccount.toBase58();
+                        const sourceStr = sourceAccount.toBase58();
+                        
+                        // Get bot's ATA for the token mint
+                        try {
+                          const { getAssociatedTokenAddress } = require('@solana/spl-token');
+                          const botATA = await getAssociatedTokenAddress(
+                            new PublicKey(tokenMint),
+                            botPublicKey
+                          );
+                          const botATAStr = botATA.toBase58();
+                          
+                          // If destination is bot's ATA, this is a deposit
+                          if (destStr === botATAStr) {
+                            // Try to find the original sender from the authority account
+                            if (tx.message.accountKeys.length > 2) {
+                              const authorityIndex = instruction.accounts[2];
+                              if (authorityIndex !== undefined) {
+                                const authority = tx.message.accountKeys[authorityIndex];
+                                
+                                // Extract amount from instruction data if available
+                                // Token program Transfer instruction: opcode (1 byte) + amount (8 bytes little-endian)
+                                if (instruction.data && instruction.data.length > 1) {
+                                  const buffer = Buffer.from(instruction.data);
+                                  if (buffer.length >= 9) {
+                                    // Read 8 bytes for amount (little-endian)
+                                    const amount = buffer.readBigUInt64LE(1);
+                                    
+                                    // Get token decimals from account data
+                                    let decimals = 6; // Default for most SPL tokens
+                                    try {
+                                      const mintInfo = await this.connection.getParsedAccountInfo(new PublicKey(tokenMint));
+                                      if (mintInfo.value?.data?.parsed?.info?.decimals !== undefined) {
+                                        decimals = mintInfo.value.data.parsed.info.decimals;
+                                      }
+                                    } catch (err) {
+                                      console.warn('Could not get token decimals, using default 6');
+                                    }
+                                    
+                                    const formattedAmount = Number(amount) / Math.pow(10, decimals);
+                                    const expectedAmountNum = parseFloat(expectedAmount);
+                                    const variance = expectedAmountNum * 0.01; // 1% variance
+                                    
+                                    // Accept if amount is close to expected or higher (for excess detection)
+                                    if (formattedAmount >= (expectedAmountNum - variance)) {
+                                      return {
+                                        sender: authority.toBase58(),
+                                        amount: formattedAmount.toString(),
+                                        signature: sig.signature,
+                                        slot: sig.slot,
+                                      };
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        } catch (ataErr) {
+                          console.warn('Could not process SPL token transfer:', ataErr.message);
+                        }
+                      }
+                    }
+                  }
+                } catch (instructionErr) {
+                  console.warn('Error parsing instruction:', instructionErr.message);
+                  continue;
+                }
+              }
+            }
           } else {
             // For native SOL transfers
             for (let i = 0; i < tx.message.accountKeys.length; i++) {
