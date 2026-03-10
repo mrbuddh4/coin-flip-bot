@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Telegram Coin Flip Bot supporting EVM and Solana tokens",
   "main": "src/index.js",
+  "files": [
+    "src",
+    "assets"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
