@@ -114,6 +114,7 @@ class ExecutionHandler {
         devFeeAmount,
         burnFeeAmount,
         devWalletEnv: `EVM_DEV_WALLET=${process.env.EVM_DEV_WALLET ? 'SET' : 'NOT_SET'}, SOL_DEV_WALLET=${process.env.SOL_DEV_WALLET ? 'SET' : 'NOT_SET'}`,
+
         devWallet: devWallet ? `${devWallet.substring(0, 10)}...` : 'NOT_SET',
         burnAddress: `${burnAddress.substring(0, 10)}...`,
       });

@@ -217,7 +217,7 @@ async function initBot() {
         await WalletHandler.handleUpdateEVM(ctx);
         await ctx.deleteMessage().catch(() => {});
       } catch (error) {
-        logger.error('Error updating EVM wallet', error);
+        logger.error('Error updating Paxeer wallet', error);
         await ctx.answerCbQuery('Error', true);
       }
     });

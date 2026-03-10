@@ -19,13 +19,13 @@ class WalletHandler {
 
       await ctx.reply(
         `<b>💳 Your Wallet Addresses</b>\n\n` +
-        `<b>EVM Network:</b>\n<code>${evmAddress}</code>\n\n` +
+        `<b>Paxeer Network:</b>\n<code>${paxeerAddress}</code>\n\n` +
         `<b>Solana Network:</b>\n<code>${solAddress}</code>\n\n` +
         `Choose what you'd like to do:`,
         {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('✏️ Update EVM Address', 'update_evm_wallet')],
+            [Markup.button.callback('✏️ Update Paxeer Address', 'update_evm_wallet')],
             [Markup.button.callback('✏️ Update Solana Address', 'update_solana_wallet')],
             [Markup.button.callback('❌ Remove All', 'remove_all_wallets')],
           ]).reply_markup,
@@ -55,8 +55,9 @@ class WalletHandler {
       });
 
       await ctx.editMessageText(
-        `<b>Enter your EVM wallet address:</b>\n\n` +
-        `Send me your EVM wallet address (e.g., 0x1234...)`,
+        `<b>Enter your Paxeer wallet address:</b>\n\n` +
+        `Send me your Paxeer wallet address (e.g., 0x1234...)`,
+
         {
           parse_mode: 'HTML',
         }
@@ -154,11 +155,11 @@ class WalletHandler {
       const { getDB } = require('../database');
 
       if (session.currentStep === 'AWAITING_EVM_ADDRESS') {
-        // Basic validation for EVM address
+        // Basic validation for Paxeer address
         if (!/^0x[a-fA-F0-9]{40}$/.test(message)) {
           await ctx.reply(
-            `❌ Invalid EVM address format.\n\n` +
-            `Please provide a valid EVM wallet address (starting with 0x and 40 hex characters)`,
+            `❌ Invalid Paxeer address format.\n\n` +
+            `Please provide a valid Paxeer wallet address (starting with 0x and 40 hex characters)`,
             { parse_mode: 'HTML' }
           );
           return true;
@@ -172,7 +173,7 @@ class WalletHandler {
         });
 
         await ctx.reply(
-          `✅ EVM wallet address updated!\n\n` +
+          `✅ Paxeer wallet address updated!\n\n` +
           `<code>${message}</code>`,
           { parse_mode: 'HTML' }
         );
@@ -259,12 +260,12 @@ class WalletHandler {
 
       // Store wallet address in flip
       if (flipSession.sessionType === 'INITIATING') {
-        flip.creatorDepositWalletAddress = network === 'EVM' ? 
-          (await models.UserProfile.findByPk(userId))?.evmWalletAddress :
+        flip.creatorDepositWalletAddress = network === 'Paxeer' ? 
+          (await models.UserProfile.findByPk(userId))?.paxeerWalletAddress :
           (await models.UserProfile.findByPk(userId))?.solanaWalletAddress;
       } else if (flipSession.sessionType === 'CONFIRMING_DEPOSIT') {
-        flip.challengerDepositWalletAddress = network === 'EVM' ? 
-          (await models.UserProfile.findByPk(userId))?.evmWalletAddress :
+        flip.challengerDepositWalletAddress = network === 'Paxeer' ? 
+          (await models.UserProfile.findByPk(userId))?.paxeerWalletAddress :
           (await models.UserProfile.findByPk(userId))?.solanaWalletAddress;
       }
       await flip.save();
