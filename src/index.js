@@ -485,17 +485,50 @@ async function initBot() {
           await ctx.answerCbQuery('✅ Challenge confirmed! Please set up your wallet.');
         }
 
-        // Update group message
+        // Update group message with image - delete old and send new
+        const fs = require('fs');
+        const path = require('path');
+        const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+        
         try {
-          await ctx.telegram.editMessageText(
-            flip.groupChatId,
-            flip.groupMessageId,
-            null,
-            `🪙 <b>Challenger Found!</b>\n\n` +
+          const challengerText = `🪙 <b>Challenger Found!</b>\n\n` +
             `⏳ Waiting for both players to send deposits...\n` +
-            `⏰ Timeout in 3 minutes`,
-            { parse_mode: 'HTML' }
-          );
+            `⏰ Timeout in 3 minutes`;
+          
+          // Delete old message
+          try {
+            await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
+          } catch (delErr) {
+            logger.warn('Failed to delete old message', { error: delErr.message });
+          }
+          
+          // Try to send photo
+          if (fs.existsSync(imagePath)) {
+            try {
+              await ctx.telegram.sendPhoto(
+                flip.groupChatId,
+                { source: fs.createReadStream(imagePath) },
+                {
+                  caption: challengerText,
+                  parse_mode: 'HTML',
+                }
+              );
+            } catch (photoErr) {
+              logger.warn('Failed to send challenger found photo, falling back to text', { flipId, error: photoErr.message });
+              await ctx.telegram.sendMessage(
+                flip.groupChatId,
+                challengerText,
+                { parse_mode: 'HTML' }
+              );
+            }
+          } else {
+            // Image not found, send text
+            await ctx.telegram.sendMessage(
+              flip.groupChatId,
+              challengerText,
+              { parse_mode: 'HTML' }
+            );
+          }
         } catch (err) {
           logger.warn('Failed to update group message on confirmation', err.message);
         }
@@ -561,7 +594,7 @@ async function initBot() {
         // Delete confirmation session
         await session.destroy();
 
-        // Update group message with image
+        // Update group message with image - delete old and send new
         const fs = require('fs');
         const path = require('path');
         const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
@@ -570,6 +603,13 @@ async function initBot() {
           const resetText = `🪙 <b>Coin Flip Challenge</b>\n\n` +
             `<a href="tg://user?id=${flip.creatorId}">A player</a> started a flip for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n\n` +
             `⏰ Waiting for another challenger...`;
+          
+          // Delete the old message first
+          try {
+            await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
+          } catch (delErr) {
+            logger.warn('Failed to delete old message', { error: delErr.message });
+          }
           
           // Try to send new photo message
           if (fs.existsSync(imagePath)) {
@@ -586,12 +626,10 @@ async function initBot() {
                 }
               );
             } catch (photoErr) {
-              logger.warn('Failed to send reset photo, falling back to text edit', { flipId, error: photoErr.message });
-              // Fallback to editing
-              await ctx.telegram.editMessageText(
+              logger.warn('Failed to send reset photo', { flipId, error: photoErr.message });
+              // Fallback to text message
+              await ctx.telegram.sendMessage(
                 flip.groupChatId,
-                flip.groupMessageId,
-                null,
                 resetText,
                 { 
                   parse_mode: 'HTML',
@@ -602,11 +640,9 @@ async function initBot() {
               );
             }
           } else {
-            // Image not found, just edit
-            await ctx.telegram.editMessageText(
+            // Image not found, send text
+            await ctx.telegram.sendMessage(
               flip.groupChatId,
-              flip.groupMessageId,
-              null,
               resetText,
               { 
                 parse_mode: 'HTML',
@@ -749,7 +785,7 @@ async function initBot() {
           await ExecutionHandler.executeFlip(flipId, ctx, videoMessageId);
         } else {
 
-          // Notify creator in group with image
+          // Notify creator in group with image - delete old and send new
           const fs = require('fs');
           const path = require('path');
           const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
@@ -759,7 +795,14 @@ async function initBot() {
               `⏳ Waiting for both players to send deposits...\n` +
               `⏰ Timeout in 3 minutes`;
             
-            // Try to send a new photo message instead of just editing
+            // Delete the old message first
+            try {
+              await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
+            } catch (delErr) {
+              logger.warn('Failed to delete old message', { error: delErr.message });
+            }
+            
+            // Try to send a new photo message
             if (fs.existsSync(imagePath)) {
               try {
                 await ctx.telegram.sendPhoto(
@@ -771,22 +814,18 @@ async function initBot() {
                   }
                 );
               } catch (photoErr) {
-                logger.warn('Failed to send status photo, falling back to text edit', { flipId, error: photoErr.message });
-                // Fallback to editing existing message
-                await ctx.telegram.editMessageText(
+                logger.warn('Failed to send status photo', { flipId, error: photoErr.message });
+                // Fallback to text message
+                await ctx.telegram.sendMessage(
                   flip.groupChatId,
-                  flip.groupMessageId,
-                  null,
                   statusText,
                   { parse_mode: 'HTML' }
                 );
               }
             } else {
-              // Image not found, just edit existing message
-              await ctx.telegram.editMessageText(
+              // Image not found, send text
+              await ctx.telegram.sendMessage(
                 flip.groupChatId,
-                flip.groupMessageId,
-                null,
                 statusText,
                 { parse_mode: 'HTML' }
               );
@@ -1441,16 +1480,40 @@ const handlers = {
         // Get bot info for deeplink
         const botInfo = await ctx.telegram.getMe();
 
-        const groupMsg = await ctx.reply(
-          '🪙 <b>Start a Coin Flip!</b>\n\n' +
-          'Click below to set up your flip in DM (for privacy)',
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.url('💬 Start in DM', `https://t.me/${botInfo.username}?start=flip_${session.id}`)],
-            ]).reply_markup,
+        const fs = require('fs');
+        const path = require('path');
+        const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+        
+        let groupMsg;
+        try {
+          if (fs.existsSync(imagePath)) {
+            groupMsg = await ctx.replyWithPhoto(
+              { source: fs.createReadStream(imagePath) },
+              {
+                caption: '🪙 <b>Start a Coin Flip!</b>\n\n' +
+                'Click below to set up your flip in DM (for privacy)',
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.url('💬 Start in DM', `https://t.me/${botInfo.username}?start=flip_${session.id}`)],
+                ]).reply_markup,
+              }
+            );
+          } else {
+            throw new Error('Image not found');
           }
-        );
+        } catch (imgErr) {
+          logger.warn('Failed to send Start Flip photo, falling back to text', { error: imgErr.message });
+          groupMsg = await ctx.reply(
+            '🪙 <b>Start a Coin Flip!</b>\n\n' +
+            'Click below to set up your flip in DM (for privacy)',
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.url('💬 Start in DM', `https://t.me/${botInfo.username}?start=flip_${session.id}`)],
+              ]).reply_markup,
+            }
+          );
+        }
 
         // Store the message ID so we can delete it later when challenge is posted
         session.data.initialGroupMessageId = groupMsg.message_id;
