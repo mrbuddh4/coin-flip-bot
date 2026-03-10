@@ -859,6 +859,7 @@ async function initBot() {
               }
             );
           }
+        } catch (imgErr) {
           logger.warn('Failed to send photo, falling back to text', { flipId, error: imgErr.message });
           groupMessage = await ctx.telegram.sendMessage(
             flip.groupChatId,
