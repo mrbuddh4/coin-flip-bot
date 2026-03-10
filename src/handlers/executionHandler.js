@@ -178,6 +178,32 @@ class ExecutionHandler {
       flip.status = 'COMPLETED';
       await flip.save();
 
+      // Update winner's stats
+      const winner = result === 0 ? creator : challenger;
+      const loser = result === 0 ? challenger : creator;
+      
+      if (winner) {
+        try {
+          winner.totalWon = (parseFloat(winner.totalWon || 0) + parseFloat(winnerPrize)).toString();
+          winner.totalWagered = (parseFloat(winner.totalWagered || 0) + parseFloat(flip.wagerAmount)).toString();
+          await winner.save();
+          logger.info('[executeFlip] Winner stats updated', { flipId, winnerId, totalWon: winner.totalWon, totalWagered: winner.totalWagered, winnerPrize });
+        } catch (statsErr) {
+          logger.error('[executeFlip] Error updating winner stats', { flipId, winnerId, error: statsErr.message });
+        }
+      }
+
+      // Update loser's stats (only totalWagered, no winnings)
+      if (loser) {
+        try {
+          loser.totalWagered = (parseFloat(loser.totalWagered || 0) + parseFloat(flip.wagerAmount)).toString();
+          await loser.save();
+          logger.info('[executeFlip] Loser stats updated', { flipId, loserId: loser.telegramId, totalWagered: loser.totalWagered });
+        } catch (statsErr) {
+          logger.error('[executeFlip] Error updating loser stats', { flipId, loserId: loser.telegramId, error: statsErr.message });
+        }
+      }
+
       // Generate transaction link based on network
       const txLink = flip.tokenNetwork === 'EVM'
         ? `https://etherscan.io/tx/${winningTxHash}`
@@ -427,9 +453,21 @@ class ExecutionHandler {
 
         // Update user stats
         const user = await models.User.findByPk(userId);
+        const otherPlayerId = userId === flip.creatorId ? flip.challengerId : flip.creatorId;
+        const otherPlayer = await models.User.findByPk(otherPlayerId);
+        
         if (user) {
-          user.totalWon = (parseFloat(user.totalWon) + parseFloat(winnerAmount)).toString();
+          user.totalWon = (parseFloat(user.totalWon || 0) + parseFloat(winnerAmount)).toString();
+          user.totalWagered = (parseFloat(user.totalWagered || 0) + parseFloat(flip.wagerAmount)).toString();
           await user.save();
+          logger.info('[confirmPayoutAddress] Winner stats updated', { userId, flipId, totalWon: user.totalWon, totalWagered: user.totalWagered });
+        }
+
+        // Update loser's stats
+        if (otherPlayer) {
+          otherPlayer.totalWagered = (parseFloat(otherPlayer.totalWagered || 0) + parseFloat(flip.wagerAmount)).toString();
+          await otherPlayer.save();
+          logger.info('[confirmPayoutAddress] Loser stats updated', { loserId: otherPlayerId, flipId, totalWagered: otherPlayer.totalWagered });
         }
 
         // Update session
