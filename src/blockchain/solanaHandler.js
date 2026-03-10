@@ -315,18 +315,14 @@ class SolanaHandler {
                                     }
                                     
                                     const formattedAmount = Number(amount) / Math.pow(10, decimals);
-                                    const expectedAmountNum = parseFloat(expectedAmount);
-                                    const variance = expectedAmountNum * 0.01; // 1% variance
                                     
-                                    // Accept if amount is close to expected or higher (for excess detection)
-                                    if (formattedAmount >= (expectedAmountNum - variance)) {
-                                      return {
-                                        sender: authority.toBase58(),
-                                        amount: formattedAmount.toString(),
-                                        signature: sig.signature,
-                                        slot: sig.slot,
-                                      };
-                                    }
+                                    // Return this deposit - don't filter by amount
+                                    return {
+                                      sender: authority.toBase58(),
+                                      amount: formattedAmount.toString(),
+                                      signature: sig.signature,
+                                      slot: sig.slot,
+                                    };
                                   }
                                 }
                               }
