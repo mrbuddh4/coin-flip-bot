@@ -206,15 +206,18 @@ class ExecutionHandler {
         ? `\n🔗 <a href="${txLink}">View Transaction</a>`
         : `\n⏳ Processing winnings...`;
 
+      const resultMessageText = 
+        `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
+        `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
+        `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+        `⚡ Fees: 10% (5% dev + 5% burn)${txLinkMessage}`;
+
       try {
         await ctx.telegram.editMessageText(
           flip.groupChatId,
           flip.groupMessageId,
           null,
-          `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
-          `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
-          `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-          `⚡ Fees: 10% (5% dev + 5% burn)${txLinkMessage}`,
+          resultMessageText,
           {
             parse_mode: 'HTML',
           }
@@ -225,10 +228,7 @@ class ExecutionHandler {
         try {
           await ctx.telegram.sendMessage(
             flip.groupChatId,
-            `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
-            `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
-            `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-            `⚡ Fees: 10% (5% dev + 5% burn)${txLinkMessage}`,
+            resultMessageText,
             {
               parse_mode: 'HTML',
             }
@@ -236,6 +236,42 @@ class ExecutionHandler {
         } catch (err) {
           logger.error('Failed to send flip result to group', { flipId, error: err.message });
         }
+      }
+
+      // If transaction is pending, edit the message after a delay to show the link once it completes
+      if (!winningTxHash && flip.groupMessageId) {
+        setTimeout(async () => {
+          try {
+            // Re-fetch flip to get updated tx hash
+            const { models } = getDB();
+            const updatedFlip = await models.CoinFlip.findByPk(flipId);
+            
+            if (updatedFlip && updatedFlip.winningTxHash) {
+              const txLinkUpdated = updatedFlip.tokenNetwork === 'EVM'
+                ? `https://etherscan.io/tx/${updatedFlip.winningTxHash}`
+                : `https://solscan.io/tx/${updatedFlip.winningTxHash}`;
+              
+              const updatedMessage = 
+                `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
+                `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
+                `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+                `⚡ Fees: 10% (5% dev + 5% burn)\n🔗 <a href="${txLinkUpdated}">View Transaction</a>`;
+              
+              await ctx.telegram.editMessageText(
+                flip.groupChatId,
+                flip.groupMessageId,
+                null,
+                updatedMessage,
+                {
+                  parse_mode: 'HTML',
+                }
+              );
+              logger.info('Updated flip result message with transaction link', { flipId, txHash: updatedFlip.winningTxHash });
+            }
+          } catch (err) {
+            logger.warn('Failed to update flip result with transaction link', { flipId, error: err.message });
+          }
+        }, 3000); // Wait 3 seconds then check for tx link
       }
 
       // Notify winner in DM
