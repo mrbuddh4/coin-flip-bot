@@ -1209,11 +1209,15 @@ async function initBot() {
 
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId });
+          const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          const receivedAmount = parseFloat(verification.amount || '0');
+          const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          
           await ctx.reply(
-            `⏳ <b>Deposit not received yet</b>\n\n` +
-            `Expected: ${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-            `Received: ${verification.amount || '0'}\n\n` +
-            `Please verify the transaction and try again.`,
+            `⏳ <b>Insufficient Deposit</b>\n\n` +
+            `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+            `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+            `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>`,
             { parse_mode: 'HTML' }
           );
           return;
