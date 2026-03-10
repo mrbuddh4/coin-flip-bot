@@ -119,6 +119,20 @@ const formatNetworkName = (network) => {
 };
 
 /**
+ * Get video duration in milliseconds
+ */
+const getVideoDuration = async (filePath) => {
+  try {
+    const getDuration = require('get-video-duration');
+    const durationSeconds = await getDuration(filePath);
+    return Math.ceil(durationSeconds * 1000); // Convert to milliseconds and round up
+  } catch (error) {
+    console.warn('Failed to get video duration:', error.message);
+    return 7000; // Default to 7 seconds if detection fails
+  }
+};
+
+/**
  * Safe JSON parse
  */
 const safeJsonParse = (str, defaultValue = {}) => {
@@ -141,5 +155,6 @@ module.exports = {
   throttle,
   retryWithBackoff,
   formatNetworkName,
+  getVideoDuration,
   safeJsonParse,
 };

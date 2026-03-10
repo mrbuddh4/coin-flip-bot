@@ -10,7 +10,7 @@ const WalletHandler = require('./handlers/walletHandler');
 const LeaderboardHandler = require('./handlers/leaderboardHandler');
 const DatabaseUtils = require('./database/utils');
 const logger = require('./utils/logger');
-const { validateConfig, formatNetworkName } = require('./utils/helpers');
+const { validateConfig, formatNetworkName, getVideoDuration } = require('./utils/helpers');
 
 let bot;
 let sessionStore = {};
@@ -777,6 +777,19 @@ async function initBot() {
                 }
               );
               videoMessageId = sentMessage.message_id;
+              
+              // Get actual video duration and auto-delete after it finishes
+              const videoDuration = await getVideoDuration(videoPath);
+              logger.info('Video duration detected', { flipId, videoDuration });
+              
+              setTimeout(async () => {
+                try {
+                  await ctx.telegram.deleteMessage(flip.groupChatId, videoMessageId);
+                  logger.info('Auto-deleted video message after duration', { flipId, videoMessageId, duration: videoDuration });
+                } catch (err) {
+                  logger.warn('Failed to auto-delete video message', { flipId, videoMessageId, error: err.message });
+                }
+              }, videoDuration);
             }
           } catch (videoErr) {
             logger.warn('Failed to send flip video', { flipId, error: videoErr.message });
