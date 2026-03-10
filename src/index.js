@@ -1342,6 +1342,45 @@ const handlers = {
 
           logger.info('[start] Accepted flip via deeplink', { flipId, userId });
 
+          // Update group message to show "Challenger Found!"
+          try {
+            const challenger = await models.User.findByPk(userId);
+            const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
+            const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+
+            const groupText = `🪙 <b>Challenger Found!</b>\n\n` +
+              `${challengerDisplay} has accepted the challenge!\n\n` +
+              `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+              `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}\n\n` +
+              `⏳ Processing deposits...`;
+
+            // Try to edit the original message
+            try {
+              await ctx.telegram.editMessageCaption(
+                groupText,
+                {
+                  chat_id: flip.groupChatId,
+                  message_id: flip.groupMessageId,
+                  parse_mode: 'HTML',
+                }
+              );
+            } catch (captionErr) {
+              // If caption edit fails, try text edit
+              await ctx.telegram.editMessageText(
+                groupText,
+                {
+                  chat_id: flip.groupChatId,
+                  message_id: flip.groupMessageId,
+                  parse_mode: 'HTML',
+                }
+              ).catch((textErr) => {
+                logger.warn('Both caption and text edits failed on group message', { error: textErr.message });
+              });
+            }
+          } catch (updateErr) {
+            logger.warn('Failed to update group message with acceptance', { error: updateErr.message });
+          }
+
           // Check if user has a wallet address in their profile
           const userProfile = await models.UserProfile.findByPk(userId);
           const walletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';

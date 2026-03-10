@@ -125,10 +125,12 @@ const getVideoDuration = async (filePath) => {
   try {
     const getDuration = require('get-video-duration');
     const durationSeconds = await getDuration(filePath);
-    return Math.ceil(durationSeconds * 1000); // Convert to milliseconds and round up
+    const durationMs = Math.ceil(durationSeconds * 1000); // Convert to milliseconds and round up
+    console.log('getVideoDuration - detected:', durationSeconds, 'seconds =', durationMs, 'ms');
+    return durationMs;
   } catch (error) {
-    console.warn('Failed to get video duration:', error.message);
-    return 7000; // Default to 7 seconds if detection fails
+    console.warn('Failed to get video duration, using 15 second default:', error.message);
+    return 15000; // Default to 15 seconds if detection fails (safer than 7 seconds)
   }
 };
 
