@@ -2,7 +2,7 @@ const { Markup } = require('telegraf');
 const { Op } = require('sequelize');
 const { getDB } = require('../database');
 const { getBlockchainManager } = require('../blockchain/manager');
-const { performCoinFlip, formatAddress, isValidNumber } = require('../utils/helpers');
+const { performCoinFlip, formatAddress, isValidNumber, formatNetworkName } = require('../utils/helpers');
 const logger = require('../utils/logger');
 const config = require('../config');
 
@@ -186,7 +186,7 @@ class FlipHandler {
           `💰 <b>Send Your Deposit</b>\n\n` +
           `You have <b>3 minutes</b> to complete this.\n\n` +
           `<b>Wager Amount:</b> ${formattedWager} ${tokenInfo.symbol}\n` +
-          `<b>Network:</b> ${tokenInfo.network}\n\n` +
+        `<b>Network:</b> ${formatNetworkName(tokenInfo.network)}\n\n` +
           `📮 <b>Send to this address:</b>\n\n` +
           `<code>${botWalletAddress}</code>\n\n` +
           `Once sent, click the button below:`,
@@ -426,7 +426,7 @@ class FlipHandler {
         `🪙 <b>Challenger Found!</b>\n\n` +
         `${challengerDisplay} is reviewing the flip.\n\n` +
         `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-        `🌐 <b>Network:</b> ${flip.tokenNetwork}`,
+        `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}`,
         {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
@@ -449,7 +449,7 @@ class FlipHandler {
           `🪙 <b>Challenge Accepted!</b>\n\n` +
           `${creatorDisplay} challenged you to a flip!\n\n` +
           `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-          `🌐 <b>Network:</b> ${flip.tokenNetwork}\n\n` +
+          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}\n\n` +
           `Tap the button below to confirm and send your deposit:`,
           {
             parse_mode: 'HTML',

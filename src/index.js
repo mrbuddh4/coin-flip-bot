@@ -10,7 +10,7 @@ const WalletHandler = require('./handlers/walletHandler');
 const LeaderboardHandler = require('./handlers/leaderboardHandler');
 const DatabaseUtils = require('./database/utils');
 const logger = require('./utils/logger');
-const { validateConfig } = require('./utils/helpers');
+const { validateConfig, formatNetworkName } = require('./utils/helpers');
 
 let bot;
 let sessionStore = {};
@@ -963,7 +963,7 @@ async function initBot() {
                 caption: `🪙 <b>Coin Flip Challenge!</b>\n\n` +
                 `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
                 `💰 <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n` +
-                `🌐 Network: ${flip.tokenNetwork}\n\n` +
+                `🌐 Network: ${formatNetworkName(flip.tokenNetwork)}\n\n` +
                 `⏰ Waiting for a challenger...`,
                 parse_mode: 'HTML',
                 reply_markup: Markup.inlineKeyboard([
@@ -977,7 +977,7 @@ async function initBot() {
               `🪙 <b>Coin Flip Challenge!</b>\n\n` +
               `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
               `💰 <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n` +
-              `🌐 Network: ${flip.tokenNetwork}\n\n` +
+              `🌐 Network: ${formatNetworkName(flip.tokenNetwork)}\n\n` +
               `⏰ Waiting for a challenger...`,
               {
                 parse_mode: 'HTML',
@@ -994,7 +994,7 @@ async function initBot() {
             `🪙 <b>Coin Flip Challenge!</b>\n\n` +
             `<a href="tg://user?id=${userId}">${userRecord?.firstName || 'A player'}</a> started a flip for:\n\n` +
             `💰 <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b>\n` +
-            `🌐 Network: ${flip.tokenNetwork}\n\n` +
+            `🌐 Network: ${formatNetworkName(flip.tokenNetwork)}\n\n` +
             `⏰ Waiting for a challenger...`,
             {
               parse_mode: 'HTML',

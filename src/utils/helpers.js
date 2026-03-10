@@ -108,6 +108,17 @@ const retryWithBackoff = async (fn, maxRetries = 3, delay = 1000) => {
 };
 
 /**
+ * Format network name for display
+ */
+const formatNetworkName = (network) => {
+  const networkMap = {
+    'EVM': 'Paxeer',
+    'SOLANA': 'Solana',
+  };
+  return networkMap[network] || network;
+};
+
+/**
  * Safe JSON parse
  */
 const safeJsonParse = (str, defaultValue = {}) => {
@@ -129,5 +140,6 @@ module.exports = {
   generateId,
   throttle,
   retryWithBackoff,
+  formatNetworkName,
   safeJsonParse,
 };
