@@ -116,6 +116,13 @@ class ExecutionHandler {
         ? process.env.EVM_DEV_WALLET 
         : process.env.SOLANA_DEV_WALLET;
       
+      logger.info('[executeFlip] Fee wallet check', { 
+        flipId, 
+        network: flip.tokenNetwork,
+        feeWallet: feeWallet ? `${feeWallet.substring(0, 10)}...` : 'NOT_SET',
+        feeAmount 
+      });
+      
       let feeTxHash = null;
       if (feeWallet) {
         try {
@@ -128,13 +135,13 @@ class ExecutionHandler {
             flip.tokenDecimals
           );
           feeTxHash = feeResult.txHash;
-          logger.info('Fees sent to dev wallet', { flipId, feeWallet, txHash: feeTxHash, amount: feeAmount });
+          logger.info('[executeFlip] Fees sent to dev wallet', { flipId, feeWallet, txHash: feeTxHash, amount: feeAmount });
         } catch (feeError) {
-          logger.error('Error sending fees', { flipId, feeWallet, error: feeError.message });
+          logger.error('[executeFlip] Error sending fees', { flipId, feeWallet, error: feeError.message, stack: feeError.stack });
           // Continue even if fee send fails
         }
       } else {
-        logger.warn('Dev wallet not configured', { network: flip.tokenNetwork });
+        logger.warn('[executeFlip] Dev wallet not configured', { network: flip.tokenNetwork });
       }
 
       // Update flip record with result
