@@ -136,6 +136,18 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                 const botInfo = await telegram.getMe();
                 const formattedWager = parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
                 
+                // Create a new session for starting a fresh flip
+                const newFlipSession = await models.BotSession.create({
+                  userId: flipCheck.creatorId, // Creator can start a new flip
+                  sessionType: 'INITIATING',
+                  currentStep: 'AWAITING_DM_START',
+                  data: {
+                    groupId: groupId,
+                  },
+                });
+
+                const deeplink = `https://t.me/${botInfo.username}?start=flip_${newFlipSession.id}`;
+                
                 await telegram.sendMessage(
                   groupId,
                   `⏰ <b>Challenge Expired</b>\n\n` +
@@ -145,11 +157,11 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                   {
                     parse_mode: 'HTML',
                     reply_markup: Markup.inlineKeyboard([
-                      [Markup.button.url('🪙 Start a Challenge', `https://t.me/${botInfo.username}?start=flip`)],
+                      [Markup.button.url('🪙 Start a Challenge', deeplink)],
                     ]).reply_markup,
                   }
                 );
-                logger.info('[challengeTimeout] Sent expiration message to group', { flipId });
+                logger.info('[challengeTimeout] Sent expiration message with new flip session', { flipId, sessionId: newFlipSession.id });
               } catch (msgErr) {
                 logger.error('[challengeTimeout] Failed to send expiration message', { flipId, error: msgErr.message });
               }
