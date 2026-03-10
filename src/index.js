@@ -77,56 +77,55 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
               // Refund creator's deposit
               try {
                 const creator = await models.User.findByPk(flipCheck.creatorId);
-                const userProfile = await models.UserProfile.findByPk(flipCheck.creatorId);
                 
-                if (creator && userProfile) {
-                  const walletField = flipCheck.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
-                  const creatorWallet = userProfile[walletField];
+                // Use the wallet they sent the deposit FROM (not their receiving wallet)
+                const creatorDepositWallet = flipCheck.creatorDepositWalletAddress;
+                
+                if (creator && creatorDepositWallet) {
+                  const blockchainManager = getBlockchainManager();
                   
-                  if (creatorWallet) {
-                    const blockchainManager = getBlockchainManager();
+                  try {
+                    // Refund the exact wager amount - get token config to find token address
+                    const supportedTokens = config.supportedTokens;
+                    let tokenAddress = 'NATIVE';
+                    let tokenDecimals = 18;
                     
-                    try {
-                      // Refund the exact wager amount - get token config to find token address
-                      const supportedTokens = config.supportedTokens;
-                      let tokenAddress = 'NATIVE';
-                      let tokenDecimals = 18;
-                      
-                      for (const key in supportedTokens) {
-                        if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
-                          tokenAddress = supportedTokens[key].address || 'NATIVE';
-                          tokenDecimals = supportedTokens[key].decimals || 18;
-                          break;
-                        }
+                    for (const key in supportedTokens) {
+                      if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
+                        tokenAddress = supportedTokens[key].address || 'NATIVE';
+                        tokenDecimals = supportedTokens[key].decimals || 18;
+                        break;
                       }
-
-                      const txHash = await blockchainManager.sendWinnings(
-                        flipCheck.tokenNetwork,
-                        tokenAddress,
-                        creatorWallet,
-                        flipCheck.wagerAmount,
-                        tokenDecimals
-                      );
-                      
-                      logger.info('[challengeTimeout] Refunded creator deposit', { 
-                        flipId, 
-                        creatorId: flipCheck.creatorId,
-                        amount: flipCheck.wagerAmount,
-                        token: flipCheck.tokenSymbol,
-                        txHash 
-                      });
-                    } catch (refundErr) {
-                      logger.error('[challengeTimeout] Failed to refund creator', { 
-                        flipId, 
-                        error: refundErr.message 
-                      });
                     }
-                  } else {
-                    logger.warn('[challengeTimeout] Creator has no wallet address stored', { 
+
+                    const txHash = await blockchainManager.sendWinnings(
+                      flipCheck.tokenNetwork,
+                      tokenAddress,
+                      creatorDepositWallet,
+                      flipCheck.wagerAmount,
+                      tokenDecimals
+                    );
+                    
+                    logger.info('[challengeTimeout] Refunded creator deposit to original wallet', { 
                       flipId, 
-                      creatorId: flipCheck.creatorId 
+                      creatorId: flipCheck.creatorId,
+                      depositWallet: creatorDepositWallet,
+                      amount: flipCheck.wagerAmount,
+                      token: flipCheck.tokenSymbol,
+                      txHash 
+                    });
+                  } catch (refundErr) {
+                    logger.error('[challengeTimeout] Failed to refund creator', { 
+                      flipId, 
+                      error: refundErr.message 
                     });
                   }
+                } else {
+                  logger.warn('[challengeTimeout] Creator or deposit wallet missing for refund', { 
+                    flipId, 
+                    creatorId: flipCheck.creatorId,
+                    hasDepositWallet: !!creatorDepositWallet
+                  });
                 }
               } catch (creatorErr) {
                 logger.error('[challengeTimeout] Error processing creator refund', { flipId, error: creatorErr.message });
