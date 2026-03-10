@@ -110,38 +110,60 @@ class ExecutionHandler {
         // Continue even if send fails, we still want to record the flip result
       }
 
-      // Send fees (5% dev + 5% burn = 10% total) to dev wallet
-      const feeAmount = totalPool * 0.1;
-      const feeWallet = flip.tokenNetwork === 'EVM' 
+      // Send fees - split between dev wallet (5%) and burn address (5%)
+      const devFeeAmount = totalPool * 0.05;  // 5% to dev
+      const burnFeeAmount = totalPool * 0.05; // 5% to burn
+      
+      const devWallet = flip.tokenNetwork === 'EVM' 
         ? process.env.EVM_DEV_WALLET 
         : process.env.SOLANA_DEV_WALLET;
       
-      logger.info('[executeFlip] Fee wallet check', { 
+      // Burn addresses for each network
+      const burnAddress = flip.tokenNetwork === 'EVM'
+        ? '0x0000000000000000000000000000000000000000' // EVM burn address (null address)
+        : 'zzz111111111111111111111111111111111111111Y5H7d'; // Solana burn address
+      
+      logger.info('[executeFlip] Fee distribution', { 
         flipId, 
         network: flip.tokenNetwork,
-        feeWallet: feeWallet ? `${feeWallet.substring(0, 10)}...` : 'NOT_SET',
-        feeAmount 
+        devWallet: devWallet ? `${devWallet.substring(0, 10)}...` : 'NOT_SET',
+        devFeeAmount,
+        burnAddress: `${burnAddress.substring(0, 10)}...`,
+        burnFeeAmount
       });
       
-      let feeTxHash = null;
-      if (feeWallet) {
+      // Send 5% to dev wallet
+      if (devWallet) {
         try {
           const blockchainManager = getBlockchainManager();
-          const feeResult = await blockchainManager.sendWinnings(
+          const devResult = await blockchainManager.sendWinnings(
             flip.tokenNetwork,
             flip.tokenAddress,
-            feeWallet,
-            feeAmount.toString(),
+            devWallet,
+            devFeeAmount.toString(),
             flip.tokenDecimals
           );
-          feeTxHash = feeResult.txHash;
-          logger.info('[executeFlip] Fees sent to dev wallet', { flipId, feeWallet, txHash: feeTxHash, amount: feeAmount });
-        } catch (feeError) {
-          logger.error('[executeFlip] Error sending fees', { flipId, feeWallet, error: feeError.message, stack: feeError.stack });
-          // Continue even if fee send fails
+          logger.info('[executeFlip] Dev fee sent', { flipId, devWallet: `${devWallet.substring(0, 10)}...`, txHash: devResult.txHash, amount: devFeeAmount });
+        } catch (devFeeError) {
+          logger.error('[executeFlip] Error sending dev fee', { flipId, devWallet, error: devFeeError.message });
         }
       } else {
         logger.warn('[executeFlip] Dev wallet not configured', { network: flip.tokenNetwork });
+      }
+      
+      // Send 5% to burn address
+      try {
+        const blockchainManager = getBlockchainManager();
+        const burnResult = await blockchainManager.sendWinnings(
+          flip.tokenNetwork,
+          flip.tokenAddress,
+          burnAddress,
+          burnFeeAmount.toString(),
+          flip.tokenDecimals
+        );
+        logger.info('[executeFlip] Burn fee sent', { flipId, burnAddress: `${burnAddress.substring(0, 10)}...`, txHash: burnResult.txHash, amount: burnFeeAmount });
+      } catch (burnFeeError) {
+        logger.error('[executeFlip] Error sending burn fee', { flipId, burnAddress, error: burnFeeError.message });
       }
 
       // Update flip record with result
