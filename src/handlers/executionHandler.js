@@ -76,22 +76,6 @@ class ExecutionHandler {
       const winnerPrize = totalPool * 0.9; // 90% to winner, 10% fees
       const winnerPrizeFormatted = winnerPrize.toLocaleString('en-US', { maximumFractionDigits: 6 });
 
-      // Send immediate victory notification to winner (don't wait for blockchain)
-      try {
-        await ctx.telegram.sendMessage(
-          winnerId,
-          `🎉 <b>YOU WON!</b> 🎉\n\n` +
-          `Congratulations! You won the coin flip!\n\n` +
-          `💰 Your Prize: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90% of pool)\n` +
-          `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n\n` +
-          `⏳ Sending your winnings to your wallet...`,
-          { parse_mode: 'HTML' }
-        );
-        logger.info('Sent immediate victory notification', { winnerId, flipId });
-      } catch (notifyErr) {
-        logger.warn('Failed to send victory notification', { error: notifyErr.message, winnerId });
-      }
-
       // Send winnings to winner automatically
       let winningTxHash = null;
       try {
