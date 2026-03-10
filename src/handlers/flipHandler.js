@@ -352,7 +352,31 @@ class FlipHandler {
 
       if (flip.status !== 'WAITING_CHALLENGER') {
         logger.warn('Flip not in WAITING_CHALLENGER status', { flipId, status: flip.status });
-        await ctx.answerCbQuery('❌ This flip is no longer available.');
+        
+        // Handle expired/cancelled flips
+        if (flip.status === 'CANCELLED') {
+          await ctx.answerCbQuery('❌ This challenge expired');
+          
+          // Send a helpful message to the challenger with option to start new challenge
+          try {
+            const botInfo = await ctx.telegram.getMe();
+            await ctx.reply(
+              `⏰ <b>Challenge Expired</b>\n\n` +
+              `The challenge for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b> has expired.\n\n` +
+              `Would you like to start a new challenge?`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.url('🪙 Start a Challenge', `https://t.me/${botInfo.username}`)],
+                ]).reply_markup,
+              }
+            );
+          } catch (err) {
+            logger.warn('Failed to send expired challenge message', { flipId, error: err.message });
+          }
+        } else {
+          await ctx.answerCbQuery('❌ This flip is no longer available.');
+        }
         return;
       }
 
