@@ -170,7 +170,7 @@ class EVMHandler {
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null) {
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      const lookbackBlocks = 100; // Check last 100 blocks
+      const lookbackBlocks = 1000; // Check last 1000 blocks (~4 hours on Ethereum)
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
 
       if (tokenAddress && tokenAddress !== 'NATIVE') {

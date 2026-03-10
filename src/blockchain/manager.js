@@ -100,13 +100,21 @@ class BlockchainManager {
       const variance = expectedAmountNum * 0.01;
       const hasDeposit = receivedAmount >= (expectedAmountNum - variance);
 
+      // Even in fallback, try to detect sender again with more lenient criteria
+      let fallbackSender = null;
+      try {
+        fallbackSender = await handler.getRecentDepositSender(botWallet, expectedAmount * 0.5, tokenAddress); // Try with 50% of amount for more matches
+      } catch (err) {
+        console.warn('Could not detect sender in fallback:', err.message);
+      }
+
       return {
         received: hasDeposit,
         amount: receivedAmount,
         expected: expectedAmountNum,
         botWallet: botWallet,
         balance: balance,
-        depositSender: null,
+        depositSender: fallbackSender?.sender || null,
         verified: 'balance', // Fallback to balance verification
       };
     } catch (error) {

@@ -237,7 +237,7 @@ class SolanaHandler {
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null) {
     try {
       const botPublicKey = new PublicKey(botWalletAddress);
-      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 20 });
+      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 100 });
 
       for (const sig of signatures) {
         try {
