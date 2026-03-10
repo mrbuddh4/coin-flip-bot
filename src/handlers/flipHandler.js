@@ -446,72 +446,37 @@ class FlipHandler {
       const challenger = await models.User.findByPk(challengerId);
       const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
 
-      // Delete the original challenge message and post a new "Challenger Found" message
+      // Edit the group message with button to take challenger to bot DM
       try {
-        await ctx.deleteMessage();
-        logger.info('Deleted original challenge message', { flipId });
-      } catch (deleteErr) {
-        logger.warn('Failed to delete original challenge message', { flipId, error: deleteErr.message });
-      }
-
-      // Send new "Challenger Found" message to group
-      try {
-        await ctx.reply(
+        await ctx.editMessageCaption(
           `🪙 <b>Challenger Found!</b>\n\n` +
           `${challengerDisplay} has accepted the challenge!\n\n` +
           `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}\n\n` +
-          `⏳ Processing deposits...`,
-          { parse_mode: 'HTML' }
-        );
-        logger.info('Sent new challenger found message to group', { flipId, groupId });
-      } catch (replyErr) {
-        logger.warn('Failed to send new challenger found message', { flipId, error: replyErr.message });
-      }
-
-      // Send confirmation prompt directly to challenger's DM
-      try {
-        logger.info('Sending confirmation DM to challenger', { 
-          challengerId, 
-          flipId, 
-          sessionId: confirmSession.id,
-          deeplink 
-        });
-        
-        const dmResult = await ctx.telegram.sendMessage(
-          challengerId,
-          `🪙 <b>Challenge Accepted!</b>\n\n` +
-          `${creatorDisplay} challenged you to a flip!\n\n` +
-          `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}\n\n` +
-          `Tap the button below to confirm and send your deposit:`,
+          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}`,
           {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([
-              [Markup.button.url('✅ Confirm Challenge', deeplink)],
+              [Markup.button.url('📱 Confirm in DM', deeplink)],
             ]).reply_markup,
           }
         );
-        logger.info('Sent confirmation DM to challenger', { challengerId, flipId, messageId: dmResult.message_id });
-      } catch (dmErr) {
-        logger.error('Failed to send confirmation DM', { 
-          error: dmErr.message, 
-          errorCode: dmErr.code,
-          errorResponse: dmErr.response,
-          challengerId, 
-          flipId 
+      } catch (captionErr) {
+        // If caption edit fails (text message), try text edit
+        logger.info('Caption edit failed, trying text edit', { error: captionErr.message });
+        await ctx.editMessageText(
+          `🪙 <b>Challenger Found!</b>\n\n` +
+          `${challengerDisplay} has accepted the challenge!\n\n` +
+          `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.url('📱 Confirm in DM', deeplink)],
+            ]).reply_markup,
+          }
+        ).catch((textErr) => {
+          logger.warn('Both caption and text edits failed', { captionErr: captionErr.message, textErr: textErr.message });
         });
-        console.error('[acceptFlip] DM Send Error:', dmErr);
-        // If DM fails, try to send a group message instead
-        try {
-          await ctx.reply(
-            `⚠️ <b>Couldn't send DM to challenger</b>\n\n` +
-            `${challengerDisplay}, please open a DM with the bot and use /start to continue.`,
-            { parse_mode: 'HTML' }
-          );
-        } catch (err) {
-          logger.warn('Failed to send group fallback message', err.message);
-        }
       }
 
       await ctx.answerCbQuery('✅ Check your DM to confirm the challenge!');
