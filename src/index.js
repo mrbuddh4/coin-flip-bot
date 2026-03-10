@@ -1334,6 +1334,11 @@ async function initBot() {
         // Save message ID to flip
         flip.groupMessageId = groupMessage.message_id;
         await flip.save();
+        logger.info('[creator_deposit_confirmed] Stored challenge message for deletion', { 
+          flipId: flip.id, 
+          messageId: groupMessage.message_id, 
+          groupId: flip.groupChatId 
+        });
 
         // Set 3-minute timeout for challenge acceptance
         setChallengeTimeout(flip.id, flip.groupChatId, groupMessage.message_id, ctx.telegram);
@@ -1522,15 +1527,20 @@ const handlers = {
           // Delete the original challenge message
           try {
             if (!flip.groupChatId) {
-              logger.error('[start] Missing groupChatId when trying to delete', { flipId });
+              logger.error('[accept_deeplink] Missing groupChatId when trying to delete', { flipId });
             } else if (!flip.groupMessageId) {
-              logger.error('[start] Missing groupMessageId when trying to delete', { flipId });
+              logger.error('[accept_deeplink] Missing groupMessageId when trying to delete', { flipId });
             } else {
               await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
-              logger.info('[start] Deleted original challenge message', { flipId, groupMessageId: flip.groupMessageId });
+              logger.info('[accept_deeplink] Deleted original challenge message', { flipId, messageId: flip.groupMessageId, groupId: flip.groupChatId });
             }
           } catch (delErr) {
-            logger.warn('[start] Failed to delete original challenge message', { error: delErr.message, flipId, groupChatId: flip.groupChatId, groupMessageId: flip.groupMessageId });
+            logger.error('[accept_deeplink] Failed to delete original challenge message', { 
+              error: delErr.message, 
+              flipId, 
+              messageId: flip.groupMessageId,
+              groupId: flip.groupChatId 
+            });
           }
 
           // Send new "Challenger Found!" message
@@ -1709,14 +1719,23 @@ const handlers = {
                   session.data.groupId,
                   session.data.initialGroupMessageId
                 );
-                logger.info('Deleted initial Start Flip message from group', { 
+                logger.info('[flip_deeplink] Deleted initial Start Flip message from group', { 
                   sessionId, 
                   messageId: session.data.initialGroupMessageId,
                   groupId: session.data.groupId
                 });
               } catch (delErr) {
-                logger.warn('Failed to delete initial Start Flip message', { error: delErr.message });
+                logger.error('[flip_deeplink] Failed to delete initial Start Flip message', { 
+                  error: delErr.message,
+                  messageId: session.data.initialGroupMessageId,
+                  groupId: session.data.groupId
+                });
               }
+            } else {
+              logger.warn('[flip_deeplink] Could not delete initial message - missing IDs', { 
+                hasMessageId: !!session.data?.initialGroupMessageId,
+                hasGroupId: !!session.data?.groupId
+              });
             }
 
             // Valid flip session, send token selection
@@ -2033,7 +2052,9 @@ const handlers = {
 
         // Store the message ID so we can delete it later when challenge is posted
         session.data.initialGroupMessageId = groupMsg.message_id;
+        session.data.deleteInitialMessage = true;
         await session.save();
+        logger.info('[flip] Stored initial message for deletion', { sessionId: session.id, messageId: groupMsg.message_id, groupId: ctx.chat.id });
       } else {
         // In DM: Check if user has a group context
         const lastGroupSession = await models.BotSession.findOne({
