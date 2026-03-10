@@ -110,6 +110,33 @@ class ExecutionHandler {
         // Continue even if send fails, we still want to record the flip result
       }
 
+      // Send fees (5% dev + 5% burn = 10% total) to fee wallet
+      const feeAmount = totalPool * 0.1;
+      const feeWallet = flip.tokenNetwork === 'EVM' 
+        ? process.env.DEV_FEE_WALLET_EVM 
+        : process.env.DEV_FEE_WALLET_SOLANA;
+      
+      let feeTxHash = null;
+      if (feeWallet) {
+        try {
+          const blockchainManager = getBlockchainManager();
+          const feeResult = await blockchainManager.sendWinnings(
+            flip.tokenNetwork,
+            flip.tokenAddress,
+            feeWallet,
+            feeAmount.toString(),
+            flip.tokenDecimals
+          );
+          feeTxHash = feeResult.txHash;
+          logger.info('Fees sent to fee wallet', { flipId, feeWallet, txHash: feeTxHash, amount: feeAmount });
+        } catch (feeError) {
+          logger.error('Error sending fees', { flipId, feeWallet, error: feeError.message });
+          // Continue even if fee send fails
+        }
+      } else {
+        logger.warn('Fee wallet not configured', { network: flip.tokenNetwork });
+      }
+
       // Update flip record with result
       flip.flipResult = flipResultEnum;
       flip.winnerId = winnerId;
