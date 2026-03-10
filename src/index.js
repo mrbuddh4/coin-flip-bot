@@ -1340,14 +1340,20 @@ const handlers = {
           flip.status = 'WAITING_CHALLENGER_DEPOSIT';
           await flip.save();
 
-          logger.info('[start] Accepted flip via deeplink', { flipId, userId });
+          logger.info('[start] Accepted flip via deeplink', { flipId, userId, groupChatId: flip.groupChatId, groupMessageId: flip.groupMessageId });
 
           // Delete the original challenge message
           try {
-            await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
-            logger.info('Deleted original challenge message', { flipId, groupMessageId: flip.groupMessageId });
+            if (!flip.groupChatId) {
+              logger.error('[start] Missing groupChatId when trying to delete', { flipId });
+            } else if (!flip.groupMessageId) {
+              logger.error('[start] Missing groupMessageId when trying to delete', { flipId });
+            } else {
+              await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
+              logger.info('[start] Deleted original challenge message', { flipId, groupMessageId: flip.groupMessageId });
+            }
           } catch (delErr) {
-            logger.warn('Failed to delete original challenge message', { error: delErr.message });
+            logger.warn('[start] Failed to delete original challenge message', { error: delErr.message, flipId, groupChatId: flip.groupChatId, groupMessageId: flip.groupMessageId });
           }
 
           // Send new "Challenger Found!" message
@@ -1362,14 +1368,14 @@ const handlers = {
               `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}\n\n` +
               `⏳ Processing deposits...`;
 
-            await ctx.telegram.sendMessage(
+            const sentMsg = await ctx.telegram.sendMessage(
               flip.groupChatId,
               groupText,
               { parse_mode: 'HTML' }
             );
-            logger.info('Sent new challenger found message', { flipId });
+            logger.info('[start] Sent new challenger found message', { flipId, sentMessageId: sentMsg?.message_id });
           } catch (sendErr) {
-            logger.warn('Failed to send new challenger message', { error: sendErr.message });
+            logger.warn('[start] Failed to send new challenger message', { error: sendErr.message, flipId, groupChatId: flip.groupChatId });
           }
 
           // Check if user has a wallet address in their profile
