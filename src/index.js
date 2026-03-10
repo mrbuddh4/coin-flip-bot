@@ -920,13 +920,73 @@ async function initBot() {
 
         if (!verification.received) {
           logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
+          const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          const receivedAmount = parseFloat(verification.amount || '0');
+          const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          
           await ctx.reply(
-            `⏳ <b>Deposit not received yet</b>\n\n` +
-            `Expected: ${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-            `Received: ${verification.amount || '0'}\n\n` +
-            `Please verify the transaction and try again.`,
+            `❌ <b>Insufficient Deposit</b>\n\n` +
+            `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+            `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+            `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+            `You have <b>3 minutes</b> to send the remaining amount to the same address, otherwise your deposit will be refunded and the challenge cancelled.`,
             { parse_mode: 'HTML' }
           );
+          
+          // Set timeout to refund partial deposit if not completed in 3 minutes
+          setTimeout(async () => {
+            try {
+              const flipCheck = await models.CoinFlip.findByPk(flipId);
+              if (flipCheck && flipCheck.status === 'WAITING_CHALLENGER_DEPOSIT' && !flipCheck.challengerDepositConfirmed) {
+                logger.info('[insufficient_deposit_timeout_challenger] Refunding partial deposit and cancelling', { flipId });
+                
+                // Cancel the challenge
+                flipCheck.status = 'CANCELLED';
+                flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenger insufficient deposit - timeout' };
+                await flipCheck.save();
+                
+                // Refund the partial amount that was sent
+                if (verification.depositSender && verification.amount) {
+                  try {
+                    const blockchainManager = getBlockchainManager();
+                    const supportedTokens = config.supportedTokens;
+                    let tokenAddress = 'NATIVE';
+                    let tokenDecimals = 18;
+                    
+                    for (const key in supportedTokens) {
+                      if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
+                        tokenAddress = supportedTokens[key].address || 'NATIVE';
+                        tokenDecimals = supportedTokens[key].decimals || 18;
+                        break;
+                      }
+                    }
+
+                    await blockchainManager.sendWinnings(
+                      flipCheck.tokenNetwork,
+                      tokenAddress,
+                      verification.depositSender,
+                      verification.amount,
+                      tokenDecimals
+                    );
+                    
+                    logger.info('[insufficient_deposit_timeout_challenger] Refunded partial deposit', { 
+                      flipId,
+                      amount: verification.amount,
+                      recipient: verification.depositSender
+                    });
+                  } catch (refundErr) {
+                    logger.error('[insufficient_deposit_timeout_challenger] Failed to refund partial deposit', { 
+                      flipId,
+                      error: refundErr.message 
+                    });
+                  }
+                }
+              }
+            } catch (err) {
+              logger.error('[insufficient_deposit_timeout_challenger] Error in timeout handler', { flipId, error: err.message });
+            }
+          }, 180000); // 3 minutes
+          
           return;
         }
 
@@ -936,6 +996,49 @@ async function initBot() {
         if (verification.depositSender && !flip.challengerDepositWalletAddress) {
           flip.challengerDepositWalletAddress = verification.depositSender;
           logger.info('[deposit_confirmed] Detected challenger deposit sender', { flipId, sender: verification.depositSender });
+        }
+
+        // If they sent more than the wager, refund the excess
+        const receivedAmount = parseFloat(verification.amount || flip.wagerAmount);
+        const wagerAmount = parseFloat(flip.wagerAmount);
+        
+        if (receivedAmount > wagerAmount) {
+          const excessAmount = receivedAmount - wagerAmount;
+          logger.info('[deposit_confirmed] Excess deposit detected, will refund', { flipId, excess: excessAmount, sender: verification.depositSender });
+          
+          try {
+            if (verification.depositSender) {
+              const blockchainManager = getBlockchainManager();
+              const supportedTokens = config.supportedTokens;
+              let tokenAddress = 'NATIVE';
+              let tokenDecimals = 18;
+              
+              for (const key in supportedTokens) {
+                if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
+                  tokenAddress = supportedTokens[key].address || 'NATIVE';
+                  tokenDecimals = supportedTokens[key].decimals || 18;
+                  break;
+                }
+              }
+
+              const excessStr = excessAmount.toFixed(tokenDecimals);
+              await blockchainManager.sendWinnings(
+                flip.tokenNetwork,
+                tokenAddress,
+                verification.depositSender,
+                excessStr,
+                tokenDecimals
+              );
+              
+              logger.info('[deposit_confirmed] Refunded excess deposit', { 
+                flipId, 
+                excess: excessStr,
+                recipient: verification.depositSender
+              });
+            }
+          } catch (excessErr) {
+            logger.error('[deposit_confirmed] Failed to refund excess deposit', { flipId, error: excessErr.message });
+          }
         }
 
         // Mark challenger deposit as confirmed

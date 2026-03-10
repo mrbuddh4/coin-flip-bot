@@ -260,12 +260,77 @@ class FlipHandler {
 
       if (!verification.received) {
         const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+        const receivedAmount = parseFloat(verification.amount || '0');
+        const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+        
+        // Store what was actually received for potential refund later
+        if (!flip.data) flip.data = {};
+        flip.data.partialDepositReceived = receivedAmount;
+        flip.data.partialDepositAttempt = true;
+        await flip.save();
+        
         await ctx.reply(
-          `❌ Deposit not detected yet.\n\n` +
+          `❌ <b>Insufficient Deposit</b>\n\n` +
           `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-          `Received: ${verification.amount}\n\n` +
-          `Please ensure the tokens have been sent to the correct address.`
+          `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+          `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+          `You have <b>3 minutes</b> to send the remaining amount to the same address, otherwise your deposit will be refunded and the challenge cancelled.`
         );
+        
+        // Set timeout to refund partial deposit if not completed in 3 minutes
+        setTimeout(async () => {
+          try {
+            const flipCheck = await models.CoinFlip.findByPk(flip.id);
+            if (flipCheck && flipCheck.status === 'WAITING_CHALLENGER_DEPOSIT' && flipCheck.data?.partialDepositAttempt) {
+              logger.info('[insufficient_deposit_timeout] Refunding partial deposit and cancelling', { flipId: flip.id });
+              
+              // Cancel the challenge
+              flipCheck.status = 'CANCELLED';
+              flipCheck.data = { ...flipCheck.data, cancelReason: 'Insufficient deposit - timeout' };
+              await flipCheck.save();
+              
+              // Refund the partial amount that was sent
+              if (verification.depositSender && verification.amount) {
+                try {
+                  const blockchainManager = getBlockchainManager();
+                  const supportedTokens = config.supportedTokens;
+                  let tokenAddress = 'NATIVE';
+                  let tokenDecimals = 18;
+                  
+                  for (const key in supportedTokens) {
+                    if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
+                      tokenAddress = supportedTokens[key].address || 'NATIVE';
+                      tokenDecimals = supportedTokens[key].decimals || 18;
+                      break;
+                    }
+                  }
+
+                  await blockchainManager.sendWinnings(
+                    flipCheck.tokenNetwork,
+                    tokenAddress,
+                    verification.depositSender,
+                    verification.amount,
+                    tokenDecimals
+                  );
+                  
+                  logger.info('[insufficient_deposit_timeout] Refunded partial deposit', { 
+                    flipId: flip.id,
+                    amount: verification.amount,
+                    recipient: verification.depositSender
+                  });
+                } catch (refundErr) {
+                  logger.error('[insufficient_deposit_timeout] Failed to refund partial deposit', { 
+                    flipId: flip.id,
+                    error: refundErr.message 
+                  });
+                }
+              }
+            }
+          } catch (err) {
+            logger.error('[insufficient_deposit_timeout] Error in timeout handler', { flipId: flip.id, error: err.message });
+          }
+        }, 180000); // 3 minutes
+        
         return;
       }
 
@@ -277,6 +342,49 @@ class FlipHandler {
       if (verification.depositSender) {
         flip.creatorDepositWalletAddress = verification.depositSender;
         logger.info('Detected creator deposit sender', { flipId, sender: verification.depositSender });
+      }
+      
+      // If they sent more than the wager, refund the excess
+      const receivedAmount = parseFloat(verification.amount || flip.wagerAmount);
+      const wagerAmount = parseFloat(flip.wagerAmount);
+      
+      if (receivedAmount > wagerAmount) {
+        const excessAmount = receivedAmount - wagerAmount;
+        logger.info('Excess deposit detected, will refund', { flipId, excess: excessAmount, sender: verification.depositSender });
+        
+        try {
+          if (verification.depositSender) {
+            const blockchainManager = getBlockchainManager();
+            const supportedTokens = config.supportedTokens;
+            let tokenAddress = 'NATIVE';
+            let tokenDecimals = 18;
+            
+            for (const key in supportedTokens) {
+              if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
+                tokenAddress = supportedTokens[key].address || 'NATIVE';
+                tokenDecimals = supportedTokens[key].decimals || 18;
+                break;
+              }
+            }
+
+            const excessStr = excessAmount.toFixed(tokenDecimals);
+            await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              tokenAddress,
+              verification.depositSender,
+              excessStr,
+              tokenDecimals
+            );
+            
+            logger.info('Refunded excess deposit', { 
+              flipId, 
+              excess: excessStr,
+              recipient: verification.depositSender
+            });
+          }
+        } catch (excessErr) {
+          logger.error('Failed to refund excess deposit', { flipId, error: excessErr.message });
+        }
       }
       
       await flip.save();
