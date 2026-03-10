@@ -123,18 +123,21 @@ class ExecutionHandler {
         ? '0x0000000000000000000000000000000000000000' // EVM burn address (null address)
         : 'zzz111111111111111111111111111111111111111Y5H7d'; // Solana burn address
       
-      logger.info('[executeFlip] Fee distribution', { 
+      logger.info('[executeFlip] Fee distribution starting', { 
         flipId, 
         network: flip.tokenNetwork,
-        devWallet: devWallet ? `${devWallet.substring(0, 10)}...` : 'NOT_SET',
+        totalPool,
         devFeeAmount,
+        burnFeeAmount,
+        devWalletEnv: `EVM_DEV_WALLET=${process.env.EVM_DEV_WALLET ? 'SET' : 'NOT_SET'}, SOLANA_DEV_WALLET=${process.env.SOLANA_DEV_WALLET ? 'SET' : 'NOT_SET'}`,
+        devWallet: devWallet ? `${devWallet.substring(0, 10)}...` : 'NOT_SET',
         burnAddress: `${burnAddress.substring(0, 10)}...`,
-        burnFeeAmount
       });
       
       // Send 5% to dev wallet
       if (devWallet) {
         try {
+          logger.info('[executeFlip] Sending dev fee', { flipId, devWallet, devFeeAmount, tokenAddress: flip.tokenAddress, tokenDecimals: flip.tokenDecimals });
           const blockchainManager = getBlockchainManager();
           const devResult = await blockchainManager.sendWinnings(
             flip.tokenNetwork,
@@ -143,16 +146,17 @@ class ExecutionHandler {
             devFeeAmount.toString(),
             flip.tokenDecimals
           );
-          logger.info('[executeFlip] Dev fee sent', { flipId, devWallet: `${devWallet.substring(0, 10)}...`, txHash: devResult.txHash, amount: devFeeAmount });
+          logger.info('[executeFlip] Dev fee SENT', { flipId, devWallet: `${devWallet.substring(0, 10)}...`, txHash: devResult.txHash, amount: devFeeAmount });
         } catch (devFeeError) {
-          logger.error('[executeFlip] Error sending dev fee', { flipId, devWallet, error: devFeeError.message });
+          logger.error('[executeFlip] ERROR SENDING DEV FEE', { flipId, devWallet, devFeeAmount, error: devFeeError.message, stack: devFeeError.stack });
         }
       } else {
-        logger.warn('[executeFlip] Dev wallet not configured', { network: flip.tokenNetwork });
+        logger.warn('[executeFlip] DEV WALLET NOT CONFIGURED', { network: flip.tokenNetwork, envVarEVM: 'EVM_DEV_WALLET', envVarSolana: 'SOLANA_DEV_WALLET' });
       }
       
       // Send 5% to burn address
       try {
+        logger.info('[executeFlip] Sending burn fee', { flipId, burnAddress, burnFeeAmount, tokenAddress: flip.tokenAddress, tokenDecimals: flip.tokenDecimals });
         const blockchainManager = getBlockchainManager();
         const burnResult = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
@@ -161,9 +165,9 @@ class ExecutionHandler {
           burnFeeAmount.toString(),
           flip.tokenDecimals
         );
-        logger.info('[executeFlip] Burn fee sent', { flipId, burnAddress: `${burnAddress.substring(0, 10)}...`, txHash: burnResult.txHash, amount: burnFeeAmount });
+        logger.info('[executeFlip] Burn fee SENT', { flipId, burnAddress: `${burnAddress.substring(0, 10)}...`, txHash: burnResult.txHash, amount: burnFeeAmount });
       } catch (burnFeeError) {
-        logger.error('[executeFlip] Error sending burn fee', { flipId, burnAddress, error: burnFeeError.message });
+        logger.error('[executeFlip] ERROR SENDING BURN FEE', { flipId, burnAddress, burnFeeAmount, error: burnFeeError.message, stack: burnFeeError.stack });
       }
 
       // Update flip record with result
