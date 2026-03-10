@@ -170,7 +170,7 @@ class EVMHandler {
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null) {
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      const lookbackBlocks = 1000; // Check last 1000 blocks (~4 hours on Ethereum)
+      const lookbackBlocks = 5000; // Check recent blocks
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
 
       if (tokenAddress && tokenAddress !== 'NATIVE') {
@@ -181,12 +181,12 @@ class EVMHandler {
         ];
         const contract = new ethers.Contract(tokenAddress, erc20ABI, this.provider);
         
-        // Get token decimals for proper amount formatting
+        // Get token decimals
         let decimals = 18;
         try {
           decimals = await contract.decimals();
         } catch (err) {
-          console.warn('Could not get token decimals, assuming 18');
+          console.warn('[getRecentDepositSender] Could not get token decimals, assuming 18');
         }
         
         const events = await contract.queryFilter(
@@ -196,31 +196,29 @@ class EVMHandler {
         );
 
         if (events.length > 0) {
-          // Get the most recent event
+          // Get the most recent transfer (last in array) - don't filter by amount
           const latestEvent = events[events.length - 1];
           const amount = ethers.formatUnits(latestEvent.args.value, decimals);
-          const expectedAmountNum = parseFloat(expectedAmount);
           
-          // Verify amount matches (with 1% variance tolerance)
-          const variance = expectedAmountNum * 0.01;
-          if (parseFloat(amount) >= (expectedAmountNum - variance)) {
-            return {
-              sender: latestEvent.args.from,
-              amount: amount,
-              transactionHash: latestEvent.transactionHash,
-              blockNumber: latestEvent.blockNumber,
-            };
-          }
+          console.log('[getRecentDepositSender] Found latest transfer', { 
+            from: latestEvent.args.from,
+            amount,
+            txHash: latestEvent.transactionHash,
+            blockNumber: latestEvent.blockNumber,
+          });
+          
+          return {
+            sender: latestEvent.args.from,
+            amount: amount,
+            transactionHash: latestEvent.transactionHash,
+            blockNumber: latestEvent.blockNumber,
+          };
         }
-      } else {
-        // For native ETH, we'd need to parse transactions, which is harder
-        // Return null for now - might need to use Etherscan API or similar
-        console.warn('Native ETH deposit tracking not implemented for EVM');
       }
 
       return null;
     } catch (error) {
-      console.error('Error getting recent deposit sender:', error);
+      console.error('[getRecentDepositSender] Error:', error.message);
       return null;
     }
   }
