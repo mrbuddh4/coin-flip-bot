@@ -212,16 +212,47 @@ class ExecutionHandler {
         `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
         `⚡ Fees: 10% (5% dev + 5% burn)${txLinkMessage}`;
 
+      const fs = require('fs');
+      const path = require('path');
+      const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+
       try {
-        await ctx.telegram.editMessageText(
-          flip.groupChatId,
-          flip.groupMessageId,
-          null,
-          resultMessageText,
-          {
-            parse_mode: 'HTML',
+        // Try to send with image first
+        if (fs.existsSync(imagePath)) {
+          try {
+            await ctx.telegram.sendPhoto(
+              flip.groupChatId,
+              { source: fs.createReadStream(imagePath) },
+              {
+                caption: resultMessageText,
+                parse_mode: 'HTML',
+              }
+            );
+          } catch (photoErr) {
+            logger.warn('Failed to send result photo, falling back to text edit', { flipId, error: photoErr.message });
+            // Fallback to editing existing message
+            await ctx.telegram.editMessageText(
+              flip.groupChatId,
+              flip.groupMessageId,
+              null,
+              resultMessageText,
+              {
+                parse_mode: 'HTML',
+              }
+            );
           }
-        );
+        } else {
+          // Image not found, just edit existing message
+          await ctx.telegram.editMessageText(
+            flip.groupChatId,
+            flip.groupMessageId,
+            null,
+            resultMessageText,
+            {
+              parse_mode: 'HTML',
+            }
+          );
+        }
         
         // Delete the video message now that result is displayed
         if (videoMessageId) {
@@ -233,8 +264,8 @@ class ExecutionHandler {
           }
         }
       } catch (editErr) {
-        logger.warn('Failed to edit group message with result', { flipId, error: editErr.message });
-        // Fallback: send a new message if edit fails
+        logger.warn('Failed to send flip result to group', { flipId, error: editErr.message });
+        // Last fallback: send a new message if everything fails
         try {
           await ctx.telegram.sendMessage(
             flip.groupChatId,
