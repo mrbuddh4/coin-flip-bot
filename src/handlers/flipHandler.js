@@ -446,37 +446,27 @@ class FlipHandler {
       const challenger = await models.User.findByPk(challengerId);
       const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
 
-      // Edit the group message - use editMessageCaption since the message is a photo
+      // Delete the original challenge message and post a new "Challenger Found" message
       try {
-        await ctx.editMessageCaption(
+        await ctx.deleteMessage();
+        logger.info('Deleted original challenge message', { flipId });
+      } catch (deleteErr) {
+        logger.warn('Failed to delete original challenge message', { flipId, error: deleteErr.message });
+      }
+
+      // Send new "Challenger Found" message to group
+      try {
+        await ctx.reply(
           `🪙 <b>Challenger Found!</b>\n\n` +
-          `${challengerDisplay} is reviewing the flip.\n\n` +
+          `${challengerDisplay} has accepted the challenge!\n\n` +
           `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.url('🔗 Confirm in DM', deeplink)],
-            ]).reply_markup,
-          }
+          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}\n\n` +
+          `⏳ Processing deposits...`,
+          { parse_mode: 'HTML' }
         );
-      } catch (captionErr) {
-        // If caption edit fails (text message), try text edit
-        logger.info('Caption edit failed, trying text edit', { error: captionErr.message });
-        await ctx.editMessageText(
-          `🪙 <b>Challenger Found!</b>\n\n` +
-          `${challengerDisplay} is reviewing the flip.\n\n` +
-          `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.url('🔗 Confirm in DM', deeplink)],
-            ]).reply_markup,
-          }
-        ).catch((textErr) => {
-          logger.warn('Both caption and text edits failed', { captionErr: captionErr.message, textErr: textErr.message });
-        });
+        logger.info('Sent new challenger found message to group', { flipId, groupId });
+      } catch (replyErr) {
+        logger.warn('Failed to send new challenger found message', { flipId, error: replyErr.message });
       }
 
       // Send confirmation prompt directly to challenger's DM
