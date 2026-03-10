@@ -437,9 +437,6 @@ class FlipHandler {
 
       // Send confirmation prompt directly to challenger's DM
       try {
-        const botInfo = await ctx.telegram.getMe();
-        const deeplink = `https://t.me/${botInfo.username}?start=confirm_${confirmSession.id}`;
-        
         logger.info('Sending confirmation DM to challenger', { 
           challengerId, 
           flipId, 
@@ -463,7 +460,14 @@ class FlipHandler {
         );
         logger.info('Sent confirmation DM to challenger', { challengerId, flipId, messageId: dmResult.message_id });
       } catch (dmErr) {
-        logger.error('Failed to send confirmation DM', { error: dmErr.message, dmErrCode: dmErr.code, challengerId, flipId });
+        logger.error('Failed to send confirmation DM', { 
+          error: dmErr.message, 
+          errorCode: dmErr.code,
+          errorResponse: dmErr.response,
+          challengerId, 
+          flipId 
+        });
+        console.error('[acceptFlip] DM Send Error:', dmErr);
         // If DM fails, try to send a group message instead
         try {
           await ctx.reply(
