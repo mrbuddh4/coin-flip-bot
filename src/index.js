@@ -1487,10 +1487,13 @@ const handlers = {
         const path = require('path');
         const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
         
+        logger.info('Image path debug', { __dirname, imagePath, exists: fs.existsSync(imagePath) });
+        
         let groupMsg;
         try {
           if (fs.existsSync(imagePath)) {
             const imageBuffer = fs.readFileSync(imagePath);
+            logger.info('Attempting to send photo', { bufferSize: imageBuffer.length });
             groupMsg = await ctx.replyWithPhoto(
               imageBuffer,
               {
@@ -1502,11 +1505,13 @@ const handlers = {
                 ]).reply_markup,
               }
             );
+            logger.info('Photo sent successfully', { messageId: groupMsg.message_id });
           } else {
+            logger.warn('Image file not found', { imagePath });
             throw new Error('Image not found');
           }
         } catch (imgErr) {
-          logger.warn('Failed to send Start Flip photo, falling back to text', { error: imgErr.message });
+          logger.warn('Failed to send Start Flip photo', { error: imgErr.message, stack: imgErr.stack });
           groupMsg = await ctx.reply(
             '🪙 <b>Start a Coin Flip!</b>\n\n' +
             'Click below to set up your flip in DM (for privacy)',
