@@ -74,12 +74,22 @@ class BlockchainManager {
       const variance = expectedAmountNum * 0.001;
       const hasDeposit = receivedAmount >= (expectedAmountNum - variance);
 
+      // Try to find the sender of the deposit
+      let depositSender = null;
+      try {
+        depositSender = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress);
+      } catch (err) {
+        console.warn('Failed to detect deposit sender:', err.message);
+      }
+
       return {
         received: hasDeposit,
         amount: receivedAmount,
         expected: expectedAmountNum,
         botWallet: botWallet,
         balance: balance,
+        depositSender: depositSender?.sender ?? null, // Return the detected sender
+        depositTransaction: depositSender?.transactionHash || depositSender?.signature || null,
       };
     } catch (error) {
       console.error('Error verifying deposit:', error);

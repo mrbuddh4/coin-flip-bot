@@ -272,6 +272,13 @@ class FlipHandler {
       // Mark deposit as confirmed
       flip.creatorDepositConfirmed = true;
       flip.status = 'WAITING_CHALLENGER';
+      
+      // Store the detected sender address for refunds
+      if (verification.depositSender) {
+        flip.creatorDepositWalletAddress = verification.depositSender;
+        logger.info('Detected creator deposit sender', { flipId, sender: verification.depositSender });
+      }
+      
       await flip.save();
 
       session.currentStep = 'DEPOSIT_CONFIRMED';

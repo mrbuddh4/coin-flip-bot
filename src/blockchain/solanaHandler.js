@@ -230,6 +230,75 @@ class SolanaHandler {
       };
     }
   }
+
+  /**
+   * Find the sender of a recent incoming transaction to the bot wallet
+   */
+  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null) {
+    try {
+      const botPublicKey = new PublicKey(botWalletAddress);
+      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 20 });
+
+      for (const sig of signatures) {
+        try {
+          const transaction = await this.connection.getTransaction(sig.signature, {
+            maxSupportedTransactionVersion: 0,
+          });
+
+          if (!transaction) continue;
+
+          const { meta, transaction: tx } = transaction;
+
+          // Look for transfers in the transaction
+          if (tokenMint) {
+            // For SPL tokens, would need to parse token instructions
+            // This is complex, so returning null for now
+            continue;
+          } else {
+            // For native SOL transfers
+            for (let i = 0; i < tx.message.accountKeys.length; i++) {
+              const account = tx.message.accountKeys[i];
+              if (account.toBase58() === botWalletAddress) {
+                // Found the bot receive the transaction
+                // The sender is typically the first account (index 0)
+                if (tx.message.accountKeys.length > 0) {
+                  // Get the account that decreased in balance (the sender)
+                  const senderKey = tx.message.accountKeys[0];
+                  
+                  if (meta && meta.preBalances && meta.postBalances) {
+                    const balanceChange = meta.postBalances[botPublicKey.toString()] - meta.preBalances[botPublicKey.toString()];
+                    if (balanceChange > 0) {
+                      // Verify this looks like our expected amount
+                      const transactionAmount = balanceChange / LAMPORTS_PER_SOL;
+                      const expectedAmountNum = parseFloat(expectedAmount);
+                      const variance = expectedAmountNum * 0.01; // 1% variance
+                      
+                      if (transactionAmount >= (expectedAmountNum - variance)) {
+                        return {
+                          sender: senderKey.toBase58(),
+                          amount: transactionAmount.toString(),
+                          signature: sig.signature,
+                          slot: sig.slot,
+                        };
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Error processing Solana transaction:', err.message);
+          continue;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error getting recent Solana deposit sender:', error);
+      return null;
+    }
+  }
 }
 
 module.exports = SolanaHandler;

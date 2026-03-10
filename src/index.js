@@ -920,6 +920,12 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Challenger deposit verified', { flipId, userId, amount: verification.amount });
 
+        // Store the detected sender address for refunds (if not already set)
+        if (verification.depositSender && !flip.challengerDepositWalletAddress) {
+          flip.challengerDepositWalletAddress = verification.depositSender;
+          logger.info('[deposit_confirmed] Detected challenger deposit sender', { flipId, sender: verification.depositSender });
+        }
+
         // Mark challenger deposit as confirmed
         flip.challengerDepositConfirmed = true;
         await flip.save();

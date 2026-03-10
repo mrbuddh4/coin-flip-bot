@@ -163,6 +163,49 @@ class EVMHandler {
       throw error;
     }
   }
+
+  /**
+   * Find the sender of a recent incoming transaction to the bot wallet
+   */
+  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null) {
+    try {
+      const currentBlock = await this.provider.getBlockNumber();
+      const lookbackBlocks = 100; // Check last 100 blocks
+      const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
+
+      if (tokenAddress && tokenAddress !== 'NATIVE') {
+        // For ERC20, look for Transfer events
+        const erc20ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
+        const contract = new ethers.Contract(tokenAddress, erc20ABI, this.provider);
+        
+        const events = await contract.queryFilter(
+          contract.filters.Transfer(null, botWalletAddress),
+          fromBlock,
+          currentBlock
+        );
+
+        if (events.length > 0) {
+          // Get the most recent event
+          const latestEvent = events[events.length - 1];
+          return {
+            sender: latestEvent.args.from,
+            amount: ethers.formatUnits(latestEvent.args.value, 18), // Assuming 18 decimals
+            transactionHash: latestEvent.transactionHash,
+            blockNumber: latestEvent.blockNumber,
+          };
+        }
+      } else {
+        // For native ETH, we'd need to parse transactions, which is harder
+        // Return null for now - might need to use Etherscan API or similar
+        console.warn('Native ETH deposit tracking not implemented for EVM');
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error getting recent deposit sender:', error);
+      return null;
+    }
+  }
 }
 
 module.exports = EVMHandler;
