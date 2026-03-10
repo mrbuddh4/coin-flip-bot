@@ -446,18 +446,38 @@ class FlipHandler {
       const challenger = await models.User.findByPk(challengerId);
       const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
 
-      await ctx.editMessageText(
-        `🪙 <b>Challenger Found!</b>\n\n` +
-        `${challengerDisplay} is reviewing the flip.\n\n` +
-        `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
-        `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard([
-            [Markup.button.url('🔗 Confirm in DM', deeplink)],
-          ]).reply_markup,
-        }
-      );
+      // Edit the group message - use editMessageCaption since the message is a photo
+      try {
+        await ctx.editMessageCaption(
+          `🪙 <b>Challenger Found!</b>\n\n` +
+          `${challengerDisplay} is reviewing the flip.\n\n` +
+          `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.url('🔗 Confirm in DM', deeplink)],
+            ]).reply_markup,
+          }
+        );
+      } catch (captionErr) {
+        // If caption edit fails (text message), try text edit
+        logger.info('Caption edit failed, trying text edit', { error: captionErr.message });
+        await ctx.editMessageText(
+          `🪙 <b>Challenger Found!</b>\n\n` +
+          `${challengerDisplay} is reviewing the flip.\n\n` +
+          `💰 <b>Wager:</b> ${formattedWager} ${flip.tokenSymbol}\n` +
+          `🌐 <b>Network:</b> ${formatNetworkName(flip.tokenNetwork)}`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.url('🔗 Confirm in DM', deeplink)],
+            ]).reply_markup,
+          }
+        ).catch((textErr) => {
+          logger.warn('Both caption and text edits failed', { captionErr: captionErr.message, textErr: textErr.message });
+        });
+      }
 
       // Send confirmation prompt directly to challenger's DM
       try {
