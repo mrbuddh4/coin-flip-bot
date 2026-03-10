@@ -505,9 +505,10 @@ async function initBot() {
           // Try to send photo
           if (fs.existsSync(imagePath)) {
             try {
+              const imageBuffer = fs.readFileSync(imagePath);
               await ctx.telegram.sendPhoto(
                 flip.groupChatId,
-                { source: fs.createReadStream(imagePath) },
+                { source: imageBuffer },
                 {
                   caption: challengerText,
                   parse_mode: 'HTML',
@@ -614,9 +615,10 @@ async function initBot() {
           // Try to send new photo message
           if (fs.existsSync(imagePath)) {
             try {
+              const imageBuffer = fs.readFileSync(imagePath);
               await ctx.telegram.sendPhoto(
                 flip.groupChatId,
-                { source: fs.createReadStream(imagePath) },
+                { source: imageBuffer },
                 {
                   caption: resetText,
                   parse_mode: 'HTML',
@@ -1487,8 +1489,9 @@ const handlers = {
         let groupMsg;
         try {
           if (fs.existsSync(imagePath)) {
+            const imageBuffer = fs.readFileSync(imagePath);
             groupMsg = await ctx.replyWithPhoto(
-              { source: fs.createReadStream(imagePath) },
+              { source: imageBuffer },
               {
                 caption: '🪙 <b>Start a Coin Flip!</b>\n\n' +
                 'Click below to set up your flip in DM (for privacy)',
