@@ -131,8 +131,9 @@ class LeaderboardHandler {
       
       try {
         if (fs.existsSync(imagePath)) {
+          const imageBuffer = fs.readFileSync(imagePath);
           await ctx.replyWithPhoto(
-            { source: fs.createReadStream(imagePath) },
+            imageBuffer,
             {
               caption: leaderboardMessage,
               parse_mode: 'HTML',

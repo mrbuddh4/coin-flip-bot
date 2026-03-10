@@ -508,7 +508,7 @@ async function initBot() {
               const imageBuffer = fs.readFileSync(imagePath);
               await ctx.telegram.sendPhoto(
                 flip.groupChatId,
-                { source: imageBuffer },
+                imageBuffer,
                 {
                   caption: challengerText,
                   parse_mode: 'HTML',
@@ -618,7 +618,7 @@ async function initBot() {
               const imageBuffer = fs.readFileSync(imagePath);
               await ctx.telegram.sendPhoto(
                 flip.groupChatId,
-                { source: imageBuffer },
+                imageBuffer,
                 {
                   caption: resetText,
                   parse_mode: 'HTML',
@@ -769,9 +769,10 @@ async function initBot() {
             const videoPath = path.join(__dirname, '../assets/coinflip.MP4');
             
             if (fs.existsSync(videoPath)) {
+              const videoBuffer = fs.readFileSync(videoPath);
               const sentMessage = await ctx.telegram.sendVideo(
                 flip.groupChatId,
-                { source: fs.createReadStream(videoPath) },
+                videoBuffer,
                 {
                   caption: '🎬 <b>EXECUTING FLIP...</b>',
                   parse_mode: 'HTML',
@@ -1491,7 +1492,7 @@ const handlers = {
           if (fs.existsSync(imagePath)) {
             const imageBuffer = fs.readFileSync(imagePath);
             groupMsg = await ctx.replyWithPhoto(
-              { source: imageBuffer },
+              imageBuffer,
               {
                 caption: '🪙 <b>Start a Coin Flip!</b>\n\n' +
                 'Click below to set up your flip in DM (for privacy)',

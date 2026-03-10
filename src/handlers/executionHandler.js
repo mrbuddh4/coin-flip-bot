@@ -220,9 +220,10 @@ class ExecutionHandler {
         // Try to send with image first
         if (fs.existsSync(imagePath)) {
           try {
+            const imageBuffer = fs.readFileSync(imagePath);
             await ctx.telegram.sendPhoto(
               flip.groupChatId,
-              { source: fs.createReadStream(imagePath) },
+              imageBuffer,
               {
                 caption: resultMessageText,
                 parse_mode: 'HTML',
