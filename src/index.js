@@ -7,6 +7,7 @@ const FlipHandler = require('./handlers/flipHandler');
 const ExecutionHandler = require('./handlers/executionHandler');
 const AdminHandler = require('./handlers/adminHandler');
 const WalletHandler = require('./handlers/walletHandler');
+const LeaderboardHandler = require('./handlers/leaderboardHandler');
 const DatabaseUtils = require('./database/utils');
 const logger = require('./utils/logger');
 const { validateConfig } = require('./utils/helpers');
@@ -144,6 +145,7 @@ async function initBot() {
       { command: 'stats', description: '📊 Your game statistics' },
       { command: 'flip', description: '🪙 Start a coin flip' },
       { command: 'wallet', description: '💳 Manage wallet addresses' },
+      { command: 'leaderboard', description: '🏆 Top winners and losers' },
     ]);
 
     // Middleware setup
@@ -157,6 +159,7 @@ async function initBot() {
     bot.command('stats', handlers.stats);
     bot.command('flip', handlers.flip);
     bot.command('wallet', handlers.wallet);
+    bot.command('leaderboard', handlers.leaderboard);
 
     // Admin commands
     AdminHandler.registerCommands(bot);
@@ -234,6 +237,16 @@ async function initBot() {
       } catch (error) {
         logger.error('Error removing wallets', error);
         await ctx.answerCbQuery('Error', true);
+      }
+    });
+
+    // Leaderboard callbacks
+    bot.action('refresh_leaderboard', async (ctx) => {
+      try {
+        await LeaderboardHandler.refreshLeaderboard(ctx);
+      } catch (error) {
+        logger.error('Error refreshing leaderboard', error);
+        await ctx.answerCbQuery('❌ Error', true);
       }
     });
 
@@ -1159,6 +1172,10 @@ const handlers = {
   wallet: async (ctx) => {
     ctx.state.models = getDB().models;
     await WalletHandler.handleWalletCommand(ctx);
+  },
+
+  leaderboard: async (ctx) => {
+    await LeaderboardHandler.showLeaderboard(ctx);
   },
 
   dmMessageHandler: async (ctx) => {
