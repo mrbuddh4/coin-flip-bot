@@ -684,6 +684,26 @@ async function initBot() {
           // Clear the challenge timeout since flip is now executing
           clearChallengeTimeout(flipId);
 
+          // Send coin flip video to group before revealing result
+          try {
+            const fs = require('fs');
+            const path = require('path');
+            const videoPath = path.join(__dirname, '../assets/coinflip.MP4');
+            
+            if (fs.existsSync(videoPath)) {
+              await ctx.telegram.sendVideo(
+                flip.groupChatId,
+                { source: fs.createReadStream(videoPath) },
+                {
+                  caption: '🎬 <b>EXECUTING FLIP...</b>',
+                  parse_mode: 'HTML',
+                }
+              );
+            }
+          } catch (videoErr) {
+            logger.warn('Failed to send flip video', { flipId, error: videoErr.message });
+          }
+
           // Execute the flip
           await ExecutionHandler.executeFlip(flipId, ctx);
         } else {
