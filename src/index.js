@@ -13,6 +13,103 @@ const { validateConfig } = require('./utils/helpers');
 
 let bot;
 let sessionStore = {};
+let challengeTimeouts = {}; // Store challenge acceptance timeouts by flipId
+
+/**
+ * Set a challenge acceptance timeout (3 minutes for challenger to accept)
+ */
+function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
+  // Clear any existing timeout for this flip
+  if (challengeTimeouts[flipId]) {
+    clearTimeout(challengeTimeouts[flipId]);
+  }
+
+  // Set new timeout for 3 minutes (180000 ms)
+  challengeTimeouts[flipId] = setTimeout(async () => {
+    try {
+      const { models } = getDB();
+      const flip = await models.CoinFlip.findByPk(flipId);
+
+      if (!flip) {
+        logger.info('[challengeTimeout] Flip not found', { flipId });
+        delete challengeTimeouts[flipId];
+        return;
+      }
+
+      // Only send alert if challenge is still waiting
+      if (flip.status === 'WAITING_CHALLENGER') {
+        logger.info('[challengeTimeout] Sending timeout alert to group', { flipId, groupId });
+
+        try {
+          // Send alert message to group
+          await telegram.sendMessage(
+            groupId,
+            `⏰ <b>Challenge Expiring!</b>\n\n` +
+            `The challenge for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b> ` +
+            `will expire in <b>1 minute</b> if no one accepts!\n\n` +
+            `⚡ Tap the button below to join:`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('Accept Challenge', `accept_flip_${flipId}`)],
+              ]).reply_markup,
+            }
+          );
+        } catch (err) {
+          logger.error('[challengeTimeout] Error sending alert message', { flipId, error: err.message });
+        }
+
+        // Set another timeout for 1 minute to auto-cancel if still not accepted
+        challengeTimeouts[flipId] = setTimeout(async () => {
+          try {
+            const flipCheck = await models.CoinFlip.findByPk(flipId);
+            if (flipCheck && flipCheck.status === 'WAITING_CHALLENGER') {
+              logger.info('[challengeTimeout] Auto-cancelling expired challenge', { flipId });
+              flipCheck.status = 'CANCELLED';
+              flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenge expired (no acceptances within 4 minutes)' };
+              await flipCheck.save();
+
+              // Notify group
+              try {
+                await telegram.editMessageText(
+                  groupId,
+                  groupMessageId,
+                  null,
+                  `❌ <b>Challenge Expired</b>\n\n` +
+                  `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
+                  `expired because no one accepted it.`,
+                  { parse_mode: 'HTML' }
+                );
+              } catch (err) {
+                logger.warn('[challengeTimeout] Failed to update group message', { flipId, error: err.message });
+              }
+            }
+            delete challengeTimeouts[flipId];
+          } catch (err) {
+            logger.error('[challengeTimeout] Error in auto-cancel timeout', { flipId, error: err.message });
+          }
+        }, 60000); // 1 more minute = 4 minutes total before auto-cancel
+      } else {
+        logger.info('[challengeTimeout] Flip no longer in WAITING_CHALLENGER status', { flipId, status: flip.status });
+        delete challengeTimeouts[flipId];
+      }
+    } catch (error) {
+      logger.error('[challengeTimeout] Error in challenge timeout handler', { flipId, error: error.message });
+      delete challengeTimeouts[flipId];
+    }
+  }, 180000); // 3 minutes
+}
+
+/**
+ * Clear a challenge timeout when challenge is accepted or flip completes
+ */
+function clearChallengeTimeout(flipId) {
+  if (challengeTimeouts[flipId]) {
+    clearTimeout(challengeTimeouts[flipId]);
+    delete challengeTimeouts[flipId];
+    logger.info('[clearChallengeTimeout] Timeout cleared', { flipId });
+  }
+}
 
 /**
  * Initialize the bot
@@ -206,6 +303,9 @@ async function initBot() {
       try {
         logger.info('Accept flip action triggered', { flipId, userId });
         
+        // Clear the challenge acceptance timeout since someone accepted
+        clearChallengeTimeout(flipId);
+        
         // Show loading popup
         await ctx.answerCbQuery('⏳ Accepting challenge...');
         
@@ -231,7 +331,9 @@ async function initBot() {
 
     bot.action(/^cancel_flip_(.+)$/, async (ctx) => {
       try {
-        await ExecutionHandler.cancelFlip(ctx, ctx.match[1]);
+        const flipId = ctx.match[1];
+        clearChallengeTimeout(flipId);
+        await ExecutionHandler.cancelFlip(ctx, flipId);
         await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error canceling flip', error);
@@ -562,6 +664,9 @@ async function initBot() {
         if (flip.creatorDepositConfirmed && flip.challengerDepositConfirmed) {
           logger.info('[deposit_confirmed] Both deposits confirmed, executing flip', { flipId });
 
+          // Clear the challenge timeout since flip is now executing
+          clearChallengeTimeout(flipId);
+
           // Execute the flip
           await ExecutionHandler.executeFlip(flipId, ctx);
         } else {
@@ -695,6 +800,9 @@ async function initBot() {
         // Save message ID to flip
         flip.groupMessageId = groupMessage.message_id;
         await flip.save();
+
+        // Set 3-minute timeout for challenge acceptance
+        setChallengeTimeout(flip.id, flip.groupChatId, groupMessage.message_id, ctx.telegram);
 
         // Confirm to creator
         await ctx.editMessageText(
@@ -1332,6 +1440,9 @@ async function handleChallengerDepositConfirm(ctx) {
   await flip.save();
 
   await ctx.reply(`✅ Deposit confirmed! Executing flip...`);
+
+  // Clear the challenge timeout since flip is now executing
+  clearChallengeTimeout(flip.id);
 
   // Execute the flip
   await ExecutionHandler.executeFlip(flip.id, ctx);
