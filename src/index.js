@@ -183,6 +183,135 @@ async function initBot() {
     // Admin commands
     AdminHandler.registerCommands(bot);
 
+    // Check for expired challenges on startup and restore timeouts
+    const { models } = getDB();
+    const waitingChallenges = await models.CoinFlip.findAll({
+      where: { status: 'WAITING_CHALLENGER' },
+    });
+
+    const now = Date.now();
+    const CHALLENGE_TIMEOUT = 3 * 60 * 1000; // 3 minutes
+    const ALERT_DELAY = 1 * 60 * 1000; // 1 more minute
+
+    for (const flip of waitingChallenges) {
+      const elapsedTime = now - flip.createdAt.getTime();
+
+      if (elapsedTime > CHALLENGE_TIMEOUT + ALERT_DELAY) {
+        // Challenge is fully expired, cancel it
+        logger.info('[startup] Auto-cancelling expired challenge', { flipId: flip.id, elapsedSeconds: Math.round(elapsedTime / 1000) });
+        flip.status = 'CANCELLED';
+        flip.data = { ...flip.data, cancelReason: 'Challenge expired on bot startup' };
+        await flip.save();
+      } else if (elapsedTime > CHALLENGE_TIMEOUT) {
+        // Challenge is in the alert window, re-set the alert timeout
+        const remainingAlert = (CHALLENGE_TIMEOUT + ALERT_DELAY) - elapsedTime;
+        logger.info('[startup] Restoring timeout for challenge in alert window', { flipId: flip.id, remainingMs: Math.round(remainingAlert) });
+        
+        const alertTimeout = setTimeout(async () => {
+          try {
+            const flipCheck = await models.CoinFlip.findByPk(flip.id);
+            if (flipCheck && flipCheck.status === 'WAITING_CHALLENGER') {
+              logger.info('[startup-timeout] Auto-cancelling expired challenge', { flipId: flip.id });
+              flipCheck.status = 'CANCELLED';
+              flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenge expired' };
+              await flipCheck.save();
+              
+              // Try to notify group
+              try {
+                await bot.telegram.editMessageCaption(
+                  `❌ <b>Challenge Expired</b>\n\n` +
+                  `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
+                  `expired because no one accepted it.`,
+                  {
+                    chat_id: flipCheck.groupChatId,
+                    message_id: flipCheck.groupMessageId,
+                    parse_mode: 'HTML'
+                  }
+                );
+              } catch (err) {
+                logger.warn('[startup-timeout] Failed to update group message', { flipId: flip.id, error: err.message });
+              }
+            }
+            delete challengeTimeouts[flip.id];
+          } catch (err) {
+            logger.error('[startup-timeout] Error auto-cancelling', { flipId: flip.id, error: err.message });
+          }
+        }, remainingAlert);
+        
+        challengeTimeouts[flip.id] = alertTimeout;
+      } else {
+        // Challenge is still in the 3-minute initial window, restore the alert timeout
+        const remainingInitial = CHALLENGE_TIMEOUT - elapsedTime;
+        logger.info('[startup] Restoring timeout for active challenge', { flipId: flip.id, remainingMs: Math.round(remainingInitial) });
+        
+        const initialTimeout = setTimeout(async () => {
+          try {
+            const flipCheck = await models.CoinFlip.findByPk(flip.id);
+            if (flipCheck && flipCheck.status === 'WAITING_CHALLENGER') {
+              logger.info('[startup-timeout] Sending alert for active challenge', { flipId: flip.id });
+              
+              try {
+                await bot.telegram.sendMessage(
+                  flipCheck.groupChatId,
+                  `⏰ <b>Challenge Expiring!</b>\n\n` +
+                  `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
+                  `will expire in <b>1 minute</b> if no one accepts!\n\n` +
+                  `⚡ Tap the button below to join:`,
+                  {
+                    parse_mode: 'HTML',
+                    reply_markup: Markup.inlineKeyboard([
+                      [Markup.button.callback('Accept Challenge', `accept_flip_${flip.id}`)],
+                    ]).reply_markup,
+                  }
+                );
+              } catch (err) {
+                logger.error('[startup-timeout] Error sending alert', { flipId: flip.id, error: err.message });
+              }
+
+              // Set auto-cancel timeout
+              const cancelTimeout = setTimeout(async () => {
+                try {
+                  const flipFinal = await models.CoinFlip.findByPk(flip.id);
+                  if (flipFinal && flipFinal.status === 'WAITING_CHALLENGER') {
+                    logger.info('[startup-timeout] Auto-cancelling expired challenge', { flipId: flip.id });
+                    flipFinal.status = 'CANCELLED';
+                    flipFinal.data = { ...flipFinal.data, cancelReason: 'Challenge expired' };
+                    await flipFinal.save();
+
+                    try {
+                      await bot.telegram.editMessageCaption(
+                        `❌ <b>Challenge Expired</b>\n\n` +
+                        `The challenge for <b>${parseFloat(flipFinal.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipFinal.tokenSymbol}</b> ` +
+                        `expired because no one accepted it.`,
+                        {
+                          chat_id: flipFinal.groupChatId,
+                          message_id: flipFinal.groupMessageId,
+                          parse_mode: 'HTML'
+                        }
+                      );
+                    } catch (err) {
+                      logger.warn('[startup-timeout] Failed to update message on cancel', { flipId: flip.id, error: err.message });
+                    }
+                  }
+                  delete challengeTimeouts[flip.id];
+                } catch (err) {
+                  logger.error('[startup-timeout] Error in cancel timeout', { flipId: flip.id, error: err.message });
+                }
+              }, ALERT_DELAY);
+
+              challengeTimeouts[flip.id] = cancelTimeout;
+            }
+          } catch (err) {
+            logger.error('[startup-timeout] Error in initial timeout', { flipId: flip.id, error: err.message });
+          }
+        }, remainingInitial);
+
+        challengeTimeouts[flip.id] = initialTimeout;
+      }
+    }
+
+    logger.info('[startup] Restored timeouts for waiting challenges', { count: waitingChallenges.length });
+
     // Handle bot joining a group
     bot.on('my_chat_member', async (ctx) => {
       try {
