@@ -124,12 +124,35 @@ class LeaderboardHandler {
 
       const leaderboardMessage = winnersText + losersText + burnedText;
 
-      await ctx.reply(leaderboardMessage, {
-        parse_mode: 'HTML',
-        reply_markup: Markup.inlineKeyboard([
-          [Markup.button.callback('🔄 Refresh', 'refresh_leaderboard')],
-        ]).reply_markup,
-      });
+      // Try to send with image
+      const fs = require('fs');
+      const path = require('path');
+      const imagePath = path.join(__dirname, '../assets/coinflip.jpg');
+      
+      try {
+        if (fs.existsSync(imagePath)) {
+          await ctx.replyWithPhoto(
+            { source: fs.createReadStream(imagePath) },
+            {
+              caption: leaderboardMessage,
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('🔄 Refresh', 'refresh_leaderboard')],
+              ]).reply_markup,
+            }
+          );
+        } else {
+          throw new Error('Image not found');
+        }
+      } catch (imgErr) {
+        logger.warn('Failed to send leaderboard with photo, falling back to text', { error: imgErr.message });
+        await ctx.reply(leaderboardMessage, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 Refresh', 'refresh_leaderboard')],
+          ]).reply_markup,
+        });
+      }
 
       logger.info('[leaderboard] Leaderboard displayed', {
         userId: ctx.from.id,
