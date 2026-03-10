@@ -403,7 +403,7 @@ async function initBot() {
       try {
         const { models } = getDB();
         const sessionId = ctx.match[1];
-        const userId = ctx.from.id; // Telegram user ID
+        const userId = ctx.from.id;
 
         logger.info('start_flip_dm button clicked', { sessionId, userId });
 
@@ -424,26 +424,8 @@ async function initBot() {
           return;
         }
 
-        // Get supported tokens and send to DM
-        const supportedTokens = await getSupportedTokensList();
-        const tokenButtons = supportedTokens.map((token, idx) => [
-          Markup.button.callback(
-            `${token.symbol} (${token.network})`,
-            `start_flip_${session.id}_${idx}`
-          ),
-        ]);
-
-        // Send token selection to DM
-        await ctx.telegram.sendMessage(
-          userId,
-          '🪙 <b>Select a Token</b>\n\nChoose which token to flip:',
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard(tokenButtons).reply_markup,
-          }
-        );
-
-        await ctx.answerCbQuery();
+        // Just acknowledge - the /start deeplink will handle token selection
+        await ctx.answerCbQuery('Opening Coin Flip...');
       } catch (error) {
         logger.error('Error starting flip in DM', error);
         await ctx.answerCbQuery('❌ Error');
