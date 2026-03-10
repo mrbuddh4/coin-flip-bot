@@ -175,8 +175,19 @@ class EVMHandler {
 
       if (tokenAddress && tokenAddress !== 'NATIVE') {
         // For ERC20, look for Transfer events
-        const erc20ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
+        const erc20ABI = [
+          'function decimals() view returns (uint8)',
+          'event Transfer(address indexed from, address indexed to, uint256 value)',
+        ];
         const contract = new ethers.Contract(tokenAddress, erc20ABI, this.provider);
+        
+        // Get token decimals for proper amount formatting
+        let decimals = 18;
+        try {
+          decimals = await contract.decimals();
+        } catch (err) {
+          console.warn('Could not get token decimals, assuming 18');
+        }
         
         const events = await contract.queryFilter(
           contract.filters.Transfer(null, botWalletAddress),
@@ -187,12 +198,19 @@ class EVMHandler {
         if (events.length > 0) {
           // Get the most recent event
           const latestEvent = events[events.length - 1];
-          return {
-            sender: latestEvent.args.from,
-            amount: ethers.formatUnits(latestEvent.args.value, 18), // Assuming 18 decimals
-            transactionHash: latestEvent.transactionHash,
-            blockNumber: latestEvent.blockNumber,
-          };
+          const amount = ethers.formatUnits(latestEvent.args.value, decimals);
+          const expectedAmountNum = parseFloat(expectedAmount);
+          
+          // Verify amount matches (with 1% variance tolerance)
+          const variance = expectedAmountNum * 0.01;
+          if (parseFloat(amount) >= (expectedAmountNum - variance)) {
+            return {
+              sender: latestEvent.args.from,
+              amount: amount,
+              transactionHash: latestEvent.transactionHash,
+              blockNumber: latestEvent.blockNumber,
+            };
+          }
         }
       } else {
         // For native ETH, we'd need to parse transactions, which is harder

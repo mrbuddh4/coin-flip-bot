@@ -53,13 +53,39 @@ class BlockchainManager {
   }
 
   /**
-   * Check if deposit has been received (by checking bot wallet balance)
+   * Check if deposit has been received (by verifying blockchain transaction)
    */
   async verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals) {
     const handler = this.getHandler(network);
     const botWallet = this.getBotWalletAddress(network);
 
     try {
+      // Primary verification: Check blockchain for actual deposit transaction
+      let depositInfo = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress);
+
+      if (depositInfo) {
+        // Transaction found on blockchain
+        const receivedAmount = parseFloat(depositInfo.amount);
+        const expectedAmountNum = parseFloat(expectedAmount);
+        
+        // Allow 1% variance for rounding/fees
+        const variance = expectedAmountNum * 0.01;
+        const hasDeposit = receivedAmount >= (expectedAmountNum - variance);
+
+        return {
+          received: hasDeposit,
+          amount: receivedAmount,
+          expected: expectedAmountNum,
+          botWallet: botWallet,
+          depositSender: depositInfo.sender,
+          depositTransaction: depositInfo.transactionHash || depositInfo.signature || null,
+          blockNumber: depositInfo.blockNumber || depositInfo.slot || null,
+          verified: 'blockchain', // Explicitly mark this as blockchain-verified
+        };
+      }
+
+      // Fallback: Check bot wallet balance if no recent transaction found
+      console.warn('No recent deposit transaction found, checking balance fallback');
       let balance;
       if (tokenAddress === 'NATIVE') {
         balance = await handler.getNativeBalance(botWallet);
@@ -70,17 +96,9 @@ class BlockchainManager {
       const receivedAmount = parseFloat(balance.formatted);
       const expectedAmountNum = parseFloat(expectedAmount);
 
-      // Check if bot wallet has enough balance (allowing 0.1% variance for gas/rounding)
-      const variance = expectedAmountNum * 0.001;
+      // Check if bot wallet has enough balance (allowing 1% variance)
+      const variance = expectedAmountNum * 0.01;
       const hasDeposit = receivedAmount >= (expectedAmountNum - variance);
-
-      // Try to find the sender of the deposit
-      let depositSender = null;
-      try {
-        depositSender = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress);
-      } catch (err) {
-        console.warn('Failed to detect deposit sender:', err.message);
-      }
 
       return {
         received: hasDeposit,
@@ -88,8 +106,8 @@ class BlockchainManager {
         expected: expectedAmountNum,
         botWallet: botWallet,
         balance: balance,
-        depositSender: depositSender?.sender ?? null, // Return the detected sender
-        depositTransaction: depositSender?.transactionHash || depositSender?.signature || null,
+        depositSender: null,
+        verified: 'balance', // Fallback to balance verification
       };
     } catch (error) {
       console.error('Error verifying deposit:', error);
