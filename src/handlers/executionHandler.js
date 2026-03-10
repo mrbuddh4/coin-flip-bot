@@ -116,7 +116,7 @@ class ExecutionHandler {
       
       const devWallet = flip.tokenNetwork === 'EVM' 
         ? process.env.EVM_DEV_WALLET 
-        : process.env.SOLANA_DEV_WALLET;
+        : process.env.SOL_DEV_WALLET;
       
       // Burn addresses for each network
       const burnAddress = flip.tokenNetwork === 'EVM'
@@ -129,7 +129,7 @@ class ExecutionHandler {
         totalPool,
         devFeeAmount,
         burnFeeAmount,
-        devWalletEnv: `EVM_DEV_WALLET=${process.env.EVM_DEV_WALLET ? 'SET' : 'NOT_SET'}, SOLANA_DEV_WALLET=${process.env.SOLANA_DEV_WALLET ? 'SET' : 'NOT_SET'}`,
+        devWalletEnv: `EVM_DEV_WALLET=${process.env.EVM_DEV_WALLET ? 'SET' : 'NOT_SET'}, SOL_DEV_WALLET=${process.env.SOL_DEV_WALLET ? 'SET' : 'NOT_SET'}`,
         devWallet: devWallet ? `${devWallet.substring(0, 10)}...` : 'NOT_SET',
         burnAddress: `${burnAddress.substring(0, 10)}...`,
       });
@@ -151,7 +151,7 @@ class ExecutionHandler {
           logger.error('[executeFlip] ERROR SENDING DEV FEE', { flipId, devWallet, devFeeAmount, error: devFeeError.message, stack: devFeeError.stack });
         }
       } else {
-        logger.warn('[executeFlip] DEV WALLET NOT CONFIGURED', { network: flip.tokenNetwork, envVarEVM: 'EVM_DEV_WALLET', envVarSolana: 'SOLANA_DEV_WALLET' });
+        logger.warn('[executeFlip] DEV WALLET NOT CONFIGURED', { network: flip.tokenNetwork, envVarEVM: 'EVM_DEV_WALLET', envVarSolana: 'SOL_DEV_WALLET' });
       }
       
       // Send 5% to burn address

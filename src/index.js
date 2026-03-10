@@ -130,7 +130,7 @@ async function initBot() {
       initBlockchainManager();
       logger.info('[BOT_INIT] Blockchain initialized, checking wallet configuration', {
         evmDevWallet: process.env.EVM_DEV_WALLET ? `${process.env.EVM_DEV_WALLET.substring(0, 10)}...` : 'NOT_SET',
-        solanaDevWallet: process.env.SOLANA_DEV_WALLET ? `${process.env.SOLANA_DEV_WALLET.substring(0, 10)}...` : 'NOT_SET',
+        solanaDevWallet: process.env.SOL_DEV_WALLET ? `${process.env.SOL_DEV_WALLET.substring(0, 10)}...` : 'NOT_SET',
       });
     } catch (blockchainErr) {
       console.error('[BLOCKCHAIN_INIT_ERROR]', blockchainErr.message);

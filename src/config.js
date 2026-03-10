@@ -22,7 +22,7 @@ module.exports = {
   solana: {
     rpcUrl: process.env.SOLANA_RPC_URL,
     privateKey: process.env.SOLANA_PRIVATE_KEY,
-    devWallet: process.env.SOLANA_DEV_WALLET,
+    devWallet: process.env.SOL_DEV_WALLET,
   },
   bot: {
     walletAddress: process.env.BOT_WALLET_ADDRESS,
