@@ -198,7 +198,7 @@ class ExecutionHandler {
 
       // Generate transaction link based on network
       const txLink = flip.tokenNetwork === 'EVM'
-        ? `https://etherscan.io/tx/${winningTxHash}`
+        ? `https://paxscan.io/tx/${winningTxHash}`
         : `https://solscan.io/tx/${winningTxHash}`;
 
       // Send result to group chat by editing the existing message
@@ -248,7 +248,7 @@ class ExecutionHandler {
             
             if (updatedFlip && updatedFlip.winningTxHash) {
               const txLinkUpdated = updatedFlip.tokenNetwork === 'EVM'
-                ? `https://etherscan.io/tx/${updatedFlip.winningTxHash}`
+                ? `https://paxscan.io/tx/${updatedFlip.winningTxHash}`
                 : `https://solscan.io/tx/${updatedFlip.winningTxHash}`;
               
               const updatedMessage = 
