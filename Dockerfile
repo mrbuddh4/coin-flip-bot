@@ -10,6 +10,9 @@ RUN npm install --production
 # Copy source code
 COPY src ./src
 
+# Copy assets
+COPY assets ./assets
+
 # Create logs directory
 RUN mkdir -p logs
 

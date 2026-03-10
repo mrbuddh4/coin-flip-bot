@@ -1485,15 +1485,6 @@ const handlers = {
         const path = require('path');
         const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
         
-        // Debug logging
-        logger.info('Image path resolution debug', {
-          cwd: process.cwd(),
-          imagePath,
-          exists: fs.existsSync(imagePath),
-          files: fs.readdirSync(process.cwd()).slice(0, 20),
-          assetsDir: fs.existsSync(path.join(process.cwd(), 'assets')) ? fs.readdirSync(path.join(process.cwd(), 'assets')) : 'NOT FOUND',
-        });
-        
         let groupMsg;
         try {
           if (fs.existsSync(imagePath)) {
