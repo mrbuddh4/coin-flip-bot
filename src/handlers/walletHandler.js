@@ -19,7 +19,7 @@ class WalletHandler {
 
       await ctx.reply(
         `<b>💳 Your Wallet Addresses</b>\n\n` +
-        `<b>Paxeer Network:</b>\n<code>${paxeerAddress}</code>\n\n` +
+        `<b>Paxeer Network:</b>\n<code>${evmAddress}</code>\n\n` +
         `<b>Solana Network:</b>\n<code>${solAddress}</code>\n\n` +
         `Choose what you'd like to do:`,
         {
