@@ -92,10 +92,20 @@ class BlockchainManager {
         };
       }
 
-      // NO FALLBACK - If no recent transaction found, deposit was not received
-      // Using balance fallback is dangerous: bot wallet might have balance from previous flips,
-      // creating false positives where deposit is credited even if user didn't send anything
-      console.warn('[verifyDeposit] No recent deposit transaction found - rejecting deposit');
+      // CRITICAL FIX: Do NOT use balance fallback - it causes false positives!
+      // If no specific transaction is found from this user, we must fail the verification.
+      // Using the bot wallet's total balance is unsafe because:
+      // 1. It includes tokens from previous flips/other users
+      // 2. It doesn't verify THIS user actually sent tokens
+      // 3. A challenger with 0 tokens could pass if bot has balance from other sources
+      
+      console.error('[verifyDeposit] NO DEPOSIT TRANSACTION FOUND - rejecting deposit verification', {
+        network,
+        tokenAddress,
+        expectedAmount,
+        botWallet,
+        reason: 'No blockchain transaction found - cannot accept balance-based verification'
+      });
 
       return {
         received: false,
@@ -103,8 +113,9 @@ class BlockchainManager {
         expected: parseFloat(expectedAmount),
         botWallet: botWallet,
         depositSender: null,
-        reason: 'No recent blockchain transaction detected',
-        verified: 'blockchain_required',
+        depositTransaction: null,
+        verified: 'blockchain', // Require blockchain verification only
+        error: 'No transaction found from depositor'
       };
     } catch (error) {
       console.error('[verifyDeposit] Error verifying deposit:', error);
@@ -118,7 +129,7 @@ class BlockchainManager {
   /**
    * Verify deposit with retries (accounts for blockchain indexing delay)
    */
-  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 10, retryDelayMs = 2000) {
+  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 4, retryDelayMs = 2000) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals);
       
