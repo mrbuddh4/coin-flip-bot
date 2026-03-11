@@ -53,7 +53,7 @@ const initDB = async () => {
       console.log('Enum update skipped (likely already exists)');
     }
 
-    await sequelize.sync({ alter: false });
+    await sequelize.sync({ alter: true });
     console.log('Database models synchronized');
 
     return { sequelize, models };
