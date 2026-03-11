@@ -228,6 +228,12 @@ class EVMHandler {
               knownSenderProvided: !!knownSender,
               totalTransactions: data.result.length,
               transactionsFromAddresses: data.result.map(tx => tx.from.toLowerCase()),
+              first5Transactions: data.result.slice(0, 5).map(tx => ({
+                from: tx.from,
+                to: tx.to,
+                value: tx.value,
+                hash: tx.hash,
+              })),
             });
             
             // Sum ALL transfers from target sender
@@ -237,8 +243,11 @@ class EVMHandler {
             
             for (const tx of data.result) {
               const txSenderLower = tx.from.toLowerCase();
+              const txRecipientLower = tx.to?.toLowerCase() || '';
               
-              if (txSenderLower === targetSender) {
+              // Only process if this is an INCOMING transfer to the bot wallet
+              // (recipient is the bot wallet AND sender matches our target)
+              if (txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender) {
                 const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                 totalAmount += txAmount;
                 if (!latestTxForReturn) latestTxForReturn = tx;
@@ -248,8 +257,9 @@ class EVMHandler {
                   blockNumber: tx.blockNumber,
                 });
                 
-                console.log('[getRecentDepositSender] Matched transaction', {
-                  txSender: txSenderLower,
+                console.log('[getRecentDepositSender] Matched incoming transaction', {
+                  from: txSenderLower,
+                  to: txRecipientLower,
                   amount: txAmount,
                   txHash: tx.hash,
                 });
