@@ -881,8 +881,11 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Verifying challenger deposit', { flipId, userId });
         
-        // Show notification without blocking - verification happens in parallel
-        ctx.answerCbQuery('⏳ Verifying deposit...').catch(() => {});
+        // Send processing card
+        const processingMsg = await ctx.reply(
+          `⏳ <b>Processing Transaction...</b>\n\nVerifying your deposit on the blockchain. This usually takes 10-30 seconds.`,
+          { parse_mode: 'HTML' }
+        );
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
         // If we already detected a sender, pass it to accumulate all their transfers
@@ -936,19 +939,23 @@ async function initBot() {
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
-            await ctx.reply(
-              `❌ <b>Insufficient Deposit</b>\n\n` +
-              `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-              `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-              `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
-              `<b>Troubleshooting:</b>\n` +
-              `• Verify you sent to: <code>${botWallet}</code>\n` +
-              `• Check amount matches exactly (${formattedExpected})\n` +
-              `• Wait 30 seconds for blockchain confirmation\n` +
-              `• Then try confirming again\n\n` +
-              `You have <b>3 minutes</b> to send the remaining amount, otherwise your deposit will be refunded and the challenge cancelled.`,
-              { parse_mode: 'HTML' }
-            );
+            try {
+              await ctx.editMessageText(
+                `❌ <b>Insufficient Deposit</b>\n\n` +
+                `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+                `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+                `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+                `<b>Troubleshooting:</b>\n` +
+                `• Verify you sent to: <code>${botWallet}</code>\n` +
+                `• Check amount matches exactly (${formattedExpected})\n` +
+                `• Wait 30 seconds for blockchain confirmation\n` +
+                `• Then try confirming again\n\n` +
+                `You have <b>3 minutes</b> to send the remaining amount, otherwise your deposit will be refunded and the challenge cancelled.`,
+                { parse_mode: 'HTML', message_id: processingMsg.message_id }
+              );
+            } catch (editErr) {
+              logger.warn('[deposit_confirmed] Failed to edit processing message', editErr.message);
+            }
             
             // Record that we just sent a notification
             flip.data = { ...flip.data, lastInsufficientDepositNotification: Date.now() };
@@ -1039,14 +1046,18 @@ async function initBot() {
           const formattedWager = wagerAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
           const formattedExcess = excessAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
           
-          await ctx.reply(
-            `⚠️ <b>Overpayment Detected</b>\n\n` +
-            `You sent: ${formattedReceived} ${flip.tokenSymbol}\n` +
-            `Wager amount: ${formattedWager} ${flip.tokenSymbol}\n\n` +
-            `<b>Refunding excess: ${formattedExcess} ${flip.tokenSymbol}</b>\n\n` +
-            `The refund will be sent to your wallet shortly.`,
-            { parse_mode: 'HTML' }
-          );
+          try {
+            await ctx.editMessageText(
+              `⚠️ <b>Overpayment Detected</b>\n\n` +
+              `You sent: ${formattedReceived} ${flip.tokenSymbol}\n` +
+              `Wager amount: ${formattedWager} ${flip.tokenSymbol}\n\n` +
+              `<b>Refunding excess: ${formattedExcess} ${flip.tokenSymbol}</b>\n\n` +
+              `The refund will be sent to your wallet shortly.`,
+              { parse_mode: 'HTML', message_id: processingMsg.message_id }
+            );
+          } catch (editErr) {
+            logger.warn('[deposit_confirmed] Failed to edit overpayment message', editErr.message);
+          }
           
           try {
             if (verification.depositSender) {
@@ -1087,12 +1098,12 @@ async function initBot() {
         flip.challengerDepositConfirmed = true;
         await flip.save();
 
-        // Immediately edit message to remove button and show confirmation
+        // Edit processing message to show confirmation
         try {
           await ctx.editMessageText(
             `✅ <b>Your Deposit Confirmed!</b>\n\n` +
             (flip.creatorDepositConfirmed ? `🎉 Both players ready! Executing flip...` : `⏳ Waiting for the other player's deposit...`),
-            { parse_mode: 'HTML' }
+            { parse_mode: 'HTML', message_id: processingMsg.message_id }
           );
         } catch (err) {
           logger.warn('Failed to edit confirmation message', err.message);
@@ -1236,8 +1247,11 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Verifying creator deposit', { flipId, userId });
         
-        // Show notification without blocking - verification happens in parallel
-        ctx.answerCbQuery('⏳ Verifying deposit...').catch(() => {});
+        // Send processing card
+        const processingMsg = await ctx.reply(
+          `⏳ <b>Processing Transaction...</b>\n\nVerifying your deposit on the blockchain. This usually takes 10-30 seconds.`,
+          { parse_mode: 'HTML' }
+        );
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
         // If we already detected a sender, pass it to accumulate all their transfers
@@ -1291,19 +1305,23 @@ async function initBot() {
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
-            await ctx.reply(
-              `⏳ <b>Insufficient Deposit</b>\n\n` +
-              `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-              `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-              `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
-              `<b>Troubleshooting:</b>\n` +
-              `• Verify you sent to: <code>${botWallet}</code>\n` +
-              `• Check amount matches exactly (${formattedExpected})\n` +
-              `• Wait 30 seconds for blockchain confirmation\n` +
-              `• Then try confirming again\n\n` +
-              `If not sent within 3 minutes, the challenge will auto-cancel.`,
-              { parse_mode: 'HTML' }
-            );
+            try {
+              await ctx.editMessageText(
+                `⏳ <b>Insufficient Deposit</b>\n\n` +
+                `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+                `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+                `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+                `<b>Troubleshooting:</b>\n` +
+                `• Verify you sent to: <code>${botWallet}</code>\n` +
+                `• Check amount matches exactly (${formattedExpected})\n` +
+                `• Wait 30 seconds for blockchain confirmation\n` +
+                `• Then try confirming again\n\n` +
+                `If not sent within 3 minutes, the challenge will auto-cancel.`,
+                { parse_mode: 'HTML', message_id: processingMsg.message_id }
+              );
+            } catch (editErr) {
+              logger.warn('[creator_deposit_confirmed] Failed to edit processing message', editErr.message);
+            }
             
             // Record that we just sent a notification
             flip.data = { ...flip.data, lastInsufficientDepositNotification: Date.now() };
@@ -1346,14 +1364,18 @@ async function initBot() {
           const formattedWager = creatorWagerAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
           const formattedExcess = creatorExcessAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
           
-          await ctx.reply(
-            `⚠️ <b>Overpayment Detected</b>\n\n` +
-            `You sent: ${formattedReceived} ${flip.tokenSymbol}\n` +
-            `Wager amount: ${formattedWager} ${flip.tokenSymbol}\n\n` +
-            `<b>Refunding excess: ${formattedExcess} ${flip.tokenSymbol}</b>\n\n` +
-            `The refund will be sent to your wallet shortly.`,
-            { parse_mode: 'HTML' }
-          );
+          try {
+            await ctx.editMessageText(
+              `⚠️ <b>Overpayment Detected</b>\n\n` +
+              `You sent: ${formattedReceived} ${flip.tokenSymbol}\n` +
+              `Wager amount: ${formattedWager} ${flip.tokenSymbol}\n\n` +
+              `<b>Refunding excess: ${formattedExcess} ${flip.tokenSymbol}</b>\n\n` +
+              `The refund will be sent to your wallet shortly.`,
+              { parse_mode: 'HTML', message_id: processingMsg.message_id }
+            );
+          } catch (editErr) {
+            logger.warn('[creator_deposit_confirmed] Failed to edit overpayment message', editErr.message);
+          }
           
           try {
             if (verification.depositSender) {
@@ -1395,12 +1417,12 @@ async function initBot() {
         flip.status = 'WAITING_CHALLENGER';
         await flip.save();
 
-        // Immediately edit DM message to show confirmation (removes button, prevents re-clicking)
+        // Edit processing message to show confirmation
         try {
           await ctx.editMessageText(
             `✅ <b>Your Deposit Confirmed!</b>\n\n` +
-            `🪙 Challenge posted to the group...`,
-            { parse_mode: 'HTML' }
+            `💤 Challenge posted to the group...`,
+            { parse_mode: 'HTML', message_id: processingMsg.message_id }
           );
         } catch (err) {
           logger.warn('Failed to edit creator confirmation message', err.message);
@@ -1409,11 +1431,15 @@ async function initBot() {
         // Check if challenge was already posted (prevent duplicate posts from webhook retries)
         if (flip.groupMessageId) {
           logger.info('[creator_deposit_confirmed] Challenge already posted, skipping duplicate', { flipId, groupMessageId: flip.groupMessageId });
-          await ctx.editMessageText(
-            `✅ <b>Your Deposit Confirmed!</b>\n\n` +
-            `Your challenge has been posted to the group. Waiting for a challenger...`,
-            { parse_mode: 'HTML' }
-          );
+          try {
+            await ctx.editMessageText(
+              `✅ <b>Your Deposit Confirmed!</b>\n\n` +
+              `Your challenge has been posted to the group. Waiting for a challenger...`,
+              { parse_mode: 'HTML', message_id: processingMsg.message_id }
+            );
+          } catch (err) {
+            logger.warn('Failed to edit duplicate challenge message', err.message);
+          }
           return;
         }
 
