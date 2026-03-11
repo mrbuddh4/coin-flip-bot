@@ -1092,7 +1092,7 @@ async function initBot() {
               await blockchainManager.sendWinnings(
                 flip.tokenNetwork,
                 tokenAddress,
-                verification.depositSender,
+                flip.challengerDepositWalletAddress,
                 excessStr,
                 tokenDecimals
               );
@@ -1100,7 +1100,7 @@ async function initBot() {
               logger.info('[deposit_confirmed] Refunded excess deposit', { 
                 flipId, 
                 excess: excessStr,
-                recipient: verification.depositSender
+                recipient: flip.challengerDepositWalletAddress
               });
             }
           } catch (excessErr) {
@@ -1424,7 +1424,7 @@ async function initBot() {
               await blockchainManager.sendWinnings(
                 flip.tokenNetwork,
                 tokenAddress,
-                verification.depositSender,
+                flip.creatorDepositWalletAddress,
                 excessStr,
                 tokenDecimals
               );
@@ -1432,7 +1432,7 @@ async function initBot() {
               logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
                 flipId, 
                 excess: excessStr,
-                recipient: verification.depositSender
+                recipient: flip.creatorDepositWalletAddress
               });
             }
           } catch (excessErr) {
