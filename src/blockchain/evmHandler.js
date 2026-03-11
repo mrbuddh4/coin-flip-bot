@@ -212,40 +212,23 @@ class EVMHandler {
           });
 
           if (events.length > 0) {
-            // Get the most recent transfer to identify the sender
+            // Only take the most recent transfer - no accumulation to avoid picking up old deposits
             const latestEvent = events[events.length - 1];
             const sender = latestEvent.args.from;
+            const amount = ethers.formatUnits(latestEvent.args.value, decimals);
             
-            // Sum ALL transfers from this sender (same session deposits)
-            let totalAmount = 0n;
-            const transfers = [];
-            
-            for (const event of events) {
-              if (event.args.from.toLowerCase() === sender.toLowerCase()) {
-                totalAmount += event.args.value;
-                transfers.push({
-                  amount: ethers.formatUnits(event.args.value, decimals),
-                  txHash: event.transactionHash,
-                  blockNumber: event.blockNumber,
-                });
-              }
-            }
-            
-            const totalFormatted = ethers.formatUnits(totalAmount, decimals);
-            
-            console.log('[getRecentDepositSender] Found transfers from sender', { 
+            console.log('[getRecentDepositSender] Found recent transfer', { 
               sender,
-              transferCount: transfers.length,
-              totalAmount: totalFormatted,
-              transfers,
+              amount,
+              txHash: latestEvent.transactionHash,
+              blockNumber: latestEvent.blockNumber,
             });
             
             return {
               sender: sender,
-              amount: totalFormatted,
+              amount: amount,
               transactionHash: latestEvent.transactionHash,
               blockNumber: latestEvent.blockNumber,
-              transferCount: transfers.length,
             };
           } else {
             console.warn('[getRecentDepositSender] No Transfer events found via queryFilter, trying Paxscan API fallback', {
