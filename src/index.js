@@ -2261,16 +2261,23 @@ async function handleChallengerDepositConfirm(ctx) {
 
   // Mark challenger deposit confirmed
   flip.challengerDepositConfirmed = true;
-  flip.status = 'COMPLETED';
   await flip.save();
 
-  await ctx.reply(`✅ Deposit confirmed! Executing flip...`);
+  // Check if both deposits are confirmed before executing
+  if (flip.creatorDepositConfirmed && flip.challengerDepositConfirmed) {
+    flip.status = 'COMPLETED';
+    await flip.save();
 
-  // Clear the challenge timeout since flip is now executing
-  clearChallengeTimeout(flip.id);
+    await ctx.reply(`✅ Deposit confirmed! Executing flip...`);
 
-  // Execute the flip
-  await ExecutionHandler.executeFlip(flip.id, ctx, null);
+    // Clear the challenge timeout since flip is now executing
+    clearChallengeTimeout(flip.id);
+
+    // Execute the flip
+    await ExecutionHandler.executeFlip(flip.id, ctx, null);
+  } else {
+    await ctx.reply(`✅ Your deposit confirmed! Waiting for the other player's deposit...`);
+  }
 }
 
 /**
