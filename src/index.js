@@ -230,7 +230,6 @@ async function initBot() {
     // Initialize database
     console.log('Initializing database...');
     await initDB();
-    }
 
     // Create bot instance
     console.log('Creating Telegraf instance...');
