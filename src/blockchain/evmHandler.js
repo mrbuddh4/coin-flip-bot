@@ -167,7 +167,7 @@ class EVMHandler {
   /**
    * Find the sender of a recent incoming transaction to the bot wallet
    */
-  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null) {
+  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null, knownSender = null) {
     try {
       const currentBlock = await this.provider.getBlockNumber();
       const lookbackBlocks = 300; // ~1 hour lookback - accumulates multi-deposits in current session only
@@ -177,6 +177,7 @@ class EVMHandler {
         botWallet: botWalletAddress,
         token: tokenAddress,
         expectedAmount,
+        knownSender,
         fromBlock,
         toBlock: currentBlock,
         blockRange: currentBlock - fromBlock,
@@ -212,24 +213,69 @@ class EVMHandler {
           });
 
           if (events.length > 0) {
-            // Only take the most recent transfer - no accumulation to avoid picking up old deposits
+            // Identify the sender to look for
             const latestEvent = events[events.length - 1];
-            const sender = latestEvent.args.from;
-            const amount = ethers.formatUnits(latestEvent.args.value, decimals);
+            let targetSender = knownSender || latestEvent.args.from;
+            targetSender = targetSender.toLowerCase();
             
-            console.log('[getRecentDepositSender] Found recent transfer', { 
-              sender,
-              amount,
-              txHash: latestEvent.transactionHash,
-              blockNumber: latestEvent.blockNumber,
+            console.log('[getRecentDepositSender] Processing events', { 
+              eventsFound: events.length,
+              targetSender,
+              knownSenderProvided: !!knownSender,
             });
             
-            return {
-              sender: sender,
-              amount: amount,
-              transactionHash: latestEvent.transactionHash,
-              blockNumber: latestEvent.blockNumber,
-            };
+            if (knownSender) {
+              // If a known sender is provided, accumulate ALL transfers from that sender
+              let totalAmount = 0n;
+              let transfers = [];
+              
+              for (const event of events) {
+                if (event.args.from.toLowerCase() === targetSender) {
+                  totalAmount += event.args.value;
+                  transfers.push({
+                    amount: ethers.formatUnits(event.args.value, decimals),
+                    txHash: event.transactionHash,
+                    blockNumber: event.blockNumber,
+                  });
+                }
+              }
+              
+              if (transfers.length === 0) {
+                console.warn('[getRecentDepositSender] No transfers found from known sender', { knownSender });
+                return null;
+              }
+              
+              const totalFormatted = ethers.formatUnits(totalAmount, decimals);
+              console.log('[getRecentDepositSender] Accumulated transfers from known sender', { 
+                sender: targetSender,
+                transferCount: transfers.length,
+                totalAmount: totalFormatted,
+              });
+              
+              return {
+                sender: targetSender,
+                amount: totalFormatted,
+                transactionHash: transfers[0].txHash,
+                blockNumber: transfers[0].blockNumber,
+              };
+            } else {
+              // If no known sender, just return the most recent transfer (no accumulation)
+              const amount = ethers.formatUnits(latestEvent.args.value, decimals);
+              
+              console.log('[getRecentDepositSender] Found recent transfer (no accumulation)', { 
+                sender: targetSender,
+                amount,
+                txHash: latestEvent.transactionHash,
+                blockNumber: latestEvent.blockNumber,
+              });
+              
+              return {
+                sender: targetSender,
+                amount: amount,
+                transactionHash: latestEvent.transactionHash,
+                blockNumber: latestEvent.blockNumber,
+              };
+            }
           } else {
             console.warn('[getRecentDepositSender] No Transfer events found via queryFilter, trying Paxscan API fallback', {
               botWallet: botWalletAddress,

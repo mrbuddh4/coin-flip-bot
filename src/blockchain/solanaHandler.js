@@ -234,14 +234,14 @@ class SolanaHandler {
   /**
    * Find the sender of a recent incoming transaction to the bot wallet
    */
-  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null) {
+  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null, knownSender = null) {
     try {
       const botPublicKey = new PublicKey(botWalletAddress);
       // Check recent signatures only (~30 minute window on Solana)
       const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 50 });
 
-      // Collect all deposits from the most recent event's sender
-      // Only take the FIRST (most recent) deposit - no accumulation to avoid picking up old deposits
+      // Collect all deposits to find sender info
+      let deposits = [];
       
       for (const sig of signatures) {
         try {
@@ -320,20 +320,12 @@ class SolanaHandler {
                                     
                                     const formattedAmount = Number(amount) / Math.pow(10, decimals);
                                     
-                                    // Found a deposit - return it immediately (most recent)
-                                    console.log('[getRecentDepositSender] Found recent SPL token deposit', {
+                                    deposits.push({
                                       sender: authorityStr,
                                       amount: formattedAmount,
                                       signature: sig.signature,
                                       slot: sig.slot,
                                     });
-                                    
-                                    return {
-                                      sender: authorityStr,
-                                      amount: formattedAmount.toString(),
-                                      signature: sig.signature,
-                                      slot: sig.slot,
-                                    };
                                   }
                                 }
                               }
@@ -368,20 +360,12 @@ class SolanaHandler {
                     if (balanceChange > 0) {
                       const transactionAmount = balanceChange / LAMPORTS_PER_SOL;
                       
-                      // Found a deposit - return it immediately (most recent)
-                      console.log('[getRecentDepositSender] Found recent native SOL deposit', {
+                      deposits.push({
                         sender: senderStr,
                         amount: transactionAmount,
                         signature: sig.signature,
                         slot: sig.slot,
                       });
-                      
-                      return {
-                        sender: senderStr,
-                        amount: transactionAmount.toString(),
-                        signature: sig.signature,
-                        slot: sig.slot,
-                      };
                     }
                   }
                 }
@@ -394,7 +378,59 @@ class SolanaHandler {
         }
       }
 
-      // No deposits found
+      // Process the collected deposits
+      if (deposits.length === 0) {
+        console.warn('[getRecentDepositSender] No deposits found');
+        return null;
+      }
+
+      if (knownSender) {
+        // If a known sender is provided, accumulate ALL deposits from that sender
+        const senderLower = knownSender.toLowerCase();
+        const fromSender = deposits.filter(d => d.sender.toLowerCase() === senderLower);
+        
+        if (fromSender.length === 0) {
+          console.warn('[getRecentDepositSender] No deposits found from known sender', { knownSender });
+          return null;
+        }
+        
+        const totalAmount = fromSender.reduce((sum, d) => sum + d.amount, 0);
+        
+        console.log('[getRecentDepositSender] Accumulated deposits from known sender (Solana)', {
+          sender: knownSender,
+          depositCount: fromSender.length,
+          totalAmount,
+        });
+        
+        return {
+          sender: knownSender,
+          amount: totalAmount.toString(),
+          signature: fromSender[0].signature,
+          slot: fromSender[0].slot,
+        };
+      } else {
+        // If no known sender, just return the most recent deposit (no accumulation)
+        const mostRecent = deposits[0];
+        
+        console.log('[getRecentDepositSender] Found recent deposit (Solana - no accumulation)', {
+          sender: mostRecent.sender,
+          amount: mostRecent.amount,
+          signature: mostRecent.signature,
+          slot: mostRecent.slot,
+        });
+        
+        return {
+          sender: mostRecent.sender,
+          amount: mostRecent.amount.toString(),
+          signature: mostRecent.signature,
+          slot: mostRecent.slot,
+        };
+      }
+    } catch (error) {
+      console.error('Error getting recent Solana deposit sender:', error);
+      return null;
+    }
+  }
 
       return null;
     } catch (error) {

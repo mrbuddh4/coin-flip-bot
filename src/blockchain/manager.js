@@ -77,7 +77,7 @@ class BlockchainManager {
   /**
    * Check if deposit has been received (by verifying blockchain transaction)
    */
-  async verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals) {
+  async verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender = null) {
     const handler = this.getHandler(network);
     const botWallet = this.getBotWalletAddress(network);
 
@@ -88,10 +88,11 @@ class BlockchainManager {
         expectedAmount,
         tokenDecimals,
         botWallet,
+        knownSender,
       });
 
       // Primary verification: Check blockchain for actual deposit transaction
-      let depositInfo = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress);
+      let depositInfo = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress, knownSender);
 
       if (depositInfo) {
         // Transaction found on blockchain
@@ -159,9 +160,9 @@ class BlockchainManager {
   /**
    * Verify deposit with retries (accounts for blockchain indexing delay)
    */
-  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 4, retryDelayMs = 2000) {
+  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 4, retryDelayMs = 2000, knownSender = null) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals);
+      const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender);
       
       if (result.received) {
         console.log(`Deposit verified on attempt ${attempt}/${maxRetries}`);
@@ -177,7 +178,7 @@ class BlockchainManager {
 
     // After all retries, return the last result
     console.log('Deposit verification failed after all retries');
-    return await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals);
+    return await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender);
   }
 
   /**

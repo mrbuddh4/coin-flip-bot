@@ -877,12 +877,17 @@ async function initBot() {
         ctx.answerCbQuery('⏳ Verifying deposit...').catch(() => {});
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
+        // If we already detected a sender, pass it to accumulate all their transfers
         const blockchainManager = getBlockchainManager();
+        const knownSender = flip.challengerDepositWalletAddress || null;
         const verification = await blockchainManager.verifyDepositWithRetry(
           flip.tokenNetwork,
           flip.tokenAddress,
           flip.wagerAmount,
-          flip.tokenDecimals
+          flip.tokenDecimals,
+          4, // maxRetries
+          2000, // retryDelayMs
+          knownSender // pass known sender to accumulate multi-deposits
         );
 
         if (!verification.received) {
@@ -1199,12 +1204,17 @@ async function initBot() {
         ctx.answerCbQuery('⏳ Verifying deposit...').catch(() => {});
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
+        // If we already detected a sender, pass it to accumulate all their transfers
         const blockchainManager = getBlockchainManager();
+        const knownSender = flip.creatorDepositWalletAddress || null;
         const verification = await blockchainManager.verifyDepositWithRetry(
           flip.tokenNetwork,
           flip.tokenAddress,
           flip.wagerAmount,
-          flip.tokenDecimals
+          flip.tokenDecimals,
+          4, // maxRetries
+          2000, // retryDelayMs
+          knownSender // pass known sender to accumulate multi-deposits
         );
 
         if (!verification.received) {
