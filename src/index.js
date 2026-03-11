@@ -913,15 +913,15 @@ async function initBot() {
           logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
           
           // Store the detected sender address for refunds (if not already set)
-          if (verification.sender && !flip.challengerDepositWalletAddress) {
-            flip.challengerDepositWalletAddress = verification.sender;
+          if (verification.depositSender && !flip.challengerDepositWalletAddress) {
+            flip.challengerDepositWalletAddress = verification.depositSender;
             flip.challengerAccumulatedDeposit = parseFloat(verification.amount || 0);
             logger.info('[deposit_confirmed] Detected challenger deposit sender and initial amount', { 
               flipId, 
-              sender: verification.sender,
+              sender: verification.depositSender,
               initialAmount: verification.amount
             });
-          } else if (verification.sender && flip.challengerDepositWalletAddress) {
+          } else if (verification.depositSender && flip.challengerDepositWalletAddress) {
             // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
             const previousAccumulated = parseFloat(flip.challengerAccumulatedDeposit || 0);
             const currentTotal = parseFloat(verification.amount || 0);
@@ -1041,13 +1041,13 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Challenger deposit verified', { flipId, userId, amount: verification.amount });
 
-        logger.info('[deposit_confirmed] Verification has sender?', { hasSender: !!verification.sender });
-        logger.info('[deposit_confirmed] Verification sender value', { sender: verification.sender });
+        logger.info('[deposit_confirmed] Verification has sender?', { hasSender: !!verification.depositSender });
+        logger.info('[deposit_confirmed] Verification sender value', { sender: verification.depositSender });
 
         // Store the detected sender address for refunds (if not already set)
-        if (verification.sender && !flip.challengerDepositWalletAddress) {
-          flip.challengerDepositWalletAddress = verification.sender;
-          logger.info('[deposit_confirmed] Detected challenger deposit sender', { flipId, sender: verification.sender });
+        if (verification.depositSender && !flip.challengerDepositWalletAddress) {
+          flip.challengerDepositWalletAddress = verification.depositSender;
+          logger.info('[deposit_confirmed] Detected challenger deposit sender', { flipId, sender: verification.depositSender });
         }
 
         // Ensure accumulated deposit is set for overpayment check
@@ -1079,7 +1079,7 @@ async function initBot() {
         if (receivedAmount > wagerAmount) {
           overpaymentDetected = true;
           const excessAmount = receivedAmount - wagerAmount;
-          logger.info('[deposit_confirmed] Excess deposit detected, will refund', { flipId, excess: excessAmount, sender: verification.sender });
+          logger.info('[deposit_confirmed] Excess deposit detected, will refund', { flipId, excess: excessAmount, sender: verification.depositSender });
           
           // Notify user about overpayment and refund
           const formattedReceived = receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
@@ -1339,15 +1339,15 @@ async function initBot() {
           logger.warn('[creator_deposit_confirmed] Deposit not received (insufficient)', { userId, flipId, verificationReceived: verification.received });
           
           // Store the detected sender address for refunds (if not already set)
-          if (verification.sender && !flip.creatorDepositWalletAddress) {
-            flip.creatorDepositWalletAddress = verification.sender;
+          if (verification.depositSender && !flip.creatorDepositWalletAddress) {
+            flip.creatorDepositWalletAddress = verification.depositSender;
             flip.creatorAccumulatedDeposit = parseFloat(verification.amount || 0);
             logger.info('[creator_deposit_confirmed] Detected creator deposit sender and initial amount', { 
               flipId, 
-              sender: verification.sender,
+              sender: verification.depositSender,
               initialAmount: verification.amount
             });
-          } else if (verification.sender && flip.creatorDepositWalletAddress) {
+          } else if (verification.depositSender && flip.creatorDepositWalletAddress) {
             // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
             const previousAccumulated = parseFloat(flip.creatorAccumulatedDeposit || 0);
             const currentTotal = parseFloat(verification.amount || 0);
@@ -1405,7 +1405,7 @@ async function initBot() {
           }
           
           // CRITICAL: Save the sender address before returning if we just detected it
-          if (verification.sender && flip.creatorDepositWalletAddress === verification.sender) {
+          if (verification.depositSender && flip.creatorDepositWalletAddress === verification.depositSender) {
             await flip.save();
           }
           
@@ -1414,16 +1414,16 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
 
-        logger.info('[creator_deposit_confirmed] Verification has sender?', { hasSender: !!verification.sender });
-        logger.info('[creator_deposit_confirmed] Verification sender value', { sender: verification.sender });
+        logger.info('[creator_deposit_confirmed] Verification has sender?', { hasSender: !!verification.depositSender });
+        logger.info('[creator_deposit_confirmed] Verification sender value', { sender: verification.depositSender });
 
         // Store the detected sender address for refunds (if not already set)
-        if (verification.sender && !flip.creatorDepositWalletAddress) {
-          flip.creatorDepositWalletAddress = verification.sender;
+        if (verification.depositSender && !flip.creatorDepositWalletAddress) {
+          flip.creatorDepositWalletAddress = verification.depositSender;
           flip.creatorAccumulatedDeposit = parseFloat(verification.amount || 0);
           logger.info('[creator_deposit_confirmed] Detected creator deposit sender with accumulated amount', { 
             flipId, 
-            sender: verification.sender,
+            sender: verification.depositSender,
             accumulatedDeposit: verification.amount
           });
         }
@@ -1457,7 +1457,7 @@ async function initBot() {
         if (creatorReceivedAmount > creatorWagerAmount) {
           creatorOverpaymentDetected = true;
           const creatorExcessAmount = creatorReceivedAmount - creatorWagerAmount;
-          logger.info('[creator_deposit_confirmed] Excess deposit detected, will refund', { flipId, excess: creatorExcessAmount, sender: verification.sender });
+          logger.info('[creator_deposit_confirmed] Excess deposit detected, will refund', { flipId, excess: creatorExcessAmount, sender: verification.depositSender });
           
           // Notify user about overpayment and refund
           const formattedReceived = creatorReceivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 });
