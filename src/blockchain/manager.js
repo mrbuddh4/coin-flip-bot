@@ -53,9 +53,22 @@ class BlockchainManager {
       }
       // Derive from private key
       const { Keypair } = require('@solana/web3.js');
-      const keypair = Keypair.fromSecretKey(
-        new Uint8Array(JSON.parse(config.solana.privateKey))
-      );
+      const bs58 = require('bs58');
+      
+      let secretKey;
+      try {
+        // Try parsing as JSON array first
+        secretKey = new Uint8Array(JSON.parse(config.solana.privateKey));
+      } catch {
+        // If not JSON, assume base58 encoded
+        try {
+          secretKey = new Uint8Array(bs58.decode(config.solana.privateKey));
+        } catch (err) {
+          throw new Error(`Failed to decode Solana private key. Expected JSON array or base58 string. Error: ${err.message}`);
+        }
+      }
+      
+      const keypair = Keypair.fromSecretKey(secretKey);
       return keypair.publicKey.toBase58();
     }
     throw new Error(`Unknown network: ${network}`);
