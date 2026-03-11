@@ -925,11 +925,16 @@ async function initBot() {
         );
 
         if (!verification.received) {
-          logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
+          logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId, verification });
           
           // Only send alert if transaction was not found at all
           // If transaction IS found but insufficient, we'll handle that below
-          if (!verification.depositSender || verification.amount === 0 || verification.amount === '0') {
+          const amountNum = parseFloat(verification.amount) || 0;
+          const hasSender = verification.depositSender && verification.depositSender !== 'null' && verification.depositSender !== null;
+          
+          logger.info('[deposit_confirmed] Checking transaction state', { amountNum, hasSender, depositSender: verification.depositSender });
+          
+          if (!hasSender || amountNum === 0) {
             // No transaction detected at all
             await ctx.reply(
               `⏳ <b>Transaction Not Yet Detected</b>\n\n` +
@@ -1243,10 +1248,15 @@ async function initBot() {
         );
 
         if (!verification.received) {
-          logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId });
+          logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId, verification });
           
           // Only send alert if transaction was not found at all
-          if (!verification.depositSender || verification.amount === 0 || verification.amount === '0') {
+          const amountNum = parseFloat(verification.amount) || 0;
+          const hasSender = verification.depositSender && verification.depositSender !== 'null' && verification.depositSender !== null;
+          
+          logger.info('[creator_deposit_confirmed] Checking transaction state', { amountNum, hasSender, depositSender: verification.depositSender });
+          
+          if (!hasSender || amountNum === 0) {
             // No transaction detected at all
             await ctx.reply(
               `⏳ <b>Transaction Not Yet Detected</b>\n\n` +
@@ -1259,7 +1269,7 @@ async function initBot() {
           
           // Transaction WAS found but amount is insufficient
           const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-          const receivedAmount = parseFloat(verification.amount || '0');
+          const receivedAmount = amountNum;
           const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
           
           await ctx.reply(
