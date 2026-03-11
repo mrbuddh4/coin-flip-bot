@@ -386,8 +386,8 @@ class SolanaHandler {
 
       if (knownSender) {
         // If a known sender is provided, accumulate ALL deposits from that sender
-        const senderLower = knownSender.toLowerCase();
-        const fromSender = deposits.filter(d => d.sender.toLowerCase() === senderLower);
+        // NOTE: Solana base58 addresses are case-sensitive, do NOT use toLowerCase
+        const fromSender = deposits.filter(d => d.sender === knownSender);
         
         if (fromSender.length === 0) {
           console.warn('[getRecentDepositSender] No deposits found from known sender', { knownSender });

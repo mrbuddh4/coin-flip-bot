@@ -215,8 +215,8 @@ class EVMHandler {
           if (events.length > 0) {
             // Identify the sender to look for
             const latestEvent = events[events.length - 1];
-            let targetSender = knownSender || latestEvent.args.from;
-            targetSender = targetSender.toLowerCase();
+            // EVM addresses: always normalize to lowercase for consistent comparison
+            let targetSender = (knownSender || latestEvent.args.from).toLowerCase();
             
             console.log('[getRecentDepositSender] Processing events', { 
               eventsFound: events.length,
