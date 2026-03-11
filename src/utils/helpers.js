@@ -36,12 +36,21 @@ const validateConfig = () => {
   const required = [
     'TELEGRAM_BOT_TOKEN',
     'EVM_RPC_URL',
-    'EVM_PRIVATE_KEY',
     'SOLANA_RPC_URL',
-    'SOLANA_PRIVATE_KEY',
   ];
 
+  // Check for bot private keys - accept either naming convention
+  const hasEVMKey = process.env.EVM_BOT_PRIVATE_KEY || process.env.EVM_PRIVATE_KEY;
+  const hasSolanaKey = process.env.SOL_BOT_PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY;
+
   const missing = required.filter(key => !process.env[key]);
+  
+  if (!hasEVMKey) {
+    missing.push('EVM_BOT_PRIVATE_KEY (or EVM_PRIVATE_KEY)');
+  }
+  if (!hasSolanaKey) {
+    missing.push('SOL_BOT_PRIVATE_KEY (or SOLANA_PRIVATE_KEY)');
+  }
 
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);

@@ -16,12 +16,12 @@ module.exports = {
   },
   evm: {
     rpcUrl: process.env.EVM_RPC_URL,
-    privateKey: process.env.EVM_PRIVATE_KEY,
+    privateKey: process.env.EVM_BOT_PRIVATE_KEY || process.env.EVM_PRIVATE_KEY,
     devWallet: process.env.EVM_DEV_WALLET,
   },
   solana: {
     rpcUrl: process.env.SOLANA_RPC_URL,
-    privateKey: process.env.SOLANA_PRIVATE_KEY,
+    privateKey: process.env.SOL_BOT_PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY,
     devWallet: process.env.SOL_DEV_WALLET,
   },
   bot: {
