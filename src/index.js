@@ -906,6 +906,12 @@ async function initBot() {
           return;
         }
 
+        // Check if challenger deposit already confirmed (prevent duplicate button clicks)
+        if (flip.challengerDepositConfirmed) {
+          await ctx.answerCbQuery('✅ Your deposit was already confirmed');
+          return;
+        }
+
         logger.info('[deposit_confirmed] Verifying challenger deposit', { flipId, userId });
         await ctx.answerCbQuery('⏳ Verifying deposit...');
 
