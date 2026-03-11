@@ -102,7 +102,7 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                       flipCheck.tokenNetwork,
                       tokenAddress,
                       creatorDepositWallet,
-                      flipCheck.wagerAmount,
+                      flipCheck.creatorAccumulatedDeposit,
                       tokenDecimals
                     );
                     
@@ -110,7 +110,7 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                       flipId, 
                       creatorId: flipCheck.creatorId,
                       depositWallet: creatorDepositWallet,
-                      amount: flipCheck.wagerAmount,
+                      amount: flipCheck.creatorAccumulatedDeposit,
                       token: flipCheck.tokenSymbol,
                       txHash 
                     });
@@ -990,8 +990,8 @@ async function initBot() {
                 flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenger insufficient deposit - timeout' };
                 await flipCheck.save();
                 
-                // Refund the partial amount that was sent
-                if (verification.depositSender && verification.amount) {
+                // Refund the full accumulated amount that was sent
+                if (flipCheck.challengerDepositWalletAddress && flipCheck.challengerAccumulatedDeposit > 0) {
                   try {
                     const blockchainManager = getBlockchainManager();
                     const supportedTokens = config.supportedTokens;
@@ -1009,18 +1009,18 @@ async function initBot() {
                     await blockchainManager.sendWinnings(
                       flipCheck.tokenNetwork,
                       tokenAddress,
-                      verification.depositSender,
-                      verification.amount,
+                      flipCheck.challengerDepositWalletAddress,
+                      flipCheck.challengerAccumulatedDeposit,
                       tokenDecimals
                     );
                     
-                    logger.info('[insufficient_deposit_timeout_challenger] Refunded partial deposit', { 
+                    logger.info('[insufficient_deposit_timeout_challenger] Refunded accumulated deposit', { 
                       flipId,
-                      amount: verification.amount,
-                      recipient: verification.depositSender
+                      amount: flipCheck.challengerAccumulatedDeposit,
+                      recipient: flipCheck.challengerDepositWalletAddress
                     });
                   } catch (refundErr) {
-                    logger.error('[insufficient_deposit_timeout_challenger] Failed to refund partial deposit', { 
+                    logger.error('[insufficient_deposit_timeout_challenger] Failed to refund accumulated deposit', { 
                       flipId,
                       error: refundErr.message 
                     });
