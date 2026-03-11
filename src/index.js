@@ -1050,8 +1050,10 @@ async function initBot() {
         // If they sent more than the wager, refund the excess
         const receivedAmount = parseFloat(flip.challengerAccumulatedDeposit || flip.wagerAmount);
         const wagerAmount = parseFloat(flip.wagerAmount);
+        let overpaymentDetected = false;
         
         if (receivedAmount > wagerAmount) {
+          overpaymentDetected = true;
           const excessAmount = receivedAmount - wagerAmount;
           logger.info('[deposit_confirmed] Excess deposit detected, will refund', { flipId, excess: excessAmount, sender: verification.depositSender });
           
@@ -1066,7 +1068,8 @@ async function initBot() {
               `You sent: ${formattedReceived} ${flip.tokenSymbol}\n` +
               `Wager amount: ${formattedWager} ${flip.tokenSymbol}\n\n` +
               `<b>Refunding excess: ${formattedExcess} ${flip.tokenSymbol}</b>\n\n` +
-              `The refund will be sent to your wallet shortly.`,
+              `The refund will be sent to your wallet shortly.\n\n` +
+              `✅ Your deposit is confirmed. ${flip.creatorDepositConfirmed ? '🎉 Both players ready! Executing flip...' : '⏳ Waiting for the other player...'}`,
               { parse_mode: 'HTML' }
             );
           } catch (editErr) {
@@ -1112,15 +1115,17 @@ async function initBot() {
         flip.challengerDepositConfirmed = true;
         await flip.save();
 
-        // Edit message to show confirmation
-        try {
-          await ctx.editMessageText(
-            `✅ <b>Your Deposit Confirmed!</b>\n\n` +
-            (flip.creatorDepositConfirmed ? `🎉 Both players ready! Executing flip...` : `⏳ Waiting for the other player's deposit...`),
-            { parse_mode: 'HTML' }
-          );
-        } catch (err) {
-          logger.warn('Failed to edit confirmation message', err.message);
+        // Only show confirmation message if no overpayment (overpayment message already shown)
+        if (!overpaymentDetected) {
+          try {
+            await ctx.editMessageText(
+              `✅ <b>Your Deposit Confirmed!</b>\n\n` +
+              (flip.creatorDepositConfirmed ? `🎉 Both players ready! Executing flip...` : `⏳ Waiting for the other player's deposit...`),
+              { parse_mode: 'HTML' }
+            );
+          } catch (err) {
+            logger.warn('Failed to edit confirmation message', err.message);
+          }
         }
 
         // Delete session  
@@ -1382,8 +1387,10 @@ async function initBot() {
         // Check if creator sent more than the wager (overpayment)
         const creatorReceivedAmount = parseFloat(flip.creatorAccumulatedDeposit || flip.wagerAmount);
         const creatorWagerAmount = parseFloat(flip.wagerAmount);
+        let creatorOverpaymentDetected = false;
         
         if (creatorReceivedAmount > creatorWagerAmount) {
+          creatorOverpaymentDetected = true;
           const creatorExcessAmount = creatorReceivedAmount - creatorWagerAmount;
           logger.info('[creator_deposit_confirmed] Excess deposit detected, will refund', { flipId, excess: creatorExcessAmount, sender: verification.depositSender });
           
@@ -1398,7 +1405,8 @@ async function initBot() {
               `You sent: ${formattedReceived} ${flip.tokenSymbol}\n` +
               `Wager amount: ${formattedWager} ${flip.tokenSymbol}\n\n` +
               `<b>Refunding excess: ${formattedExcess} ${flip.tokenSymbol}</b>\n\n` +
-              `The refund will be sent to your wallet shortly.`,
+              `The refund will be sent to your wallet shortly.\n\n` +
+              `✅ Your deposit is confirmed. Challenge posted to the group...`,
               { parse_mode: 'HTML' }
             );
           } catch (editErr) {
@@ -1445,15 +1453,17 @@ async function initBot() {
         flip.status = 'WAITING_CHALLENGER';
         await flip.save();
 
-        // Edit processing message to show confirmation
-        try {
-          await ctx.editMessageText(
-            `✅ <b>Your Deposit Confirmed!</b>\n\n` +
-            `💤 Challenge posted to the group...`,
-            { parse_mode: 'HTML' }
-          );
-        } catch (err) {
-          logger.warn('Failed to edit creator confirmation message', err.message);
+        // Only show confirmation message if no overpayment (overpayment message already shown)
+        if (!creatorOverpaymentDetected) {
+          try {
+            await ctx.editMessageText(
+              `✅ <b>Your Deposit Confirmed!</b>\n\n` +
+              `💤 Challenge posted to the group...`,
+              { parse_mode: 'HTML' }
+            );
+          } catch (err) {
+            logger.warn('Failed to edit creator confirmation message', err.message);
+          }
         }
 
         // Check if challenge was already posted (prevent duplicate posts from webhook retries)
