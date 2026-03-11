@@ -872,7 +872,9 @@ async function initBot() {
         }
 
         logger.info('[deposit_confirmed] Verifying challenger deposit', { flipId, userId });
-        await ctx.answerCbQuery('⏳ Verifying deposit...');
+        
+        // Show notification without blocking - verification happens in parallel
+        ctx.answerCbQuery('⏳ Verifying deposit...').catch(() => {});
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
         const blockchainManager = getBlockchainManager();
@@ -1181,7 +1183,9 @@ async function initBot() {
         }
 
         logger.info('[creator_deposit_confirmed] Verifying creator deposit', { flipId, userId });
-        await ctx.answerCbQuery('⏳ Verifying deposit...');
+        
+        // Show notification without blocking - verification happens in parallel
+        ctx.answerCbQuery('⏳ Verifying deposit...').catch(() => {});
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
         const blockchainManager = getBlockchainManager();
