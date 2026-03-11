@@ -1060,7 +1060,8 @@ async function initBot() {
         }
 
         // Ensure accumulated deposit is set for overpayment check
-        if (!flip.challengerAccumulatedDeposit && verification.amount) {
+        // Check numeric value, not truthiness (DB stores as string)
+        if (parseFloat(flip.challengerAccumulatedDeposit || 0) < parseFloat(verification.amount || 0)) {
           logger.info('[deposit_confirmed] Setting accumulated deposit from verification', {
             flipId,
             before: flip.challengerAccumulatedDeposit,
@@ -1447,7 +1448,8 @@ async function initBot() {
         }
 
         // Ensure accumulated deposit is set for overpayment check
-        if (!flip.creatorAccumulatedDeposit && verification.amount) {
+        // Check numeric value, not truthiness (DB stores as string)
+        if (parseFloat(flip.creatorAccumulatedDeposit || 0) < parseFloat(verification.amount || 0)) {
           logger.info('[creator_deposit_confirmed] Setting accumulated deposit from verification', {
             flipId,
             before: flip.creatorAccumulatedDeposit,
