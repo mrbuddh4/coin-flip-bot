@@ -298,18 +298,27 @@ class EVMHandler {
               });
 
               if (data.status === '1' && data.result && data.result.length > 0) {
-                // Get the most recent transfer to identify the sender
-                const latestTx = data.result[0];
-                const sender = latestTx.from.toLowerCase();
+                // Determine which sender to look for
+                let targetSender;
+                if (knownSender) {
+                  // If known sender provided, use that (for multi-deposit accumulation)
+                  targetSender = knownSender.toLowerCase();
+                } else {
+                  // Otherwise, use the most recent transfer's sender (first detection)
+                  const latestTx = data.result[0];
+                  targetSender = latestTx.from.toLowerCase();
+                }
                 
-                // Sum ALL transfers from the same sender
+                // Sum ALL transfers from target sender
                 let totalAmount = 0;
+                let latestTxForReturn = null;
                 const transfers = [];
                 
                 for (const tx of data.result) {
-                  if (tx.from.toLowerCase() === sender) {
+                  if (tx.from.toLowerCase() === targetSender) {
                     const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                     totalAmount += txAmount;
+                    if (!latestTxForReturn) latestTxForReturn = tx; // Keep track of first match for return
                     transfers.push({
                       amount: txAmount,
                       hash: tx.hash,
@@ -318,18 +327,23 @@ class EVMHandler {
                   }
                 }
                 
+                if (transfers.length === 0) {
+                  console.warn('[getRecentDepositSender] No transfers from target sender via Paxscan', { targetSender, knownSender });
+                  return null;
+                }
+                
                 console.log('[getRecentDepositSender] Found transfers via Paxscan', {
-                  sender,
+                  sender: targetSender,
+                  knownSenderProvided: !!knownSender,
                   transferCount: transfers.length,
                   totalAmount,
-                  transfers,
                 });
 
                 return {
-                  sender: sender,
+                  sender: targetSender,
                   amount: totalAmount.toString(),
-                  transactionHash: latestTx.hash,
-                  blockNumber: latestTx.blockNumber,
+                  transactionHash: latestTxForReturn.hash,
+                  blockNumber: latestTxForReturn.blockNumber,
                   transferCount: transfers.length,
                 };
               } else {
