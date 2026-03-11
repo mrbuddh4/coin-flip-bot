@@ -951,7 +951,15 @@ async function initBot() {
                 `• Wait 30 seconds for blockchain confirmation\n` +
                 `• Then try confirming again\n\n` +
                 `You have <b>3 minutes</b> to send the remaining amount, otherwise your deposit will be refunded and the challenge cancelled.`,
-                { parse_mode: 'HTML', message_id: processingMsg.message_id }
+                {
+                  parse_mode: 'HTML',
+                  message_id: processingMsg.message_id,
+                  reply_markup: {
+                    inline_keyboard: [
+                      [{ text: '✅ I sent the deposit', callback_data: `deposit_confirmed_${flipId}` }]
+                    ]
+                  }
+                }
               );
             } catch (editErr) {
               logger.warn('[deposit_confirmed] Failed to edit processing message', editErr.message);
@@ -1317,7 +1325,15 @@ async function initBot() {
                 `• Wait 30 seconds for blockchain confirmation\n` +
                 `• Then try confirming again\n\n` +
                 `If not sent within 3 minutes, the challenge will auto-cancel.`,
-                { parse_mode: 'HTML', message_id: processingMsg.message_id }
+                {
+                  parse_mode: 'HTML',
+                  message_id: processingMsg.message_id,
+                  reply_markup: {
+                    inline_keyboard: [
+                      [{ text: '✅ I sent the deposit', callback_data: `creator_deposit_confirmed_${flipId}` }]
+                    ]
+                  }
+                }
               );
             } catch (editErr) {
               logger.warn('[creator_deposit_confirmed] Failed to edit processing message', editErr.message);
