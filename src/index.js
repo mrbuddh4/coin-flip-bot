@@ -979,6 +979,10 @@ async function initBot() {
             }
           }, 180000); // 3 minutes
           
+          // CRITICAL: Save the sender address and other flip state before returning
+          // This ensures that on the next verification, we can accumulate deposits from the same sender
+          await flip.save();
+          
           return;
         }
 
@@ -1220,6 +1224,12 @@ async function initBot() {
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId });
           
+          // Store the detected sender address for refunds (if not already set)
+          if (verification.depositSender && !flip.creatorDepositWalletAddress) {
+            flip.creatorDepositWalletAddress = verification.depositSender;
+            logger.info('[creator_deposit_confirmed] Detected creator deposit sender', { flipId, sender: verification.depositSender });
+          }
+          
           // Check if notification already sent for this verification attempt
           const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
           const timeSinceLastNotification = Date.now() - lastNotificationTime;
@@ -1251,10 +1261,22 @@ async function initBot() {
           } else {
             logger.info('[creator_deposit_confirmed] Skipping duplicate notification (sent within last 30s)', { flipId });
           }
+          
+          // CRITICAL: Save the sender address before returning if we just detected it
+          if (verification.depositSender && flip.creatorDepositWalletAddress === verification.depositSender) {
+            await flip.save();
+          }
+          
           return;
         }
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
+
+        // Store the detected sender address for refunds (if not already set)
+        if (verification.depositSender && !flip.creatorDepositWalletAddress) {
+          flip.creatorDepositWalletAddress = verification.depositSender;
+          logger.info('[creator_deposit_confirmed] Detected creator deposit sender', { flipId, sender: verification.depositSender });
+        }
 
         // Check if creator sent more than the wager (overpayment)
         const creatorReceivedAmount = parseFloat(verification.amount || flip.wagerAmount);
