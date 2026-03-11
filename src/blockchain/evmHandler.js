@@ -274,33 +274,57 @@ class EVMHandler {
                 first5FromAddress: data.result.slice(0, 5).map(tx => tx.from.toLowerCase()),
               });
               
-              // If knownSender filtering didn't work and this is a retry (knownSender was set),
-              // it might be because the transaction hasn't been indexed yet.
-              // Fall through to check for most recent ANY transfer as fallback
+              // If knownSender filtering didn't work (possibly address format mismatch),
+              // accumulate ALL incoming transfers to bot wallet and store first sender as the one
               if (knownSender) {
-                console.warn('[getRecentDepositSender] Known sender had no matches, checking most recent transfer as fallback');
+                console.warn('[getRecentDepositSender] Known sender filtering failed, accumulating all incoming transfers as fallback');
                 
-                // Get most recent transfer TO bot wallet from ANYONE (for first-time detection)
+                let fallbackTotal = 0;
+                let fallbackLatestTx = null;
+                let fallbackSender = null;
+                const fallbackTransfers = [];
+                
+                // Accumulate ALL transfers TO bot wallet
                 for (const tx of data.result) {
                   const txRecipientLower = tx.to?.toLowerCase() || '';
                   if (txRecipientLower === botWalletAddress.toLowerCase()) {
                     const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                     const txSenderLower = tx.from.toLowerCase();
                     
-                    console.log('[getRecentDepositSender] Using most recent transfer as fallback', {
+                    fallbackTotal += txAmount;
+                    if (!fallbackLatestTx) {
+                      fallbackLatestTx = tx;
+                      fallbackSender = txSenderLower;
+                    }
+                    fallbackTransfers.push({
+                      from: txSenderLower,
+                      amount: txAmount,
+                      hash: tx.hash,
+                    });
+                    
+                    console.log('[getRecentDepositSender] Fallback: Accumulated incoming transfer', {
                       from: txSenderLower,
                       amount: txAmount,
                       txHash: tx.hash,
+                      runningTotal: fallbackTotal,
                     });
-                    
-                    return {
-                      sender: txSenderLower,
-                      amount: txAmount.toString(),
-                      transactionHash: tx.hash,
-                      blockNumber: tx.blockNumber,
-                      transferCount: 1,
-                    };
                   }
+                }
+                
+                if (fallbackTransfers.length > 0) {
+                  console.log('[getRecentDepositSender] Fallback accumulation complete', {
+                    totalAmount: fallbackTotal,
+                    transferCount: fallbackTransfers.length,
+                    transfers: fallbackTransfers,
+                  });
+                  
+                  return {
+                    sender: fallbackSender,
+                    amount: fallbackTotal.toString(),
+                    transactionHash: fallbackLatestTx.hash,
+                    blockNumber: fallbackLatestTx.blockNumber,
+                    transferCount: fallbackTransfers.length,
+                  };
                 }
               }
               
