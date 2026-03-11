@@ -1582,12 +1582,14 @@ async function initBot() {
         // Set 3-minute timeout for challenge acceptance
         setChallengeTimeout(flip.id, flip.groupChatId, groupMessage.message_id, ctx.telegram);
 
-        // Confirm to creator
-        await ctx.editMessageText(
-          `✅ <b>Your Deposit Confirmed!</b>\n\n` +
-          `Your challenge has been posted to the group. Waiting for a challenger...`,
-          { parse_mode: 'HTML' }
-        );
+        // Only show final confirmation if no overpayment (overpayment message should remain visible)
+        if (!creatorOverpaymentDetected) {
+          await ctx.editMessageText(
+            `✅ <b>Your Deposit Confirmed!</b>\n\n` +
+            `Your challenge has been posted to the group. Waiting for a challenger...`,
+            { parse_mode: 'HTML' }
+          );
+        }
 
         logger.info('[creator_deposit_confirmed] Challenge posted to group', { flipId, groupMessageId: groupMessage.message_id });
       } catch (error) {
