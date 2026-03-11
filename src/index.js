@@ -692,54 +692,6 @@ async function initBot() {
           await ctx.answerCbQuery('✅ Challenge confirmed! Please set up your wallet.');
         }
 
-          // Update group message with image - delete old and send new
-          const fs = require('fs');
-          const path = require('path');
-          const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
-          
-          try {
-            const challengerText = `🪙 <b>Challenger Found!</b>\n\n` +
-              `⏳ Waiting for both players to send deposits...\n` +
-              `⏰ Timeout in 3 minutes`;
-            
-            // Delete old message
-            try {
-              await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
-            } catch (delErr) {
-              logger.warn('Failed to delete old message', { error: delErr.message });
-            }
-            
-            // Try to send photo
-            if (fs.existsSync(imagePath)) {
-              try {
-                await ctx.telegram.sendPhoto(
-                  flip.groupChatId,
-                  { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
-                  {
-                    caption: challengerText,
-                    parse_mode: 'HTML',
-                  }
-                );
-              } catch (photoErr) {
-                logger.warn('Failed to send challenger found photo, falling back to text', { flipId, error: photoErr.message });
-                await ctx.telegram.sendMessage(
-                  flip.groupChatId,
-                  challengerText,
-                  { parse_mode: 'HTML' }
-                );
-              }
-            } else {
-              logger.warn('Image not found at path', { imagePath });
-              await ctx.telegram.sendMessage(
-                flip.groupChatId,
-                challengerText,
-                { parse_mode: 'HTML' }
-              );
-            }
-          } catch (err) {
-            logger.warn('Failed to update group message on confirmation', err.message);
-          }
-
         logger.info('Flip challenge confirmed', { userId, flipId });
         
         // Delete the original message with the button
