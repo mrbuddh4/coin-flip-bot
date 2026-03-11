@@ -926,6 +926,21 @@ async function initBot() {
 
         if (!verification.received) {
           logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
+          
+          // Only send alert if transaction was not found at all
+          // If transaction IS found but insufficient, we'll handle that below
+          if (!verification.depositSender || verification.amount === 0 || verification.amount === '0') {
+            // No transaction detected at all
+            await ctx.reply(
+              `⏳ <b>Transaction Not Yet Detected</b>\n\n` +
+              `We're still looking for your deposit. This can take up to a few minutes on Paxeer.\n\n` +
+              `Please wait a moment and try clicking the button again, or send the deposit and try again.`,
+              { parse_mode: 'HTML' }
+            );
+            return;
+          }
+          
+          // Transaction WAS found but amount is insufficient
           const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
           const receivedAmount = parseFloat(verification.amount || '0');
           const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
@@ -1229,6 +1244,20 @@ async function initBot() {
 
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId });
+          
+          // Only send alert if transaction was not found at all
+          if (!verification.depositSender || verification.amount === 0 || verification.amount === '0') {
+            // No transaction detected at all
+            await ctx.reply(
+              `⏳ <b>Transaction Not Yet Detected</b>\n\n` +
+              `We're still looking for your deposit. This can take up to a few minutes on Paxeer.\n\n` +
+              `Please wait a moment and try clicking the button again, or send the deposit and try again.`,
+              { parse_mode: 'HTML' }
+            );
+            return;
+          }
+          
+          // Transaction WAS found but amount is insufficient
           const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
           const receivedAmount = parseFloat(verification.amount || '0');
           const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
@@ -2257,10 +2286,23 @@ async function handleChallengerDepositConfirm(ctx) {
   );
 
   if (!verification.received) {
+    // Check if transaction was not found at all vs. insufficient
+    if (!verification.depositSender || verification.amount === 0 || verification.amount === '0') {
+      // No transaction detected at all
+      await ctx.reply(
+        `⏳ <b>Transaction Not Yet Detected</b>\n\n` +
+        `We're still looking for your deposit. This can take up to a few minutes on Paxeer.\n\n` +
+        `Please wait a moment and try again.`
+      );
+      return;
+    }
+    
+    // Transaction found but insufficient amount
     await ctx.reply(
-      `❌ Deposit not detected.\n\n` +
+      `❌ <b>Insufficient Deposit</b>\n\n` +
       `Expected: ${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-      `Received: ${verification.amount}`
+      `Received: ${parseFloat(verification.amount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+      `Still needed: ${(parseFloat(flip.wagerAmount) - parseFloat(verification.amount)).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}`
     );
     return;
   }
