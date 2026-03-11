@@ -906,12 +906,6 @@ async function initBot() {
           return;
         }
 
-        // Check if challenger deposit already confirmed (prevent duplicate button clicks)
-        if (flip.challengerDepositConfirmed) {
-          await ctx.answerCbQuery('✅ Your deposit was already confirmed');
-          return;
-        }
-
         logger.info('[deposit_confirmed] Verifying challenger deposit', { flipId, userId });
         await ctx.answerCbQuery('⏳ Verifying deposit...');
 
@@ -925,37 +919,23 @@ async function initBot() {
         );
 
         if (!verification.received) {
-          logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId, verification });
-          
-          // Only send alert if transaction was not found at all
-          // If transaction IS found but insufficient, we'll handle that below
-          const amountNum = parseFloat(verification.amount) || 0;
-          const hasSender = verification.depositSender && verification.depositSender !== 'null' && verification.depositSender !== null;
-          
-          logger.info('[deposit_confirmed] Checking transaction state', { amountNum, hasSender, depositSender: verification.depositSender });
-          
-          if (!hasSender || amountNum === 0) {
-            // No transaction detected at all
-            await ctx.reply(
-              `⏳ <b>Transaction Not Yet Detected</b>\n\n` +
-              `We're still looking for your deposit. This can take up to a few minutes on Paxeer.\n\n` +
-              `Please wait a moment and try clicking the button again, or send the deposit and try again.`,
-              { parse_mode: 'HTML' }
-            );
-            return;
-          }
-          
-          // Transaction WAS found but amount is insufficient
+          logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
           const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
           const receivedAmount = parseFloat(verification.amount || '0');
           const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          const botWallet = verification.botWallet || 'Unknown';
           
           await ctx.reply(
             `❌ <b>Insufficient Deposit</b>\n\n` +
             `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
             `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
             `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
-            `You have <b>3 minutes</b> to send the remaining amount to the same address, otherwise your deposit will be refunded and the challenge cancelled.`,
+            `<b>Troubleshooting:</b>\n` +
+            `• Verify you sent to: <code>${botWallet}</code>\n` +
+            `• Check amount matches exactly (${formattedExpected})\n` +
+            `• Wait 30 seconds for blockchain confirmation\n` +
+            `• Then try confirming again\n\n` +
+            `You have <b>3 minutes</b> to send the remaining amount, otherwise your deposit will be refunded and the challenge cancelled.`,
             { parse_mode: 'HTML' }
           );
           
@@ -1248,35 +1228,23 @@ async function initBot() {
         );
 
         if (!verification.received) {
-          logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId, verification });
-          
-          // Only send alert if transaction was not found at all
-          const amountNum = parseFloat(verification.amount) || 0;
-          const hasSender = verification.depositSender && verification.depositSender !== 'null' && verification.depositSender !== null;
-          
-          logger.info('[creator_deposit_confirmed] Checking transaction state', { amountNum, hasSender, depositSender: verification.depositSender });
-          
-          if (!hasSender || amountNum === 0) {
-            // No transaction detected at all
-            await ctx.reply(
-              `⏳ <b>Transaction Not Yet Detected</b>\n\n` +
-              `We're still looking for your deposit. This can take up to a few minutes on Paxeer.\n\n` +
-              `Please wait a moment and try clicking the button again, or send the deposit and try again.`,
-              { parse_mode: 'HTML' }
-            );
-            return;
-          }
-          
-          // Transaction WAS found but amount is insufficient
+          logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId });
           const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-          const receivedAmount = amountNum;
+          const receivedAmount = parseFloat(verification.amount || '0');
           const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          const botWallet = verification.botWallet || 'Unknown';
           
           await ctx.reply(
             `⏳ <b>Insufficient Deposit</b>\n\n` +
             `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
             `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-            `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>`,
+            `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+            `<b>Troubleshooting:</b>\n` +
+            `• Verify you sent to: <code>${botWallet}</code>\n` +
+            `• Check amount matches exactly (${formattedExpected})\n` +
+            `• Wait 30 seconds for blockchain confirmation\n` +
+            `• Then try confirming again\n\n` +
+            `If not sent within 3 minutes, the challenge will auto-cancel.`,
             { parse_mode: 'HTML' }
           );
           return;
@@ -2266,81 +2234,65 @@ const middleware = {
  * Handle challenger deposit confirmation
  */
 async function handleChallengerDepositConfirm(ctx) {
-  try {
-    const { models } = getDB();
-    const userId = ctx.from.id;
+  const { models } = getDB();
+  const userId = ctx.from.id;
 
-    const session = await models.BotSession.findOne({
-      where: { userId, sessionType: 'CONFIRMING_DEPOSIT' },
-      order: [['createdAt', 'DESC']],
-    });
+  const session = await models.BotSession.findOne({
+    where: { userId, sessionType: 'CONFIRMING_DEPOSIT' },
+    order: [['createdAt', 'DESC']],
+  });
 
-    if (!session || !session.data.flipId) {
-      await ctx.reply('❌ No active flip.');
-      return;
-    }
-
-    const flip = await models.CoinFlip.findByPk(session.data.flipId);
-
-    if (!flip) {
-      await ctx.reply('❌ Flip not found.');
-      return;
-    }
-
-    // Verify deposit on bot's wallet
-    const blockchainManager = getBlockchainManager();
-    const verification = await blockchainManager.verifyDepositWithRetry(
-      flip.tokenNetwork,
-      flip.tokenAddress,
-      flip.wagerAmount,
-      flip.tokenDecimals
-    );
-
-    if (!verification.received) {
-      // Check if transaction was not found at all vs. insufficient
-      if (!verification.depositSender || verification.amount === 0 || verification.amount === '0') {
-        // No transaction detected at all
-        await ctx.reply(
-          `⏳ <b>Transaction Not Yet Detected</b>\n\n` +
-          `We're still looking for your deposit. This can take up to a few minutes on Paxeer.\n\n` +
-          `Please wait a moment and try again.`
-        );
-        return;
-      }
-      
-      // Transaction found but insufficient amount
-      await ctx.reply(
-        `❌ <b>Insufficient Deposit</b>\n\n` +
-        `Expected: ${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-        `Received: ${parseFloat(verification.amount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-        `Still needed: ${(parseFloat(flip.wagerAmount) - parseFloat(verification.amount)).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}`
-      );
-      return;
-    }
-
-    // Mark challenger deposit confirmed
-    flip.challengerDepositConfirmed = true;
-    await flip.save();
-
-    // Check if both deposits are confirmed before executing
-    if (flip.creatorDepositConfirmed && flip.challengerDepositConfirmed) {
-      flip.status = 'COMPLETED';
-      await flip.save();
-
-      await ctx.reply(`✅ Deposit confirmed! Executing flip...`);
-
-      // Clear the challenge timeout since flip is now executing
-      clearChallengeTimeout(flip.id);
-
-      // Execute the flip
-      await ExecutionHandler.executeFlip(flip.id, ctx, null);
-    } else {
-      await ctx.reply(`✅ Your deposit confirmed! Waiting for the other player's deposit...`);
-    }
-  } catch (error) {
-    logger.error('[handleChallengerDepositConfirm] Error:', { error: error.message, stack: error.stack });
-    await ctx.reply('❌ An error occurred. Please try again.');
+  if (!session || !session.data.flipId) {
+    await ctx.reply('❌ No active flip.');
+    return;
   }
+
+  const flip = await models.CoinFlip.findByPk(session.data.flipId);
+
+  if (!flip) {
+    await ctx.reply('❌ Flip not found.');
+    return;
+  }
+
+  // Verify deposit on bot's wallet
+  const blockchainManager = getBlockchainManager();
+  const verification = await blockchainManager.verifyDeposit(
+    flip.tokenNetwork,
+    flip.tokenAddress,
+    flip.wagerAmount,
+    flip.tokenDecimals
+  );
+
+  if (!verification.received) {
+    const expectedAmount = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+    const botWallet = verification.botWallet || 'Unknown';
+    await ctx.reply(
+      `❌ <b>Deposit Not Detected</b>\n\n` +
+      `Expected: ${expectedAmount} ${flip.tokenSymbol}\n` +
+      `Received: ${(verification.amount || 0).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n\n` +
+      `<b>Troubleshooting:</b>\n` +
+      `• Confirm you sent to: <code>${botWallet}</code>\n` +
+      `• Check the amount is exactly ${expectedAmount}\n` +
+      `• Blockchain transactions take 30-60 seconds to confirm\n` +
+      `• Try confirming again in 30 seconds\n\n` +
+      `If problem persists, contact support.`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  // Mark challenger deposit confirmed
+  flip.challengerDepositConfirmed = true;
+  flip.status = 'COMPLETED';
+  await flip.save();
+
+  await ctx.reply(`✅ Deposit confirmed! Executing flip...`);
+
+  // Clear the challenge timeout since flip is now executing
+  clearChallengeTimeout(flip.id);
+
+  // Execute the flip
+  await ExecutionHandler.executeFlip(flip.id, ctx, null);
 }
 
 /**
