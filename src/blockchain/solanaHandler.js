@@ -321,19 +321,13 @@ class SolanaHandler {
                                     
                                     const formattedAmount = Number(amount) / Math.pow(10, decimals);
                                     
-                                    // Track sender from first deposit found
-                                    if (!firstSenderFound) {
-                                      firstSenderFound = authorityStr;
-                                    }
-                                    
-                                    // Only accumulate if from same sender
-                                    if (authorityStr === firstSenderFound) {
-                                      depositsFromSender.push({
-                                        amount: formattedAmount,
-                                        signature: sig.signature,
-                                        slot: sig.slot,
-                                      });
-                                    }
+                                    // Return only the most recent deposit (don't accumulate old ones)
+                                    return {
+                                      sender: authorityStr,
+                                      amount: formattedAmount.toString(),
+                                      signature: sig.signature,
+                                      slot: sig.slot,
+                                    };
                                   }
                                 }
                               }
@@ -366,20 +360,14 @@ class SolanaHandler {
                   if (meta && meta.preBalances && meta.postBalances) {
                     const balanceChange = meta.postBalances[botPublicKey.toString()] - meta.preBalances[botPublicKey.toString()];
                     if (balanceChange > 0) {
-                      // Track sender from first deposit found
-                      if (!firstSenderFound) {
-                        firstSenderFound = senderStr;
-                      }
-                      
-                      // Only accumulate if from same sender
-                      if (senderStr === firstSenderFound) {
-                        const transactionAmount = balanceChange / LAMPORTS_PER_SOL;
-                        depositsFromSender.push({
-                          amount: transactionAmount,
-                          signature: sig.signature,
-                          slot: sig.slot,
-                        });
-                      }
+                      // Return only the most recent deposit (don't accumulate old ones)
+                      const transactionAmount = balanceChange / LAMPORTS_PER_SOL;
+                      return {
+                        sender: senderStr,
+                        amount: transactionAmount.toString(),
+                        signature: sig.signature,
+                        slot: sig.slot,
+                      };
                     }
                   }
                 }
@@ -390,26 +378,6 @@ class SolanaHandler {
           console.warn('Error processing Solana transaction:', err.message);
           continue;
         }
-      }
-
-      // If we found deposits from the same sender, sum them all and return
-      if (depositsFromSender.length > 0 && firstSenderFound) {
-        const totalAmount = depositsFromSender.reduce((sum, dep) => sum + dep.amount, 0);
-        
-        console.log('[getRecentDepositSender] Found multiple deposits from sender', {
-          sender: firstSenderFound,
-          depositCount: depositsFromSender.length,
-          totalAmount,
-          deposits: depositsFromSender,
-        });
-        
-        return {
-          sender: firstSenderFound,
-          amount: totalAmount.toString(),
-          signature: depositsFromSender[0].signature,
-          slot: depositsFromSender[0].slot,
-          transferCount: depositsFromSender.length,
-        };
       }
 
       return null;
