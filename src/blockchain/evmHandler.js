@@ -219,28 +219,8 @@ class EVMHandler {
             if (knownSender) {
               targetSender = knownSender.toLowerCase();
             } else {
-              // First detection - find the most recent INCOMING transfer (to bot wallet)
-              let mostRecentIncomingTx = null;
-              for (const tx of data.result) {
-                const txRecipientLower = tx.to?.toLowerCase() || '';
-                if (txRecipientLower === botWalletAddress.toLowerCase()) {
-                  mostRecentIncomingTx = tx;
-                  break; // First result is most recent
-                }
-              }
-              
-              if (!mostRecentIncomingTx) {
-                // No incoming transfers found at all
-                console.warn('[getRecentDepositSender] No incoming transfers to bot wallet found in Paxscan results');
-                return null;
-              }
-              
-              targetSender = mostRecentIncomingTx.from.toLowerCase();
-              console.log('[getRecentDepositSender] First-time detection - using most recent incoming transfer sender', {
-                targetSender,
-                amount: mostRecentIncomingTx.value,
-                txHash: mostRecentIncomingTx.hash,
-              });
+              const latestTx = data.result[0];
+              targetSender = latestTx.from.toLowerCase();
             }
             
             console.log('[getRecentDepositSender] Paxscan filtering results', {
@@ -293,35 +273,30 @@ class EVMHandler {
                 transactionsChecked: data.result.length,
               });
               
-              // If this is a FIRST-TIME detection (no knownSender), find the most recent incoming transfer
-              if (!knownSender) {
-                console.warn('[getRecentDepositSender] First detection - looking for most recent incoming transfer from ANY sender');
-                
-                // Find most recent transfer TO bot wallet
-                for (const tx of data.result) {
-                  const txRecipientLower = tx.to?.toLowerCase() || '';
-                  if (txRecipientLower === botWalletAddress.toLowerCase()) {
-                    const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
-                    const txSenderLower = tx.from.toLowerCase();
-                    
-                    console.log('[getRecentDepositSender] First-time detection found most recent transfer', {
-                      from: txSenderLower,
-                      amount: txAmount,
-                      txHash: tx.hash,
-                    });
-                    
-                    return {
-                      sender: txSenderLower,
-                      amount: txAmount.toString(),
-                      transactionHash: tx.hash,
-                      blockNumber: tx.blockNumber,
-                      transferCount: 1,
-                    };
-                  }
+              // Fallback: return the most recent incoming transfer to bot wallet from ANYONE
+              // This works for first detection, and on retry just returns most recent (unchanged)
+              for (const tx of data.result) {
+                const txRecipientLower = tx.to?.toLowerCase() || '';
+                if (txRecipientLower === botWalletAddress.toLowerCase()) {
+                  const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
+                  const txSenderLower = tx.from.toLowerCase();
+                  
+                  console.log('[getRecentDepositSender] Fallback - returning most recent incoming transfer', {
+                    from: txSenderLower,
+                    amount: txAmount,
+                    txHash: tx.hash,
+                  });
+                  
+                  return {
+                    sender: txSenderLower,
+                    amount: txAmount.toString(),
+                    transactionHash: tx.hash,
+                    blockNumber: tx.blockNumber,
+                    transferCount: 1,
+                  };
                 }
               }
               
-              // If knownSender was provided but no matches found, return null (no new deposits from that sender)
               return null;
             }
             
