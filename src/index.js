@@ -1082,6 +1082,14 @@ async function initBot() {
           }
           
           try {
+            logger.info('[deposit_confirmed] Checking refund conditions', {
+              flipId,
+              hasWallet: !!flip.challengerDepositWalletAddress,
+              walletAddress: flip.challengerDepositWalletAddress,
+              accumulatedDeposit: flip.challengerAccumulatedDeposit,
+              isAccumulatedPositive: flip.challengerAccumulatedDeposit > 0,
+            });
+            
             if (flip.challengerDepositWalletAddress && flip.challengerAccumulatedDeposit > 0) {
               const blockchainManager = getBlockchainManager();
               const supportedTokens = config.supportedTokens;
@@ -1097,6 +1105,15 @@ async function initBot() {
               }
 
               const excessStr = excessAmount.toFixed(tokenDecimals);
+              logger.info('[deposit_confirmed] Sending refund', {
+                flipId,
+                network: flip.tokenNetwork,
+                tokenAddress,
+                recipient: flip.challengerDepositWalletAddress,
+                amount: excessStr,
+                decimals: tokenDecimals,
+              });
+              
               await blockchainManager.sendWinnings(
                 flip.tokenNetwork,
                 tokenAddress,
@@ -1424,6 +1441,14 @@ async function initBot() {
           }
           
           try {
+            logger.info('[creator_deposit_confirmed] Checking refund conditions', {
+              flipId,
+              hasWallet: !!flip.creatorDepositWalletAddress,
+              walletAddress: flip.creatorDepositWalletAddress,
+              accumulatedDeposit: flip.creatorAccumulatedDeposit,
+              isAccumulatedPositive: flip.creatorAccumulatedDeposit > 0,
+            });
+            
             if (flip.creatorDepositWalletAddress && flip.creatorAccumulatedDeposit > 0) {
               const blockchainManager = getBlockchainManager();
               const supportedTokens = config.supportedTokens;
@@ -1439,6 +1464,15 @@ async function initBot() {
               }
 
               const excessStr = creatorExcessAmount.toFixed(tokenDecimals);
+              logger.info('[creator_deposit_confirmed] Sending refund', {
+                flipId,
+                network: flip.tokenNetwork,
+                tokenAddress,
+                recipient: flip.creatorDepositWalletAddress,
+                amount: excessStr,
+                decimals: tokenDecimals,
+              });
+              
               await blockchainManager.sendWinnings(
                 flip.tokenNetwork,
                 tokenAddress,
