@@ -895,7 +895,8 @@ async function initBot() {
           flip.tokenDecimals,
           4, // maxRetries
           2000, // retryDelayMs
-          knownSender // pass known sender to accumulate multi-deposits
+          knownSender, // pass known sender to accumulate multi-deposits
+          flip.createdAt // pass flip creation time to filter old deposits
         );
 
         if (!verification.received) {
@@ -1249,7 +1250,8 @@ async function initBot() {
           flip.tokenDecimals,
           4, // maxRetries
           2000, // retryDelayMs
-          knownSender // pass known sender to accumulate multi-deposits
+          knownSender, // pass known sender to accumulate multi-deposits
+          flip.createdAt // pass flip creation time to filter old deposits
         );
 
         if (!verification.received) {

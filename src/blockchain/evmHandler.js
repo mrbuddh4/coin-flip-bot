@@ -167,8 +167,9 @@ class EVMHandler {
   /**
    * Find the sender of a recent incoming transaction to the bot wallet
    * Uses Paxscan API only - RPC has too many restrictions on Paxeer
+   * @param {number} flipCreatedAt - Unix timestamp when flip was created, to filter out old deposits
    */
-  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null, knownSender = null) {
+  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null, knownSender = null, flipCreatedAt = null) {
     try {
       const currentBlock = await this.provider.getBlockNumber();
       const lookbackBlocks = 10000; // Paxscan doesn't have RPC restrictions
@@ -182,6 +183,7 @@ class EVMHandler {
         fromBlock,
         toBlock: currentBlock,
         blockRange: currentBlock - fromBlock,
+        flipCreatedAt,
         method: 'Paxscan API only (RPC skipped)',
       });
 
@@ -240,14 +242,19 @@ class EVMHandler {
             let totalAmount = 0;
             let latestTxForReturn = null;
             const transfers = [];
+            const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
             
             for (const tx of data.result) {
               const txSenderLower = tx.from.toLowerCase();
               const txRecipientLower = tx.to?.toLowerCase() || '';
+              const txTimestamp = parseInt(tx.timeStamp, 10);
               
               // Only process if this is an INCOMING transfer to the bot wallet
-              // (recipient is the bot wallet AND sender matches our target)
-              if (txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender) {
+              // AND sender matches our target AND tx happened after flip was created
+              const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
+              const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+              
+              if (isValidSender && isAfterFlipCreation) {
                 const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                 totalAmount += txAmount;
                 if (!latestTxForReturn) latestTxForReturn = tx;
@@ -255,6 +262,7 @@ class EVMHandler {
                   amount: txAmount,
                   hash: tx.hash,
                   blockNumber: tx.blockNumber,
+                  timestamp: txTimestamp,
                 });
                 
                 console.log('[getRecentDepositSender] Matched incoming transaction', {
@@ -262,6 +270,8 @@ class EVMHandler {
                   to: txRecipientLower,
                   amount: txAmount,
                   txHash: tx.hash,
+                  timestamp: txTimestamp,
+                  isAfterFlipCreation,
                 });
               }
             }
@@ -273,16 +283,20 @@ class EVMHandler {
                 transactionsChecked: data.result.length,
               });
               
-              // Fallback: accumulate ALL recent incoming transfers to bot wallet
+              // Fallback: accumulate ALL recent incoming transfers to bot wallet that are after flip creation
               // This handles multi-deposit scenarios where user sends from same wallet in succession
               let fallbackTotal = 0;
               let fallbackLatestTx = null;
               let fallbackSender = null;
               const fallbackTransfers = [];
+              const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
               
               for (const tx of data.result) {
                 const txRecipientLower = tx.to?.toLowerCase() || '';
-                if (txRecipientLower === botWalletAddress.toLowerCase()) {
+                const txTimestamp = parseInt(tx.timeStamp, 10);
+                const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                
+                if (txRecipientLower === botWalletAddress.toLowerCase() && isAfterFlipCreation) {
                   const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                   const txSenderLower = tx.from.toLowerCase();
                   
@@ -299,6 +313,7 @@ class EVMHandler {
                       from: txSenderLower,
                       amount: txAmount,
                       hash: tx.hash,
+                      timestamp: txTimestamp,
                     });
                   }
                 }
