@@ -380,6 +380,7 @@ class SolanaHandler {
                           slot: sig.slot,
                         });
                       }
+                    }
                   }
                 }
               }

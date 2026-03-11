@@ -201,21 +201,35 @@ async function initBot() {
     // Validate configuration
     validateConfig();
 
-    // Initialize database
-    console.log('Initializing database...');
-    await initDB();
-
-    // Initialize blockchain
+    // Initialize blockchain handlers first (needed for wallet validation)
     console.log('Initializing blockchain...');
     try {
       initBlockchainManager();
-      logger.info('[BOT_INIT] Blockchain initialized, checking wallet configuration', {
-        evmDevWallet: process.env.EVM_DEV_WALLET ? `${process.env.EVM_DEV_WALLET.substring(0, 10)}...` : 'NOT_SET',
-        solanaDevWallet: process.env.SOL_DEV_WALLET ? `${process.env.SOL_DEV_WALLET.substring(0, 10)}...` : 'NOT_SET',
-      });
     } catch (blockchainErr) {
       console.error('[BLOCKCHAIN_INIT_ERROR]', blockchainErr.message);
       throw blockchainErr;
+    }
+
+    // Validate blockchain wallets are properly derived
+    console.log('Validating blockchain wallets...');
+    const blockchainManager = getBlockchainManager();
+    const evmWallet = blockchainManager.getBotWalletAddress('EVM');
+    const solanaWallet = blockchainManager.getBotWalletAddress('Solana');
+    
+    if (!evmWallet || evmWallet === '0x' || evmWallet === 'undefined') {
+      throw new Error('Failed to derive EVM bot wallet - check EVM_PRIVATE_KEY environment variable');
+    }
+    if (!solanaWallet || solanaWallet === 'undefined') {
+      throw new Error('Failed to derive Solana bot wallet - check SOLANA_PRIVATE_KEY environment variable');
+    }
+
+    console.log('✅ Bot wallets validated');
+    console.log(`   EVM wallet: ${evmWallet}`);
+    console.log(`   Solana wallet: ${solanaWallet}`);
+
+    // Initialize database
+    console.log('Initializing database...');
+    await initDB();
     }
 
     // Create bot instance
