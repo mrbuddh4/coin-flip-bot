@@ -216,21 +216,22 @@ class EVMHandler {
           };
         }
 
-        // RPC query didn't find it - try Paxscan API as fallback
-        console.log('[getRecentDepositSender] RPC query returned no events, checking Paxscan API...');
-        try {
-          const paxscanResult = await this.getRecentDepositFromPaxscan(botWalletAddress, tokenAddress, decimals);
-          if (paxscanResult) {
-            console.log('[getRecentDepositSender] Found transfer via Paxscan', { 
-              from: paxscanResult.sender,
-              amount: paxscanResult.amount,
-              txHash: paxscanResult.transactionHash,
-            });
-            return paxscanResult;
-          }
-        } catch (err) {
-          console.warn('[getRecentDepositSender] Paxscan API lookup failed:', err.message);
-        }
+        // RPC didn't find it yet - Paxscan API fallback available but disabled by default
+        // Uncomment below if RPC retries are not sufficient
+        // console.log('[getRecentDepositSender] RPC query returned no events, checking Paxscan API...');
+        // try {
+        //   const paxscanResult = await this.getRecentDepositFromPaxscan(botWalletAddress, tokenAddress, decimals);
+        //   if (paxscanResult) {
+        //     console.log('[getRecentDepositSender] Found transfer via Paxscan', { 
+        //       from: paxscanResult.sender,
+        //       amount: paxscanResult.amount,
+        //       txHash: paxscanResult.transactionHash,
+        //     });
+        //     return paxscanResult;
+        //   }
+        // } catch (err) {
+        //   console.warn('[getRecentDepositSender] Paxscan API lookup failed:', err.message);
+        // }
       }
 
       return null;
