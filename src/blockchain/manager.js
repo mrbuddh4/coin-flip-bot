@@ -60,6 +60,14 @@ class BlockchainManager {
     const botWallet = this.getBotWalletAddress(network);
 
     try {
+      console.log('[verifyDeposit] Starting verification', {
+        network,
+        tokenAddress,
+        expectedAmount,
+        tokenDecimals,
+        botWallet,
+      });
+
       // Primary verification: Check blockchain for actual deposit transaction
       let depositInfo = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress);
 

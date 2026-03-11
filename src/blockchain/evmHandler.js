@@ -1,6 +1,5 @@
 const { ethers } = require('ethers');
 const config = require('../config');
-const axios = require('axios');
 
 class EVMHandler {
   constructor() {
@@ -174,6 +173,15 @@ class EVMHandler {
       const lookbackBlocks = 5000; // Check recent blocks
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
 
+      console.log('[getRecentDepositSender] Searching for deposits', {
+        botWallet: botWalletAddress,
+        token: tokenAddress,
+        expectedAmount,
+        fromBlock,
+        toBlock: currentBlock,
+        blockRange: currentBlock - fromBlock,
+      });
+
       if (tokenAddress && tokenAddress !== 'NATIVE') {
         // For ERC20, look for Transfer events
         const erc20ABI = [
@@ -186,109 +194,62 @@ class EVMHandler {
         let decimals = 18;
         try {
           decimals = await contract.decimals();
+          console.log('[getRecentDepositSender] Got token decimals', { tokenAddress, decimals });
         } catch (err) {
-          console.warn('[getRecentDepositSender] Could not get token decimals, assuming 18');
+          console.warn('[getRecentDepositSender] Could not get token decimals, assuming 18', { error: err.message });
         }
         
-        const events = await contract.queryFilter(
-          contract.filters.Transfer(null, botWalletAddress),
-          fromBlock,
-          currentBlock
-        );
+        try {
+          const events = await contract.queryFilter(
+            contract.filters.Transfer(null, botWalletAddress),
+            fromBlock,
+            currentBlock
+          );
 
-        if (events.length > 0) {
-          // Get the most recent transfer (last in array) - don't filter by amount
-          const latestEvent = events[events.length - 1];
-          const amount = ethers.formatUnits(latestEvent.args.value, decimals);
-          
-          console.log('[getRecentDepositSender] Found latest transfer via RPC', { 
-            from: latestEvent.args.from,
-            amount,
-            txHash: latestEvent.transactionHash,
-            blockNumber: latestEvent.blockNumber,
+          console.log('[getRecentDepositSender] Query results', { 
+            eventsFound: events.length,
+            queryFilter: `Transfer(null, ${botWalletAddress})`,
           });
-          
-          return {
-            sender: latestEvent.args.from,
-            amount: amount,
-            transactionHash: latestEvent.transactionHash,
-            blockNumber: latestEvent.blockNumber,
-          };
-        }
 
-        // RPC didn't find it yet - Paxscan API fallback available but disabled by default
-        // Uncomment below if RPC retries are not sufficient
-        // console.log('[getRecentDepositSender] RPC query returned no events, checking Paxscan API...');
-        // try {
-        //   const paxscanResult = await this.getRecentDepositFromPaxscan(botWalletAddress, tokenAddress, decimals);
-        //   if (paxscanResult) {
-        //     console.log('[getRecentDepositSender] Found transfer via Paxscan', { 
-        //       from: paxscanResult.sender,
-        //       amount: paxscanResult.amount,
-        //       txHash: paxscanResult.transactionHash,
-        //     });
-        //     return paxscanResult;
-        //   }
-        // } catch (err) {
-        //   console.warn('[getRecentDepositSender] Paxscan API lookup failed:', err.message);
-        // }
+          if (events.length > 0) {
+            // Get the most recent transfer (last in array) - don't filter by amount
+            const latestEvent = events[events.length - 1];
+            const amount = ethers.formatUnits(latestEvent.args.value, decimals);
+            
+            console.log('[getRecentDepositSender] Found latest transfer', { 
+              from: latestEvent.args.from,
+              to: latestEvent.args.to,
+              amount,
+              txHash: latestEvent.transactionHash,
+              blockNumber: latestEvent.blockNumber,
+            });
+            
+            return {
+              sender: latestEvent.args.from,
+              amount: amount,
+              transactionHash: latestEvent.transactionHash,
+              blockNumber: latestEvent.blockNumber,
+            };
+          } else {
+            console.warn('[getRecentDepositSender] No Transfer events found', {
+              botWallet: botWalletAddress,
+              tokenAddress,
+              fromBlock,
+              toBlock: currentBlock,
+            });
+          }
+        } catch (queryErr) {
+          console.error('[getRecentDepositSender] Error querying events', { 
+            error: queryErr.message,
+            tokenAddress,
+            botWalletAddress,
+          });
+        }
       }
 
       return null;
     } catch (error) {
       console.error('[getRecentDepositSender] Error:', error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Query Paxscan API for recent token transfers to bot wallet
-   */
-  async getRecentDepositFromPaxscan(botWalletAddress, tokenAddress, decimals = 18) {
-    try {
-      // Use Paxscan API to get recent token transfers
-      // Paxscan free API endpoint (no API key required for basic queries)
-      const paxscanApiUrl = 'https://paxscan.io/api';
-      
-      const response = await axios.get(paxscanApiUrl, {
-        params: {
-          module: 'account',
-          action: 'tokentx',
-          address: botWalletAddress,
-          contractaddress: tokenAddress,
-          sort: 'desc',
-          page: 1,
-          offset: 100,
-        },
-        timeout: 10000,
-      });
-      
-      const data = response.data;
-      
-      if (data.status === '1' && data.result && Array.isArray(data.result) && data.result.length > 0) {
-        // Get most recent transfer
-        const latestTx = data.result[0];
-        const amount = ethers.formatUnits(latestTx.value, decimals);
-        
-        console.log('[getRecentDepositFromPaxscan] Found transfer via Paxscan API', {
-          from: latestTx.from,
-          to: latestTx.to,
-          amount: amount,
-          txHash: latestTx.hash,
-        });
-        
-        return {
-          sender: latestTx.from,
-          amount: amount,
-          transactionHash: latestTx.hash,
-          blockNumber: parseInt(latestTx.blockNumber),
-        };
-      }
-      
-      console.log('[getRecentDepositFromPaxscan] No transfers found in Paxscan response', { status: data.status });
-      return null;
-    } catch (error) {
-      console.warn('[getRecentDepositFromPaxscan] Error querying Paxscan API:', error.message);
       return null;
     }
   }
