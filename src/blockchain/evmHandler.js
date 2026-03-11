@@ -1,5 +1,6 @@
 const { ethers } = require('ethers');
 const config = require('../config');
+const axios = require('axios');
 
 class EVMHandler {
   constructor() {
@@ -200,7 +201,7 @@ class EVMHandler {
           const latestEvent = events[events.length - 1];
           const amount = ethers.formatUnits(latestEvent.args.value, decimals);
           
-          console.log('[getRecentDepositSender] Found latest transfer', { 
+          console.log('[getRecentDepositSender] Found latest transfer via RPC', { 
             from: latestEvent.args.from,
             amount,
             txHash: latestEvent.transactionHash,
@@ -214,11 +215,79 @@ class EVMHandler {
             blockNumber: latestEvent.blockNumber,
           };
         }
+
+        // RPC query didn't find it - try Paxscan API as fallback
+        console.log('[getRecentDepositSender] RPC query returned no events, checking Paxscan API...');
+        try {
+          const paxscanResult = await this.getRecentDepositFromPaxscan(botWalletAddress, tokenAddress, decimals);
+          if (paxscanResult) {
+            console.log('[getRecentDepositSender] Found transfer via Paxscan', { 
+              from: paxscanResult.sender,
+              amount: paxscanResult.amount,
+              txHash: paxscanResult.transactionHash,
+            });
+            return paxscanResult;
+          }
+        } catch (err) {
+          console.warn('[getRecentDepositSender] Paxscan API lookup failed:', err.message);
+        }
       }
 
       return null;
     } catch (error) {
       console.error('[getRecentDepositSender] Error:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Query Paxscan API for recent token transfers to bot wallet
+   */
+  async getRecentDepositFromPaxscan(botWalletAddress, tokenAddress, decimals = 18) {
+    try {
+      // Use Paxscan API to get recent token transfers
+      // Paxscan free API endpoint (no API key required for basic queries)
+      const paxscanApiUrl = 'https://paxscan.io/api';
+      
+      const response = await axios.get(paxscanApiUrl, {
+        params: {
+          module: 'account',
+          action: 'tokentx',
+          address: botWalletAddress,
+          contractaddress: tokenAddress,
+          sort: 'desc',
+          page: 1,
+          offset: 100,
+        },
+        timeout: 10000,
+      });
+      
+      const data = response.data;
+      
+      if (data.status === '1' && data.result && Array.isArray(data.result) && data.result.length > 0) {
+        // Get most recent transfer
+        const latestTx = data.result[0];
+        const amount = ethers.formatUnits(latestTx.value, decimals);
+        
+        console.log('[getRecentDepositFromPaxscan] Found transfer via Paxscan API', {
+          from: latestTx.from,
+          to: latestTx.to,
+          amount: amount,
+          txHash: latestTx.hash,
+        });
+        
+        return {
+          sender: latestTx.from,
+          amount: amount,
+          transactionHash: latestTx.hash,
+          blockNumber: parseInt(latestTx.blockNumber),
+        };
+      }
+      
+      console.log('[getRecentDepositFromPaxscan] No transfers found in Paxscan response', { status: data.status });
+      return null;
+    } catch (error) {
+      console.warn('[getRecentDepositFromPaxscan] Error querying Paxscan API:', error.message);
       return null;
     }
   }
