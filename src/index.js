@@ -1936,6 +1936,14 @@ const handlers = {
         
         try {
           const session = await models.BotSession.findByPk(sessionId);
+          logger.info('[flip_deeplink] Retrieved session from DB', {
+            sessionId,
+            found: !!session,
+            sessionJSON: JSON.stringify(session?.toJSON ? session.toJSON() : session),
+            dataField: session?.data,
+            typeOfData: typeof session?.data
+          });
+          
           if (session && parseInt(session.userId) === userId) {
             // Delete the original "Start a Coin Flip!" message from the group
             logger.info('[flip_deeplink] Attempting to delete initial message', {
