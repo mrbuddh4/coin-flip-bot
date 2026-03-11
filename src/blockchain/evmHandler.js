@@ -212,23 +212,40 @@ class EVMHandler {
           });
 
           if (events.length > 0) {
-            // Get the most recent transfer (last in array) - don't filter by amount
+            // Get the most recent transfer to identify the sender
             const latestEvent = events[events.length - 1];
-            const amount = ethers.formatUnits(latestEvent.args.value, decimals);
+            const sender = latestEvent.args.from;
             
-            console.log('[getRecentDepositSender] Found latest transfer', { 
-              from: latestEvent.args.from,
-              to: latestEvent.args.to,
-              amount,
-              txHash: latestEvent.transactionHash,
-              blockNumber: latestEvent.blockNumber,
+            // Sum up ALL transfers from this sender to the bot wallet
+            let totalAmount = 0n;
+            let allTransfersFromSender = [];
+            
+            for (const event of events) {
+              if (event.args.from.toLowerCase() === sender.toLowerCase()) {
+                totalAmount += event.args.value;
+                allTransfersFromSender.push({
+                  amount: ethers.formatUnits(event.args.value, decimals),
+                  txHash: event.transactionHash,
+                  blockNumber: event.blockNumber,
+                });
+              }
+            }
+            
+            const totalFormatted = ethers.formatUnits(totalAmount, decimals);
+            
+            console.log('[getRecentDepositSender] Found transfers from sender', { 
+              sender,
+              transferCount: allTransfersFromSender.length,
+              totalAmount: totalFormatted,
+              transfers: allTransfersFromSender,
             });
             
             return {
-              sender: latestEvent.args.from,
-              amount: amount,
+              sender: sender,
+              amount: totalFormatted,
               transactionHash: latestEvent.transactionHash,
               blockNumber: latestEvent.blockNumber,
+              transferCount: allTransfersFromSender.length,
             };
           } else {
             console.warn('[getRecentDepositSender] No Transfer events found via queryFilter, trying Paxscan API fallback', {
@@ -252,23 +269,39 @@ class EVMHandler {
               });
 
               if (data.status === '1' && data.result && data.result.length > 0) {
-                // Get the most recent transfer
+                // Get the most recent transfer to identify the sender
                 const latestTx = data.result[0];
-                const amount = ethers.formatUnits(latestTx.value, decimals);
+                const sender = latestTx.from.toLowerCase();
                 
-                console.log('[getRecentDepositSender] Found transfer via Paxscan', {
-                  from: latestTx.from,
-                  to: latestTx.to,
-                  amount,
-                  hash: latestTx.hash,
-                  blockNumber: latestTx.blockNumber,
+                // Sum up ALL transfers from this sender
+                let totalAmount = 0;
+                let allTransfersFromSender = [];
+                
+                for (const tx of data.result) {
+                  if (tx.from.toLowerCase() === sender) {
+                    const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
+                    totalAmount += txAmount;
+                    allTransfersFromSender.push({
+                      amount: txAmount,
+                      hash: tx.hash,
+                      blockNumber: tx.blockNumber,
+                    });
+                  }
+                }
+                
+                console.log('[getRecentDepositSender] Found transfers via Paxscan', {
+                  sender,
+                  transferCount: allTransfersFromSender.length,
+                  totalAmount,
+                  transfers: allTransfersFromSender,
                 });
 
                 return {
-                  sender: latestTx.from,
-                  amount: amount,
+                  sender: sender,
+                  amount: totalAmount.toString(),
                   transactionHash: latestTx.hash,
                   blockNumber: latestTx.blockNumber,
+                  transferCount: allTransfersFromSender.length,
                 };
               } else {
                 console.warn('[getRecentDepositSender] No transfers found via Paxscan API', {
@@ -296,18 +329,35 @@ class EVMHandler {
 
             if (data.status === '1' && data.result && data.result.length > 0) {
               const latestTx = data.result[0];
-              const amount = ethers.formatUnits(latestTx.value, decimals);
+              const sender = latestTx.from.toLowerCase();
+              
+              // Sum transfers from this sender
+              let totalAmount = 0;
+              let allTransfersFromSender = [];
+              
+              for (const tx of data.result) {
+                if (tx.from.toLowerCase() === sender) {
+                  const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
+                  totalAmount += txAmount;
+                  allTransfersFromSender.push({
+                    amount: txAmount,
+                    hash: tx.hash,
+                  });
+                }
+              }
               
               console.log('[getRecentDepositSender] Found transfer via Paxscan (after queryFilter failure)', {
-                from: latestTx.from,
-                amount,
+                sender,
+                transferCount: allTransfersFromSender.length,
+                totalAmount,
               });
 
               return {
-                sender: latestTx.from,
-                amount: amount,
+                sender: sender,
+                amount: totalAmount.toString(),
                 transactionHash: latestTx.hash,
                 blockNumber: latestTx.blockNumber,
+                transferCount: allTransfersFromSender.length,
               };
             }
           } catch (paxscanErr) {

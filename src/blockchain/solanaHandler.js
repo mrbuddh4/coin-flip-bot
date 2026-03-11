@@ -239,6 +239,10 @@ class SolanaHandler {
       const botPublicKey = new PublicKey(botWalletAddress);
       const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 100 });
 
+      // Collect all deposits from the most recent event's sender
+      let firstSenderFound = null;
+      const depositsFromSender = [];
+      
       for (const sig of signatures) {
         try {
           const transaction = await this.connection.getTransaction(sig.signature, {
@@ -294,6 +298,7 @@ class SolanaHandler {
                               const authorityIndex = instruction.accounts[2];
                               if (authorityIndex !== undefined) {
                                 const authority = tx.message.accountKeys[authorityIndex];
+                                const authorityStr = authority.toBase58();
                                 
                                 // Extract amount from instruction data if available
                                 // Token program Transfer instruction: opcode (1 byte) + amount (8 bytes little-endian)
@@ -316,13 +321,19 @@ class SolanaHandler {
                                     
                                     const formattedAmount = Number(amount) / Math.pow(10, decimals);
                                     
-                                    // Return this deposit - don't filter by amount
-                                    return {
-                                      sender: authority.toBase58(),
-                                      amount: formattedAmount.toString(),
-                                      signature: sig.signature,
-                                      slot: sig.slot,
-                                    };
+                                    // Track sender from first deposit found
+                                    if (!firstSenderFound) {
+                                      firstSenderFound = authorityStr;
+                                    }
+                                    
+                                    // Only accumulate if from same sender
+                                    if (authorityStr === firstSenderFound) {
+                                      depositsFromSender.push({
+                                        amount: formattedAmount,
+                                        signature: sig.signature,
+                                        slot: sig.slot,
+                                      });
+                                    }
                                   }
                                 }
                               }
@@ -350,24 +361,25 @@ class SolanaHandler {
                 if (tx.message.accountKeys.length > 0) {
                   // Get the account that decreased in balance (the sender)
                   const senderKey = tx.message.accountKeys[0];
+                  const senderStr = senderKey.toBase58();
                   
                   if (meta && meta.preBalances && meta.postBalances) {
                     const balanceChange = meta.postBalances[botPublicKey.toString()] - meta.preBalances[botPublicKey.toString()];
                     if (balanceChange > 0) {
-                      // Verify this looks like our expected amount
-                      const transactionAmount = balanceChange / LAMPORTS_PER_SOL;
-                      const expectedAmountNum = parseFloat(expectedAmount);
-                      const variance = expectedAmountNum * 0.01; // 1% variance
+                      // Track sender from first deposit found
+                      if (!firstSenderFound) {
+                        firstSenderFound = senderStr;
+                      }
                       
-                      if (transactionAmount >= (expectedAmountNum - variance)) {
-                        return {
-                          sender: senderKey.toBase58(),
-                          amount: transactionAmount.toString(),
+                      // Only accumulate if from same sender
+                      if (senderStr === firstSenderFound) {
+                        const transactionAmount = balanceChange / LAMPORTS_PER_SOL;
+                        depositsFromSender.push({
+                          amount: transactionAmount,
                           signature: sig.signature,
                           slot: sig.slot,
-                        };
+                        });
                       }
-                    }
                   }
                 }
               }
@@ -377,6 +389,26 @@ class SolanaHandler {
           console.warn('Error processing Solana transaction:', err.message);
           continue;
         }
+      }
+
+      // If we found deposits from the same sender, sum them all and return
+      if (depositsFromSender.length > 0 && firstSenderFound) {
+        const totalAmount = depositsFromSender.reduce((sum, dep) => sum + dep.amount, 0);
+        
+        console.log('[getRecentDepositSender] Found multiple deposits from sender', {
+          sender: firstSenderFound,
+          depositCount: depositsFromSender.length,
+          totalAmount,
+          deposits: depositsFromSender,
+        });
+        
+        return {
+          sender: firstSenderFound,
+          amount: totalAmount.toString(),
+          signature: depositsFromSender[0].signature,
+          slot: depositsFromSender[0].slot,
+          transferCount: depositsFromSender.length,
+        };
       }
 
       return null;
