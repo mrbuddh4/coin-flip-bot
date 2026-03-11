@@ -47,6 +47,14 @@ const defineModels = (sequelize) => {
     },
     creatorDepositWalletAddress: DataTypes.STRING,
     challengerDepositWalletAddress: DataTypes.STRING,
+    creatorAccumulatedDeposit: {
+      type: DataTypes.DECIMAL(36, 18),
+      defaultValue: 0,
+    },
+    challengerAccumulatedDeposit: {
+      type: DataTypes.DECIMAL(36, 18),
+      defaultValue: 0,
+    },
     creatorDepositTxHash: DataTypes.STRING,
     challengerDepositTxHash: DataTypes.STRING,
     creatorDepositConfirmed: {

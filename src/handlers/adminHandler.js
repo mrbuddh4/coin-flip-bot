@@ -227,6 +227,8 @@ class AdminHandler {
         flip.status = 'CANCELLED';
         flip.creatorDepositWalletAddress = null;
         flip.challengerDepositWalletAddress = null;
+        flip.creatorAccumulatedDeposit = 0;
+        flip.challengerAccumulatedDeposit = 0;
         await flip.save();
         logger.info('Admin cancelled flip', { flipId: flip.id });
       }

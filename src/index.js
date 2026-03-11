@@ -282,6 +282,8 @@ async function initBot() {
         flip.data = { ...flip.data, cancelReason: 'Challenge expired on bot startup' };
         flip.creatorDepositWalletAddress = null;
         flip.challengerDepositWalletAddress = null;
+        flip.creatorAccumulatedDeposit = 0;
+        flip.challengerAccumulatedDeposit = 0;
         await flip.save();
       } else if (elapsedTime > CHALLENGE_TIMEOUT) {
         // Challenge is in the alert window, re-set the alert timeout
@@ -297,6 +299,8 @@ async function initBot() {
               flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenge expired' };
               flipCheck.creatorDepositWalletAddress = null;
               flipCheck.challengerDepositWalletAddress = null;
+              flipCheck.creatorAccumulatedDeposit = 0;
+              flipCheck.challengerAccumulatedDeposit = 0;
               await flipCheck.save();
               
               // Try to notify group
@@ -900,7 +904,24 @@ async function initBot() {
           // Store the detected sender address for refunds (if not already set)
           if (verification.depositSender && !flip.challengerDepositWalletAddress) {
             flip.challengerDepositWalletAddress = verification.depositSender;
-            logger.info('[deposit_confirmed] Detected challenger deposit sender', { flipId, sender: verification.depositSender });
+            flip.challengerAccumulatedDeposit = parseFloat(verification.amount || 0);
+            logger.info('[deposit_confirmed] Detected challenger deposit sender and initial amount', { 
+              flipId, 
+              sender: verification.depositSender,
+              initialAmount: verification.amount
+            });
+          } else if (verification.depositSender && flip.challengerDepositWalletAddress) {
+            // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
+            const previousAccumulated = parseFloat(flip.challengerAccumulatedDeposit || 0);
+            const currentTotal = parseFloat(verification.amount || 0);
+            flip.challengerAccumulatedDeposit = currentTotal;
+            
+            logger.info('[deposit_confirmed] Updated challenger accumulated deposit', {
+              flipId,
+              previousAccumulated,
+              currentTotal,
+              newDepositsSinceLastCheck: currentTotal - previousAccumulated,
+            });
           }
           
           // Check if notification already sent for this verification attempt
@@ -989,8 +1010,8 @@ async function initBot() {
             }
           }, 180000); // 3 minutes
           
-          // CRITICAL: Save the sender address and other flip state before returning
-          // This ensures that on the next verification, we can accumulate deposits from the same sender
+          // CRITICAL: Save the sender address and accumulated deposit before returning
+          // This ensures that on the next verification, we can track deposits from the same sender
           await flip.save();
           
           return;
@@ -1237,7 +1258,24 @@ async function initBot() {
           // Store the detected sender address for refunds (if not already set)
           if (verification.depositSender && !flip.creatorDepositWalletAddress) {
             flip.creatorDepositWalletAddress = verification.depositSender;
-            logger.info('[creator_deposit_confirmed] Detected creator deposit sender', { flipId, sender: verification.depositSender });
+            flip.creatorAccumulatedDeposit = parseFloat(verification.amount || 0);
+            logger.info('[creator_deposit_confirmed] Detected creator deposit sender and initial amount', { 
+              flipId, 
+              sender: verification.depositSender,
+              initialAmount: verification.amount
+            });
+          } else if (verification.depositSender && flip.creatorDepositWalletAddress) {
+            // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
+            const previousAccumulated = parseFloat(flip.creatorAccumulatedDeposit || 0);
+            const currentTotal = parseFloat(verification.amount || 0);
+            flip.creatorAccumulatedDeposit = currentTotal;
+            
+            logger.info('[creator_deposit_confirmed] Updated creator accumulated deposit', {
+              flipId,
+              previousAccumulated,
+              currentTotal,
+              newDepositsSinceLastCheck: currentTotal - previousAccumulated,
+            });
           }
           
           // Check if notification already sent for this verification attempt
@@ -1285,7 +1323,12 @@ async function initBot() {
         // Store the detected sender address for refunds (if not already set)
         if (verification.depositSender && !flip.creatorDepositWalletAddress) {
           flip.creatorDepositWalletAddress = verification.depositSender;
-          logger.info('[creator_deposit_confirmed] Detected creator deposit sender', { flipId, sender: verification.depositSender });
+          flip.creatorAccumulatedDeposit = parseFloat(verification.amount || 0);
+          logger.info('[creator_deposit_confirmed] Detected creator deposit sender with accumulated amount', { 
+            flipId, 
+            sender: verification.depositSender,
+            accumulatedDeposit: verification.amount
+          });
         }
 
         // Check if creator sent more than the wager (overpayment)
@@ -2317,9 +2360,11 @@ async function handleChallengerDepositConfirm(ctx) {
   // Mark challenger deposit confirmed
   flip.challengerDepositConfirmed = true;
   flip.status = 'COMPLETED';
-  // Clear deposit wallet addresses for next session
+  // Clear deposit wallet addresses and accumulated amounts for next session
   flip.creatorDepositWalletAddress = null;
   flip.challengerDepositWalletAddress = null;
+  flip.creatorAccumulatedDeposit = 0;
+  flip.challengerAccumulatedDeposit = 0;
   await flip.save();
 
   await ctx.reply(`✅ Deposit confirmed! Executing flip...`);

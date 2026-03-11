@@ -447,6 +447,8 @@ class FlipHandler {
         flip.status = 'CANCELLED';
         flip.creatorDepositWalletAddress = null;
         flip.challengerDepositWalletAddress = null;
+        flip.creatorAccumulatedDeposit = 0;
+        flip.challengerAccumulatedDeposit = 0;
         await flip.save();
 
         await this.notifyCancelledFlip(flip, 'Creator did not deposit tokens within 3 minutes.');
@@ -455,6 +457,8 @@ class FlipHandler {
         flip.status = 'CANCELLED';
         flip.creatorDepositWalletAddress = null;
         flip.challengerDepositWalletAddress = null;
+        flip.creatorAccumulatedDeposit = 0;
+        flip.challengerAccumulatedDeposit = 0;
         await flip.save();
 
         await this.notifyCancelledFlip(flip, 'Challenger did not deposit tokens within 3 minutes.');

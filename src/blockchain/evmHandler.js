@@ -271,63 +271,10 @@ class EVMHandler {
                 targetSender,
                 knownSender,
                 transactionsChecked: data.result.length,
-                first5FromAddress: data.result.slice(0, 5).map(tx => tx.from.toLowerCase()),
               });
               
-              // If knownSender filtering didn't work (possibly address format mismatch),
-              // accumulate ALL incoming transfers to bot wallet and store first sender as the one
-              if (knownSender) {
-                console.warn('[getRecentDepositSender] Known sender filtering failed, accumulating all incoming transfers as fallback');
-                
-                let fallbackTotal = 0;
-                let fallbackLatestTx = null;
-                let fallbackSender = null;
-                const fallbackTransfers = [];
-                
-                // Accumulate ALL transfers TO bot wallet
-                for (const tx of data.result) {
-                  const txRecipientLower = tx.to?.toLowerCase() || '';
-                  if (txRecipientLower === botWalletAddress.toLowerCase()) {
-                    const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
-                    const txSenderLower = tx.from.toLowerCase();
-                    
-                    fallbackTotal += txAmount;
-                    if (!fallbackLatestTx) {
-                      fallbackLatestTx = tx;
-                      fallbackSender = txSenderLower;
-                    }
-                    fallbackTransfers.push({
-                      from: txSenderLower,
-                      amount: txAmount,
-                      hash: tx.hash,
-                    });
-                    
-                    console.log('[getRecentDepositSender] Fallback: Accumulated incoming transfer', {
-                      from: txSenderLower,
-                      amount: txAmount,
-                      txHash: tx.hash,
-                      runningTotal: fallbackTotal,
-                    });
-                  }
-                }
-                
-                if (fallbackTransfers.length > 0) {
-                  console.log('[getRecentDepositSender] Fallback accumulation complete', {
-                    totalAmount: fallbackTotal,
-                    transferCount: fallbackTransfers.length,
-                    transfers: fallbackTransfers,
-                  });
-                  
-                  return {
-                    sender: fallbackSender,
-                    amount: fallbackTotal.toString(),
-                    transactionHash: fallbackLatestTx.hash,
-                    blockNumber: fallbackLatestTx.blockNumber,
-                    transferCount: fallbackTransfers.length,
-                  };
-                }
-              }
-              
+              // If no transfers found from target sender, return null (no new deposits)
+              // Do NOT fall back to other wallets - that would cause false positives and overpay detection
               return null;
             }
             

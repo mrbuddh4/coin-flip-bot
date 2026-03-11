@@ -169,9 +169,11 @@ class ExecutionHandler {
       flip.winningTxHash = winningTxHash;
       flip.claimedByWinner = true; // Mark as claimed since we sent it automatically
       flip.status = 'COMPLETED';
-      // Clear deposit wallet addresses for next session
+      // Clear deposit wallet addresses and accumulated amounts for next session
       flip.creatorDepositWalletAddress = null;
       flip.challengerDepositWalletAddress = null;
+      flip.creatorAccumulatedDeposit = 0;
+      flip.challengerAccumulatedDeposit = 0;
       await flip.save();
 
       // Update winner's stats
@@ -532,9 +534,11 @@ class ExecutionHandler {
         flip.claimedByWinner = true;
         flip.winningTxHash = winnerTx.txHash;
         flip.status = 'COMPLETED';
-        // Clear deposit wallet addresses for next session
+        // Clear deposit wallet addresses and accumulated amounts for next session
         flip.creatorDepositWalletAddress = null;
         flip.challengerDepositWalletAddress = null;
+        flip.creatorAccumulatedDeposit = 0;
+        flip.challengerAccumulatedDeposit = 0;
         await flip.save();
 
         // Update user stats
@@ -630,9 +634,11 @@ class ExecutionHandler {
 
       // Update flip status
       flip.status = 'CANCELLED';
-      // Clear deposit wallet addresses
+      // Clear deposit wallet addresses and accumulated amounts
       flip.creatorDepositWalletAddress = null;
       flip.challengerDepositWalletAddress = null;
+      flip.creatorAccumulatedDeposit = 0;
+      flip.challengerAccumulatedDeposit = 0;
       await flip.save();
 
       await ctx.answerCbQuery('✅ Flip cancelled.');
