@@ -170,7 +170,9 @@ class EVMHandler {
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null, knownSender = null) {
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      const lookbackBlocks = 100; // Reduced from 300 - Paxeer has stricter RPC limits on block ranges
+      // Paxeer has very strict RPC limits - use 2-block window for reliability
+      // This covers pending + 1 recent block, which is enough for most use cases
+      const lookbackBlocks = 2; 
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
 
       console.log('[getRecentDepositSender] Searching for deposits', {
