@@ -1041,6 +1041,15 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Challenger deposit verified', { flipId, userId, amount: verification.amount });
 
+        logger.info('[deposit_confirmed] Verification object details', {
+          flipId,
+          hasDepositSender: !!verification.depositSender,
+          depositSender: verification.depositSender,
+          hasChallengerWallet: !!flip.challengerDepositWalletAddress,
+          challengerWallet: flip.challengerDepositWalletAddress,
+          verificationAmount: verification.amount,
+        });
+
         // Store the detected sender address for refunds (if not already set)
         if (verification.depositSender && !flip.challengerDepositWalletAddress) {
           flip.challengerDepositWalletAddress = verification.depositSender;
@@ -1049,7 +1058,16 @@ async function initBot() {
 
         // Ensure accumulated deposit is set for overpayment check
         if (!flip.challengerAccumulatedDeposit && verification.amount) {
+          logger.info('[deposit_confirmed] Setting accumulated deposit from verification', {
+            flipId,
+            before: flip.challengerAccumulatedDeposit,
+            verificationAmount: verification.amount,
+          });
           flip.challengerAccumulatedDeposit = parseFloat(verification.amount);
+          logger.info('[deposit_confirmed] Accumulated deposit now set to', {
+            flipId,
+            after: flip.challengerAccumulatedDeposit,
+          });
         }
 
         logger.info('[deposit_confirmed] Starting overpayment check', {
@@ -1402,6 +1420,15 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
 
+        logger.info('[creator_deposit_confirmed] Verification object details', {
+          flipId,
+          hasDepositSender: !!verification.depositSender,
+          depositSender: verification.depositSender,
+          hasCreatorWallet: !!flip.creatorDepositWalletAddress,
+          creatorWallet: flip.creatorDepositWalletAddress,
+          verificationAmount: verification.amount,
+        });
+
         // Store the detected sender address for refunds (if not already set)
         if (verification.depositSender && !flip.creatorDepositWalletAddress) {
           flip.creatorDepositWalletAddress = verification.depositSender;
@@ -1415,7 +1442,16 @@ async function initBot() {
 
         // Ensure accumulated deposit is set for overpayment check
         if (!flip.creatorAccumulatedDeposit && verification.amount) {
+          logger.info('[creator_deposit_confirmed] Setting accumulated deposit from verification', {
+            flipId,
+            before: flip.creatorAccumulatedDeposit,
+            verificationAmount: verification.amount,
+          });
           flip.creatorAccumulatedDeposit = parseFloat(verification.amount);
+          logger.info('[creator_deposit_confirmed] Accumulated deposit now set to', {
+            flipId,
+            after: flip.creatorAccumulatedDeposit,
+          });
         }
 
         logger.info('[creator_deposit_confirmed] Starting overpayment check', {
