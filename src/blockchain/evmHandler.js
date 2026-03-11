@@ -231,19 +231,88 @@ class EVMHandler {
               blockNumber: latestEvent.blockNumber,
             };
           } else {
-            console.warn('[getRecentDepositSender] No Transfer events found', {
+            console.warn('[getRecentDepositSender] No Transfer events found via queryFilter, trying Paxscan API fallback', {
               botWallet: botWalletAddress,
               tokenAddress,
-              fromBlock,
-              toBlock: currentBlock,
             });
+            
+            // Fallback: Check Paxscan API for recent token transfers
+            try {
+              const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+              
+              console.log('[getRecentDepositSender] Querying Paxscan API', { url: paxscanUrl });
+              
+              const response = await fetch(paxscanUrl);
+              const data = await response.json();
+              
+              console.log('[getRecentDepositSender] Paxscan API response', {
+                status: data.status,
+                message: data.message,
+                resultCount: data.result?.length || 0,
+              });
+
+              if (data.status === '1' && data.result && data.result.length > 0) {
+                // Get the most recent transfer
+                const latestTx = data.result[0];
+                const amount = ethers.formatUnits(latestTx.value, decimals);
+                
+                console.log('[getRecentDepositSender] Found transfer via Paxscan', {
+                  from: latestTx.from,
+                  to: latestTx.to,
+                  amount,
+                  hash: latestTx.hash,
+                  blockNumber: latestTx.blockNumber,
+                });
+
+                return {
+                  sender: latestTx.from,
+                  amount: amount,
+                  transactionHash: latestTx.hash,
+                  blockNumber: latestTx.blockNumber,
+                };
+              } else {
+                console.warn('[getRecentDepositSender] No transfers found via Paxscan API', {
+                  status: data.status,
+                  message: data.message,
+                });
+              }
+            } catch (paxscanErr) {
+              console.error('[getRecentDepositSender] Paxscan API fallback failed', { error: paxscanErr.message });
+            }
           }
         } catch (queryErr) {
-          console.error('[getRecentDepositSender] Error querying events', { 
+          console.error('[getRecentDepositSender] Error querying events, trying Paxscan API', { 
             error: queryErr.message,
             tokenAddress,
             botWalletAddress,
           });
+          
+          // Try Paxscan fallback if queryFilter fails
+          try {
+            const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+            
+            const response = await fetch(paxscanUrl);
+            const data = await response.json();
+
+            if (data.status === '1' && data.result && data.result.length > 0) {
+              const latestTx = data.result[0];
+              const amount = ethers.formatUnits(latestTx.value, decimals);
+              
+              console.log('[getRecentDepositSender] Found transfer via Paxscan (after queryFilter failure)', {
+                from: latestTx.from,
+                amount,
+              });
+
+              return {
+                sender: latestTx.from,
+                amount: amount,
+                transactionHash: latestTx.hash,
+                blockNumber: latestTx.blockNumber,
+              };
+            }
+          } catch (paxscanErr) {
+            console.error('[getRecentDepositSender] Paxscan API fallback also failed', { error: paxscanErr.message });
+          }
         }
       }
 
