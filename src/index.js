@@ -2243,7 +2243,7 @@ async function handleChallengerDepositConfirm(ctx) {
 
   // Verify deposit on bot's wallet
   const blockchainManager = getBlockchainManager();
-  const verification = await blockchainManager.verifyDeposit(
+  const verification = await blockchainManager.verifyDepositWithRetry(
     flip.tokenNetwork,
     flip.tokenAddress,
     flip.wagerAmount,

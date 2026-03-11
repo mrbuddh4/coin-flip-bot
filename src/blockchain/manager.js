@@ -92,46 +92,19 @@ class BlockchainManager {
         };
       }
 
-      // Fallback: Check bot wallet balance if no recent transaction found
-      console.warn('[verifyDeposit] No recent deposit transaction found, checking balance fallback');
-      let balance;
-      if (tokenAddress === 'NATIVE') {
-        balance = await handler.getNativeBalance(botWallet);
-      } else {
-        balance = await handler.getTokenBalance(tokenAddress, botWallet);
-      }
-
-      const receivedAmount = parseFloat(balance.formatted);
-      const expectedAmountNum = parseFloat(expectedAmount);
-
-      // Check if bot wallet has enough balance (allowing 1% variance)
-      const variance = expectedAmountNum * 0.01;
-      const hasDeposit = receivedAmount >= (expectedAmountNum - variance);
-
-      // Even in fallback, try to detect sender again with more lenient criteria
-      let fallbackSender = null;
-      try {
-        fallbackSender = await handler.getRecentDepositSender(botWallet, expectedAmount * 0.5, tokenAddress); // Try with 50% of amount for more matches
-      } catch (err) {
-        console.warn('[verifyDeposit] Could not detect sender in fallback:', err.message);
-      }
-
-      console.log('[verifyDeposit] Using balance fallback', {
-        network,
-        received: receivedAmount,
-        expected: expectedAmountNum,
-        hasSender: !!fallbackSender?.sender,
-        hasDeposit,
-      });
+      // NO FALLBACK - If no recent transaction found, deposit was not received
+      // Using balance fallback is dangerous: bot wallet might have balance from previous flips,
+      // creating false positives where deposit is credited even if user didn't send anything
+      console.warn('[verifyDeposit] No recent deposit transaction found - rejecting deposit');
 
       return {
-        received: hasDeposit,
-        amount: receivedAmount,
-        expected: expectedAmountNum,
+        received: false,
+        amount: 0,
+        expected: parseFloat(expectedAmount),
         botWallet: botWallet,
-        balance: balance,
-        depositSender: fallbackSender?.sender || null,
-        verified: 'balance', // Fallback to balance verification
+        depositSender: null,
+        reason: 'No recent blockchain transaction detected',
+        verified: 'blockchain_required',
       };
     } catch (error) {
       console.error('[verifyDeposit] Error verifying deposit:', error);
