@@ -1041,14 +1041,8 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Challenger deposit verified', { flipId, userId, amount: verification.amount });
 
-        logger.info('[deposit_confirmed] Verification object details', {
-          flipId,
-          hasSender: !!verification.sender,
-          sender: verification.sender,
-          hasChallengerWallet: !!flip.challengerDepositWalletAddress,
-          challengerWallet: flip.challengerDepositWalletAddress,
-          verificationAmount: verification.amount,
-        });
+        logger.info('[deposit_confirmed] Verification has sender?', { hasSender: !!verification.sender });
+        logger.info('[deposit_confirmed] Verification sender value', { sender: verification.sender });
 
         // Store the detected sender address for refunds (if not already set)
         if (verification.sender && !flip.challengerDepositWalletAddress) {
@@ -1342,7 +1336,7 @@ async function initBot() {
         );
 
         if (!verification.received) {
-          logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId });
+          logger.warn('[creator_deposit_confirmed] Deposit not received (insufficient)', { userId, flipId, verificationReceived: verification.received });
           
           // Store the detected sender address for refunds (if not already set)
           if (verification.sender && !flip.creatorDepositWalletAddress) {
@@ -1420,14 +1414,8 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
 
-        logger.info('[creator_deposit_confirmed] Verification object details', {
-          flipId,
-          hasSender: !!verification.sender,
-          sender: verification.sender,
-          hasCreatorWallet: !!flip.creatorDepositWalletAddress,
-          creatorWallet: flip.creatorDepositWalletAddress,
-          verificationAmount: verification.amount,
-        });
+        logger.info('[creator_deposit_confirmed] Verification has sender?', { hasSender: !!verification.sender });
+        logger.info('[creator_deposit_confirmed] Verification sender value', { sender: verification.sender });
 
         // Store the detected sender address for refunds (if not already set)
         if (verification.sender && !flip.creatorDepositWalletAddress) {
