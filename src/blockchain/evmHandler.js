@@ -170,7 +170,7 @@ class EVMHandler {
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null, knownSender = null) {
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      const lookbackBlocks = 300; // ~1 hour lookback - accumulates multi-deposits in current session only
+      const lookbackBlocks = 100; // Reduced from 300 - Paxeer has stricter RPC limits on block ranges
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
 
       console.log('[getRecentDepositSender] Searching for deposits', {
@@ -191,7 +191,7 @@ class EVMHandler {
         ];
         const contract = new ethers.Contract(tokenAddress, erc20ABI, this.provider);
         
-        // Get token decimals
+        // Get token decimals - declare outside try so it's available in catch block
         let decimals = 18;
         try {
           decimals = await contract.decimals();
@@ -407,17 +407,27 @@ class EVMHandler {
             const data = await response.json();
 
             if (data.status === '1' && data.result && data.result.length > 0) {
-              const latestTx = data.result[0];
-              const sender = latestTx.from.toLowerCase();
+              // Determine which sender to look for
+              let targetSender;
+              if (knownSender) {
+                // If known sender provided, use that (for multi-deposit accumulation)
+                targetSender = knownSender.toLowerCase();
+              } else {
+                // Otherwise, use the most recent transfer's sender (first detection)
+                const latestTx = data.result[0];
+                targetSender = latestTx.from.toLowerCase();
+              }
               
-              // Sum all transfers from the same sender
+              // Sum all transfers from target sender
               let totalAmount = 0;
+              let latestTxForReturn = null;
               const transfers = [];
               
               for (const tx of data.result) {
-                if (tx.from.toLowerCase() === sender) {
+                if (tx.from.toLowerCase() === targetSender) {
                   const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                   totalAmount += txAmount;
+                  if (!latestTxForReturn) latestTxForReturn = tx;
                   transfers.push({
                     amount: txAmount,
                     hash: tx.hash,
@@ -425,20 +435,29 @@ class EVMHandler {
                 }
               }
               
-              console.log('[getRecentDepositSender] Found transfer via Paxscan (after queryFilter failure)', {
-                sender,
-                transferCount: transfers.length,
-                totalAmount,
-              });
+              if (transfers.length === 0) {
+                console.warn('[getRecentDepositSender] No transfers from target sender via Paxscan (after queryFilter failure)', { 
+                  targetSender,
+                  knownSender,
+                  transactionsChecked: data.result.length,
+                });
+                // Fall through to return null
+              } else {
+                console.log('[getRecentDepositSender] Found transfers via Paxscan (after queryFilter failure)', {
+                  targetSender,
+                  knownSenderProvided: !!knownSender,
+                  transferCount: transfers.length,
+                  totalAmount,
+                });
 
-              return {
-                sender: sender,
-                amount: totalAmount.toString(),
-                transactionHash: latestTx.hash,
-                blockNumber: latestTx.blockNumber,
-                transferCount: transfers.length,
-              };
-            }
+                return {
+                  sender: targetSender,
+                  amount: totalAmount.toString(),
+                  transactionHash: latestTxForReturn.hash,
+                  blockNumber: latestTxForReturn.blockNumber,
+                  transferCount: transfers.length,
+                };
+              }
           } catch (paxscanErr) {
             console.error('[getRecentDepositSender] Paxscan API fallback also failed', { error: paxscanErr.message });
           }
