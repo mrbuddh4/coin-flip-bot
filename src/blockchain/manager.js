@@ -38,11 +38,20 @@ class BlockchainManager {
    */
   getBotWalletAddress(network) {
     if (network === 'EVM') {
-      // Return the public address derived from the private key
+      // Return explicit address if set, otherwise derive from private key
+      if (config.evm.walletAddress) {
+        return config.evm.walletAddress;
+      }
+      // Derive from private key
       const { ethers } = require('ethers');
       const wallet = new ethers.Wallet(config.evm.privateKey);
       return wallet.address;
     } else if (network === 'Solana') {
+      // Return explicit address if set, otherwise derive from private key
+      if (config.solana.walletAddress) {
+        return config.solana.walletAddress;
+      }
+      // Derive from private key
       const { Keypair } = require('@solana/web3.js');
       const keypair = Keypair.fromSecretKey(
         new Uint8Array(JSON.parse(config.solana.privateKey))
