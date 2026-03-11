@@ -259,23 +259,35 @@ class FlipHandler {
       );
 
       if (!verification.received) {
-        const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-        const receivedAmount = parseFloat(verification.amount || '0');
-        const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+        logger.info('[confirmCreatorDeposit] Insufficient deposit received', { flipId });
         
-        // Store what was actually received for potential refund later
-        if (!flip.data) flip.data = {};
-        flip.data.partialDepositReceived = receivedAmount;
-        flip.data.partialDepositAttempt = true;
-        await flip.save();
+        // Check if notification already sent for this verification attempt
+        const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
+        const timeSinceLastNotification = Date.now() - lastNotificationTime;
         
-        await ctx.reply(
-          `❌ <b>Insufficient Deposit</b>\n\n` +
-          `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-          `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-          `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
-          `You have <b>3 minutes</b> to send the remaining amount to the same address, otherwise your deposit will be refunded and the challenge cancelled.`
-        );
+        // Only send notification if more than 30 seconds have passed since last one
+        if (timeSinceLastNotification > 30000) {
+          const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          const receivedAmount = parseFloat(verification.amount || '0');
+          const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          
+          await ctx.reply(
+            `❌ <b>Insufficient Deposit</b>\n\n` +
+            `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+            `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+            `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+            `You have <b>3 minutes</b> to send the remaining amount to the same address, otherwise your deposit will be refunded and the challenge cancelled.`
+          );
+          
+          // Record that we just sent a notification
+          if (!flip.data) flip.data = {};
+          flip.data.lastInsufficientDepositNotification = Date.now();
+          flip.data.partialDepositReceived = receivedAmount;
+          flip.data.partialDepositAttempt = true;
+          await flip.save();
+        } else {
+          logger.info('[confirmCreatorDeposit] Skipping duplicate notification (sent within last 30s)', { flipId });
+        }
         
         // Set timeout to refund partial deposit if not completed in 3 minutes
         setTimeout(async () => {

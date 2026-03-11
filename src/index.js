@@ -887,24 +887,38 @@ async function initBot() {
 
         if (!verification.received) {
           logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
-          const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-          const receivedAmount = parseFloat(verification.amount || '0');
-          const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-          const botWallet = verification.botWallet || 'Unknown';
           
-          await ctx.reply(
-            `❌ <b>Insufficient Deposit</b>\n\n` +
-            `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-            `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-            `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
-            `<b>Troubleshooting:</b>\n` +
-            `• Verify you sent to: <code>${botWallet}</code>\n` +
-            `• Check amount matches exactly (${formattedExpected})\n` +
-            `• Wait 30 seconds for blockchain confirmation\n` +
-            `• Then try confirming again\n\n` +
-            `You have <b>3 minutes</b> to send the remaining amount, otherwise your deposit will be refunded and the challenge cancelled.`,
-            { parse_mode: 'HTML' }
-          );
+          // Check if notification already sent for this verification attempt
+          const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
+          const timeSinceLastNotification = Date.now() - lastNotificationTime;
+          
+          // Only send notification if more than 30 seconds have passed since last one
+          if (timeSinceLastNotification > 30000) {
+            const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+            const receivedAmount = parseFloat(verification.amount || '0');
+            const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+            const botWallet = verification.botWallet || 'Unknown';
+            
+            await ctx.reply(
+              `❌ <b>Insufficient Deposit</b>\n\n` +
+              `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+              `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+              `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+              `<b>Troubleshooting:</b>\n` +
+              `• Verify you sent to: <code>${botWallet}</code>\n` +
+              `• Check amount matches exactly (${formattedExpected})\n` +
+              `• Wait 30 seconds for blockchain confirmation\n` +
+              `• Then try confirming again\n\n` +
+              `You have <b>3 minutes</b> to send the remaining amount, otherwise your deposit will be refunded and the challenge cancelled.`,
+              { parse_mode: 'HTML' }
+            );
+            
+            // Record that we just sent a notification
+            flip.data = { ...flip.data, lastInsufficientDepositNotification: Date.now() };
+            await flip.save();
+          } else {
+            logger.info('[deposit_confirmed] Skipping duplicate notification (sent within last 30s)', { flipId });
+          }
           
           // Set timeout to refund partial deposit if not completed in 3 minutes
           setTimeout(async () => {
@@ -1195,24 +1209,38 @@ async function initBot() {
 
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received', { userId, flipId });
-          const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-          const receivedAmount = parseFloat(verification.amount || '0');
-          const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-          const botWallet = verification.botWallet || 'Unknown';
           
-          await ctx.reply(
-            `⏳ <b>Insufficient Deposit</b>\n\n` +
-            `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-            `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-            `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
-            `<b>Troubleshooting:</b>\n` +
-            `• Verify you sent to: <code>${botWallet}</code>\n` +
-            `• Check amount matches exactly (${formattedExpected})\n` +
-            `• Wait 30 seconds for blockchain confirmation\n` +
-            `• Then try confirming again\n\n` +
-            `If not sent within 3 minutes, the challenge will auto-cancel.`,
-            { parse_mode: 'HTML' }
-          );
+          // Check if notification already sent for this verification attempt
+          const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
+          const timeSinceLastNotification = Date.now() - lastNotificationTime;
+          
+          // Only send notification if more than 30 seconds have passed since last one
+          if (timeSinceLastNotification > 30000) {
+            const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+            const receivedAmount = parseFloat(verification.amount || '0');
+            const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+            const botWallet = verification.botWallet || 'Unknown';
+            
+            await ctx.reply(
+              `⏳ <b>Insufficient Deposit</b>\n\n` +
+              `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+              `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+              `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+              `<b>Troubleshooting:</b>\n` +
+              `• Verify you sent to: <code>${botWallet}</code>\n` +
+              `• Check amount matches exactly (${formattedExpected})\n` +
+              `• Wait 30 seconds for blockchain confirmation\n` +
+              `• Then try confirming again\n\n` +
+              `If not sent within 3 minutes, the challenge will auto-cancel.`,
+              { parse_mode: 'HTML' }
+            );
+            
+            // Record that we just sent a notification
+            flip.data = { ...flip.data, lastInsufficientDepositNotification: Date.now() };
+            await flip.save();
+          } else {
+            logger.info('[creator_deposit_confirmed] Skipping duplicate notification (sent within last 30s)', { flipId });
+          }
           return;
         }
 
