@@ -1068,9 +1068,13 @@ async function initBot() {
             verificationAmount: verification.amount,
           });
           flip.challengerAccumulatedDeposit = parseFloat(verification.amount);
+          // CRITICAL: Also update wallet address when updating accumulated deposit
+          // This ensures refund goes to the wallet that sent the current verified amount
+          flip.challengerDepositWalletAddress = verification.depositSender;
           logger.info('[deposit_confirmed] Accumulated deposit now set to', {
             flipId,
             after: flip.challengerAccumulatedDeposit,
+            walletUpdatedTo: verification.depositSender,
           });
         }
 
@@ -1456,9 +1460,13 @@ async function initBot() {
             verificationAmount: verification.amount,
           });
           flip.creatorAccumulatedDeposit = parseFloat(verification.amount);
+          // CRITICAL: Also update wallet address when updating accumulated deposit
+          // This ensures refund goes to the wallet that sent the current verified amount
+          flip.creatorDepositWalletAddress = verification.depositSender;
           logger.info('[creator_deposit_confirmed] Accumulated deposit now set to', {
             flipId,
             after: flip.creatorAccumulatedDeposit,
+            walletUpdatedTo: verification.depositSender,
           });
         }
 
