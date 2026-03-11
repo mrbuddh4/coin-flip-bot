@@ -458,9 +458,9 @@ class EVMHandler {
                   transferCount: transfers.length,
                 };
               }
-          } catch (paxscanErr) {
-            console.error('[getRecentDepositSender] Paxscan API fallback also failed', { error: paxscanErr.message });
-          }
+            } catch (paxscanErr) {
+              console.error('[getRecentDepositSender] Paxscan API fallback also failed', { error: paxscanErr.message });
+            }
         }
       }
 
