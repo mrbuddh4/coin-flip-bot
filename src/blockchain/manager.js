@@ -118,7 +118,7 @@ class BlockchainManager {
   /**
    * Verify deposit with retries (accounts for blockchain indexing delay)
    */
-  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 8, retryDelayMs = 3000) {
+  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 10, retryDelayMs = 2000) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals);
       
