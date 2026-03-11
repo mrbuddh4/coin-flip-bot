@@ -431,13 +431,6 @@ class SolanaHandler {
       return null;
     }
   }
-
-      return null;
-    } catch (error) {
-      console.error('Error getting recent Solana deposit sender:', error);
-      return null;
-    }
-  }
 }
 
 module.exports = SolanaHandler;
