@@ -1047,6 +1047,11 @@ async function initBot() {
           logger.info('[deposit_confirmed] Detected challenger deposit sender', { flipId, sender: verification.depositSender });
         }
 
+        // Ensure accumulated deposit is set for overpayment check
+        if (!flip.challengerAccumulatedDeposit && verification.amount) {
+          flip.challengerAccumulatedDeposit = parseFloat(verification.amount);
+        }
+
         // If they sent more than the wager, refund the excess
         const receivedAmount = parseFloat(flip.challengerAccumulatedDeposit || flip.wagerAmount);
         const wagerAmount = parseFloat(flip.wagerAmount);
@@ -1382,6 +1387,11 @@ async function initBot() {
             sender: verification.depositSender,
             accumulatedDeposit: verification.amount
           });
+        }
+
+        // Ensure accumulated deposit is set for overpayment check
+        if (!flip.creatorAccumulatedDeposit && verification.amount) {
+          flip.creatorAccumulatedDeposit = parseFloat(verification.amount);
         }
 
         // Check if creator sent more than the wager (overpayment)
