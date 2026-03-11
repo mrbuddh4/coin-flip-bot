@@ -271,7 +271,39 @@ class EVMHandler {
                 targetSender,
                 knownSender,
                 transactionsChecked: data.result.length,
+                first5FromAddress: data.result.slice(0, 5).map(tx => tx.from.toLowerCase()),
               });
+              
+              // If knownSender filtering didn't work and this is a retry (knownSender was set),
+              // it might be because the transaction hasn't been indexed yet.
+              // Fall through to check for most recent ANY transfer as fallback
+              if (knownSender) {
+                console.warn('[getRecentDepositSender] Known sender had no matches, checking most recent transfer as fallback');
+                
+                // Get most recent transfer TO bot wallet from ANYONE (for first-time detection)
+                for (const tx of data.result) {
+                  const txRecipientLower = tx.to?.toLowerCase() || '';
+                  if (txRecipientLower === botWalletAddress.toLowerCase()) {
+                    const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
+                    const txSenderLower = tx.from.toLowerCase();
+                    
+                    console.log('[getRecentDepositSender] Using most recent transfer as fallback', {
+                      from: txSenderLower,
+                      amount: txAmount,
+                      txHash: tx.hash,
+                    });
+                    
+                    return {
+                      sender: txSenderLower,
+                      amount: txAmount.toString(),
+                      transactionHash: tx.hash,
+                      blockNumber: tx.blockNumber,
+                      transferCount: 1,
+                    };
+                  }
+                }
+              }
+              
               return null;
             }
             

@@ -225,6 +225,8 @@ class AdminHandler {
       // Cancel all flips
       for (const flip of activeFlips) {
         flip.status = 'CANCELLED';
+        flip.creatorDepositWalletAddress = null;
+        flip.challengerDepositWalletAddress = null;
         await flip.save();
         logger.info('Admin cancelled flip', { flipId: flip.id });
       }

@@ -445,12 +445,16 @@ class FlipHandler {
       if (role === 'creator' && !flip.creatorDepositConfirmed) {
         flip.creatorTimedOut = true;
         flip.status = 'CANCELLED';
+        flip.creatorDepositWalletAddress = null;
+        flip.challengerDepositWalletAddress = null;
         await flip.save();
 
         await this.notifyCancelledFlip(flip, 'Creator did not deposit tokens within 3 minutes.');
       } else if (role === 'challenger' && !flip.challengerDepositConfirmed) {
         flip.challengerTimedOut = true;
         flip.status = 'CANCELLED';
+        flip.creatorDepositWalletAddress = null;
+        flip.challengerDepositWalletAddress = null;
         await flip.save();
 
         await this.notifyCancelledFlip(flip, 'Challenger did not deposit tokens within 3 minutes.');

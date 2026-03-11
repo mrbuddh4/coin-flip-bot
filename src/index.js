@@ -280,6 +280,8 @@ async function initBot() {
         logger.info('[startup] Auto-cancelling expired challenge', { flipId: flip.id, elapsedSeconds: Math.round(elapsedTime / 1000) });
         flip.status = 'CANCELLED';
         flip.data = { ...flip.data, cancelReason: 'Challenge expired on bot startup' };
+        flip.creatorDepositWalletAddress = null;
+        flip.challengerDepositWalletAddress = null;
         await flip.save();
       } else if (elapsedTime > CHALLENGE_TIMEOUT) {
         // Challenge is in the alert window, re-set the alert timeout
@@ -293,6 +295,8 @@ async function initBot() {
               logger.info('[startup-timeout] Auto-cancelling expired challenge', { flipId: flip.id });
               flipCheck.status = 'CANCELLED';
               flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenge expired' };
+              flipCheck.creatorDepositWalletAddress = null;
+              flipCheck.challengerDepositWalletAddress = null;
               await flipCheck.save();
               
               // Try to notify group
@@ -892,6 +896,12 @@ async function initBot() {
 
         if (!verification.received) {
           logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
+          
+          // Store the detected sender address for refunds (if not already set)
+          if (verification.depositSender && !flip.challengerDepositWalletAddress) {
+            flip.challengerDepositWalletAddress = verification.depositSender;
+            logger.info('[deposit_confirmed] Detected challenger deposit sender', { flipId, sender: verification.depositSender });
+          }
           
           // Check if notification already sent for this verification attempt
           const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
@@ -2307,6 +2317,9 @@ async function handleChallengerDepositConfirm(ctx) {
   // Mark challenger deposit confirmed
   flip.challengerDepositConfirmed = true;
   flip.status = 'COMPLETED';
+  // Clear deposit wallet addresses for next session
+  flip.creatorDepositWalletAddress = null;
+  flip.challengerDepositWalletAddress = null;
   await flip.save();
 
   await ctx.reply(`✅ Deposit confirmed! Executing flip...`);
