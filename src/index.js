@@ -1048,7 +1048,7 @@ async function initBot() {
         }
 
         // If they sent more than the wager, refund the excess
-        const receivedAmount = parseFloat(verification.amount || flip.wagerAmount);
+        const receivedAmount = parseFloat(flip.challengerAccumulatedDeposit || flip.wagerAmount);
         const wagerAmount = parseFloat(flip.wagerAmount);
         
         if (receivedAmount > wagerAmount) {
@@ -1380,7 +1380,7 @@ async function initBot() {
         }
 
         // Check if creator sent more than the wager (overpayment)
-        const creatorReceivedAmount = parseFloat(verification.amount || flip.wagerAmount);
+        const creatorReceivedAmount = parseFloat(flip.creatorAccumulatedDeposit || flip.wagerAmount);
         const creatorWagerAmount = parseFloat(flip.wagerAmount);
         
         if (creatorReceivedAmount > creatorWagerAmount) {
