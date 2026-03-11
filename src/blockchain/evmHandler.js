@@ -170,7 +170,7 @@ class EVMHandler {
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null) {
     try {
       const currentBlock = await this.provider.getBlockNumber();
-      const lookbackBlocks = 5000; // Check recent blocks
+      const lookbackBlocks = 300; // ~1 hour lookback - accumulates multi-deposits in current session only
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
 
       console.log('[getRecentDepositSender] Searching for deposits', {

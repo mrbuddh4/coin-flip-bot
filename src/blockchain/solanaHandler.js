@@ -237,7 +237,8 @@ class SolanaHandler {
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null) {
     try {
       const botPublicKey = new PublicKey(botWalletAddress);
-      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 100 });
+      // Check recent signatures only (~30 minute window on Solana)
+      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 50 });
 
       // Collect all deposits from the most recent event's sender
       let firstSenderFound = null;
