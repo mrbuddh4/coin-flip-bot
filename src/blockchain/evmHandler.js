@@ -229,8 +229,21 @@ class EVMHandler {
               let totalAmount = 0n;
               let transfers = [];
               
+              console.log('[getRecentDepositSender] Filtering events for known sender', {
+                targetSender,
+                totalEventsFound: events.length,
+                eventsFromAddresses: events.map(e => e.args.from.toLowerCase()),
+              });
+              
               for (const event of events) {
-                if (event.args.from.toLowerCase() === targetSender) {
+                const eventSenderLower = event.args.from.toLowerCase();
+                console.log('[getRecentDepositSender] Comparing event sender', {
+                  eventSender: eventSenderLower,
+                  targetSender,
+                  matches: eventSenderLower === targetSender,
+                });
+                
+                if (eventSenderLower === targetSender) {
                   totalAmount += event.args.value;
                   transfers.push({
                     amount: ethers.formatUnits(event.args.value, decimals),
@@ -241,7 +254,11 @@ class EVMHandler {
               }
               
               if (transfers.length === 0) {
-                console.warn('[getRecentDepositSender] No transfers found from known sender', { knownSender });
+                console.warn('[getRecentDepositSender] No transfers found from known sender', { 
+                  knownSender,
+                  targetSender,
+                  eventsChecked: events.length,
+                });
                 return null;
               }
               
@@ -309,13 +326,28 @@ class EVMHandler {
                   targetSender = latestTx.from.toLowerCase();
                 }
                 
+                console.log('[getRecentDepositSender] Paxscan filtering results', {
+                  targetSender,
+                  knownSenderProvided: !!knownSender,
+                  totalTransactions: data.result.length,
+                  transactionsFromAddresses: data.result.map(tx => tx.from.toLowerCase()),
+                });
+                
                 // Sum ALL transfers from target sender
                 let totalAmount = 0;
                 let latestTxForReturn = null;
                 const transfers = [];
                 
                 for (const tx of data.result) {
-                  if (tx.from.toLowerCase() === targetSender) {
+                  const txSenderLower = tx.from.toLowerCase();
+                  console.log('[getRecentDepositSender] Paxscan comparing transaction', {
+                    txSender: txSenderLower,
+                    targetSender,
+                    matches: txSenderLower === targetSender,
+                    txHash: tx.hash,
+                  });
+                  
+                  if (txSenderLower === targetSender) {
                     const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                     totalAmount += txAmount;
                     if (!latestTxForReturn) latestTxForReturn = tx; // Keep track of first match for return
@@ -328,7 +360,11 @@ class EVMHandler {
                 }
                 
                 if (transfers.length === 0) {
-                  console.warn('[getRecentDepositSender] No transfers from target sender via Paxscan', { targetSender, knownSender });
+                  console.warn('[getRecentDepositSender] No transfers from target sender via Paxscan', { 
+                    targetSender,
+                    knownSender,
+                    transactionsChecked: data.result.length,
+                  });
                   return null;
                 }
                 
