@@ -1077,7 +1077,7 @@ async function initBot() {
           }
           
           try {
-            if (verification.depositSender) {
+            if (flip.challengerDepositWalletAddress && flip.challengerAccumulatedDeposit > 0) {
               const blockchainManager = getBlockchainManager();
               const supportedTokens = config.supportedTokens;
               let tokenAddress = 'NATIVE';
@@ -1414,7 +1414,7 @@ async function initBot() {
           }
           
           try {
-            if (verification.depositSender) {
+            if (flip.creatorDepositWalletAddress && flip.creatorAccumulatedDeposit > 0) {
               const blockchainManager = getBlockchainManager();
               const supportedTokens = config.supportedTokens;
               let tokenAddress = 'NATIVE';
