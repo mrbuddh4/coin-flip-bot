@@ -1149,9 +1149,6 @@ async function initBot() {
         });
         await ctx.answerCbQuery('❌ Error confirming deposit');
       }
-      
-      // Delete the button message after handling
-      await ctx.deleteMessage().catch(() => {});
     });
 
     // Handle creator deposit confirmation - posts challenge to group after creator deposit verified
@@ -1404,9 +1401,6 @@ async function initBot() {
         );
 
         logger.info('[creator_deposit_confirmed] Challenge posted to group', { flipId, groupMessageId: groupMessage.message_id });
-        
-        // Delete the button message after handling
-        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error confirming creator deposit', {
           message: error.message,
