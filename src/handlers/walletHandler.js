@@ -90,14 +90,11 @@ class WalletHandler {
       await ctx.editMessageText(
         `<b>Enter your Paxeer wallet address:</b>\n\n` +
         `Send me your Paxeer wallet address (e.g., 0x1234...)`,
-
         {
           parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }, // Clear keyboard
         }
       );
-
-      // Remove the keyboard
-      await ctx.editMessageReplyMarkup(undefined);
     } catch (error) {
       logger.error('Error in handleUpdateEVM:', error);
       await ctx.answerCbQuery('Error updating wallet', true);
@@ -126,11 +123,9 @@ class WalletHandler {
         `Send me your Solana wallet address (e.g., ABC123def...)`,
         {
           parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }, // Clear keyboard
         }
       );
-
-      // Remove the keyboard
-      await ctx.editMessageReplyMarkup(undefined);
     } catch (error) {
       logger.error('Error in handleUpdateSolana:', error);
       await ctx.answerCbQuery('Error updating wallet', true);
@@ -160,11 +155,9 @@ class WalletHandler {
         `Send me your Paxeer wallet address (e.g., 0x1234...)`,
         {
           parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }, // Clear keyboard
         }
       );
-
-      // Remove the keyboard
-      await ctx.editMessageReplyMarkup(undefined);
     } catch (error) {
       logger.error('Error in handleUpdateEVMDeposit:', error);
       await ctx.answerCbQuery('Error updating deposit wallet', true);
@@ -194,11 +187,9 @@ class WalletHandler {
         `Send me your Solana wallet address (e.g., ABC123def...)`,
         {
           parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] }, // Clear keyboard
         }
       );
-
-      // Remove the keyboard
-      await ctx.editMessageReplyMarkup(undefined);
     } catch (error) {
       logger.error('Error in handleUpdateSolanaDeposit:', error);
       await ctx.answerCbQuery('Error updating deposit wallet', true);
@@ -425,12 +416,13 @@ class WalletHandler {
 
   static async checkAndContinueFlip(ctx, userId, models) {
     try {
-      // Find an active flip session
+      // Find the MOST RECENT active flip session
       const flipSession = await models.BotSession.findOne({
         where: {
           userId,
           sessionType: { [Op.in]: ['INITIATING', 'CONFIRMING_DEPOSIT'] },
         },
+        order: [['createdAt', 'DESC']], // Get the most recent one
       });
 
       if (!flipSession) {
@@ -440,7 +432,10 @@ class WalletHandler {
 
       const flip = await models.CoinFlip.findByPk(flipSession.data?.flipId || flipSession.coinFlipId);
       if (!flip) {
-        logger.warn('[checkAndContinueFlip] Flip not found', { flipSessionId: flipSession.id });
+        logger.warn('[checkAndContinueFlip] Flip not found, cleaning up stale session', { 
+          flipSessionId: flipSession.id 
+        });
+        await flipSession.destroy().catch(e => logger.debug('[checkAndContinueFlip] Error destroying stale session', e.message));
         return null;
       }
 
@@ -476,32 +471,42 @@ class WalletHandler {
     }
   }
     try {
-      // Find an active flip session
+      // Find the MOST RECENT active flip session (not expired, highest createdAt)
       const flipSession = await models.BotSession.findOne({
         where: {
           userId,
           sessionType: { [Op.in]: ['INITIATING', 'CONFIRMING_DEPOSIT'] },
         },
+        order: [['createdAt', 'DESC']], // Get the most recent one
       });
 
       if (!flipSession) {
-        logger.info('No active flip to continue', { userId, network });
+        logger.info('[continueFlipAfterWallet] No active flip session found', { userId, network });
         return;
       }
 
       const flip = await models.CoinFlip.findByPk(flipSession.data?.flipId || flipSession.coinFlipId);
       if (!flip) {
-        logger.warn('Flip not found for continuation', { flipSessionId: flipSession.id });
+        logger.warn('[continueFlipAfterWallet] Flip not found, cleaning up stale session', { 
+          flipSessionId: flipSession.id,
+          flipIdFromData: flipSession.data?.flipId,
+          coinFlipIdFromSession: flipSession.coinFlipId
+        });
+        // Clean up the stale session
+        await flipSession.destroy().catch(e => logger.debug('[continueFlipAfterWallet] Error destroying stale session', e.message));
         return;
       }
 
       // Check if this is the right network
       if (flip.tokenNetwork !== network) {
-        logger.info('Flip network mismatch, skipping auto-continue', { flipNetwork: flip.tokenNetwork, userNetwork: network });
+        logger.info('[continueFlipAfterWallet] Flip network mismatch, skipping auto-continue', { 
+          flipNetwork: flip.tokenNetwork, 
+          userNetwork: network 
+        });
         return;
       }
 
-      logger.info('Continuing flip after wallet update', { flipId: flip.id, userId, network });
+      logger.info('[continueFlipAfterWallet] Continuing flip after wallet update', { flipId: flip.id, userId, network });
 
       // Check if BOTH receive and deposit wallets are set
       const userProfile = await models.UserProfile.findByPk(userId);
