@@ -268,13 +268,7 @@ class WalletHandler {
           where: { id: session.id },
         });
 
-        // Check if there's a pending flip to continue
-        const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
-        
         const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
-        if (pendingFlip) {
-          buttons.push([Markup.button.callback('🎮 Continue Flip', 'continue_flip_after_wallet')]);
-        }
 
         await ctx.reply(
           `✅ Paxeer wallet address updated!\n\n` +
@@ -307,13 +301,7 @@ class WalletHandler {
           where: { id: session.id },
         });
 
-        // Check if there's a pending flip to continue
-        const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
-        
         const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
-        if (pendingFlip) {
-          buttons.push([Markup.button.callback('🎮 Continue Flip', 'continue_flip_after_wallet')]);
-        }
 
         await ctx.reply(
           `✅ Solana wallet address updated!\n\n` +
@@ -350,9 +338,6 @@ class WalletHandler {
         const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
         
         const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
-        if (pendingFlip) {
-          buttons.push([Markup.button.callback('🎮 Continue Flip', 'continue_flip_after_wallet')]);
-        }
 
         await ctx.reply(
           `✅ Paxeer sending wallet set!\n\n` +
@@ -390,9 +375,6 @@ class WalletHandler {
         const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
         
         const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
-        if (pendingFlip) {
-          buttons.push([Markup.button.callback('🎮 Continue Flip', 'continue_flip_after_wallet')]);
-        }
 
         await ctx.reply(
           `✅ Solana sending wallet set!\n\n` +
@@ -418,62 +400,6 @@ class WalletHandler {
     }
   }
 
-  static async checkAndContinueFlip(ctx, userId, models) {
-    try {
-      // Find the MOST RECENT active flip session
-      const flipSession = await models.BotSession.findOne({
-        where: {
-          userId,
-          sessionType: { [Op.in]: ['INITIATING', 'CONFIRMING_DEPOSIT'] },
-        },
-        order: [['createdAt', 'DESC']], // Get the most recent one
-      });
-
-      if (!flipSession) {
-        logger.info('[checkAndContinueFlip] No active flip session', { userId });
-        return null;
-      }
-
-      const flip = await models.CoinFlip.findByPk(flipSession.data?.flipId || flipSession.coinFlipId);
-      if (!flip) {
-        logger.warn('[checkAndContinueFlip] Flip not found, cleaning up stale session', { 
-          flipSessionId: flipSession.id 
-        });
-        await flipSession.destroy().catch(e => logger.debug('[checkAndContinueFlip] Error destroying stale session', e.message));
-        return null;
-      }
-
-      // Check if user has BOTH wallets for this network
-      const userProfile = await models.UserProfile.findByPk(userId);
-      const receiveWallet = flip.tokenNetwork === 'EVM' 
-        ? userProfile?.evmWalletAddress 
-        : userProfile?.solanaWalletAddress;
-      const depositWallet = flip.tokenNetwork === 'EVM' 
-        ? userProfile?.evmDepositWalletAddress 
-        : userProfile?.solanaDepositWalletAddress;
-
-      if (!receiveWallet || !depositWallet) {
-        logger.info('[checkAndContinueFlip] Missing wallets', { 
-          flipId: flip.id, 
-          hasReceive: !!receiveWallet,
-          hasDeposit: !!depositWallet 
-        });
-        return null; // Still missing wallets
-      }
-
-      // Both wallets are set and there's a pending flip - show continue button
-      return {
-        flipId: flip.id,
-        sessionType: flipSession.sessionType,
-        tokenNetwork: flip.tokenNetwork,
-        wagerAmount: flip.wagerAmount,
-        tokenSymbol: flip.tokenSymbol,
-      };
-    } catch (error) {
-      logger.error('[checkAndContinueFlip] Error checking flip', error);
-      return null;
-    }
-  }
 
   static async continueFlipAfterWallet(ctx, userId, models, network) {
     try {
