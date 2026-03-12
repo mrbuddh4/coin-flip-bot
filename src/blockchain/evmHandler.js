@@ -392,6 +392,21 @@ class EVMHandler {
                   
                   // Try to find transfers from target sender in the all-tokens result
                   if (allTokensData.status === '1' && allTokensData.result && allTokensData.result.length > 0) {
+                    console.log('[getRecentDepositSender] DEBUG - All ERC20 tokens query has results', {
+                      total: allTokensData.result.length,
+                      targetSender,
+                      botWalletAddress: botWalletAddress.toLowerCase(),
+                      flipCreatedAtSeconds,
+                      firstFive: allTokensData.result.slice(0, 5).map(tx => ({
+                        from: tx.from,
+                        to: tx.to,
+                        value: tx.value,
+                        contractAddress: tx.contractAddress,
+                        timeStamp: tx.timeStamp,
+                        hash: tx.hash,
+                      })),
+                    });
+                    
                     for (const tx of allTokensData.result) {
                       const txSenderLower = tx.from.toLowerCase();
                       const txRecipientLower = tx.to?.toLowerCase() || '';
@@ -442,6 +457,21 @@ class EVMHandler {
                     resultCount: nativeData.result?.length || 0,
                   });
                   
+                  // Debug: Log all native transactions
+                  console.log('[getRecentDepositSender] DEBUG - All native transactions in response', {
+                    total: nativeData.result.length,
+                    targetSender,
+                    botWalletAddress: botWalletAddress.toLowerCase(),
+                    flipCreatedAtSeconds,
+                    firstFive: nativeData.result.slice(0, 5).map(tx => ({
+                      from: tx.from,
+                      to: tx.to,
+                      value: tx.value,
+                      timeStamp: tx.timeStamp,
+                      hash: tx.hash,
+                    })),
+                  });
+                  
                   // Try to find native transfers from target sender
                   if (nativeData.status === '1' && nativeData.result && nativeData.result.length > 0) {
                     for (const tx of nativeData.result) {
@@ -451,6 +481,20 @@ class EVMHandler {
                       
                       const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
                       const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                      
+                      // Debug log each transaction check
+                      if (txSenderLower === targetSender || txRecipientLower === botWalletAddress.toLowerCase()) {
+                        console.log('[getRecentDepositSender] DEBUG - Checking native tx', {
+                          from: txSenderLower,
+                          to: txRecipientLower,
+                          value: tx.value,
+                          timestamp: txTimestamp,
+                          isValidSender,
+                          isAfterFlipCreation,
+                          targetSender,
+                          botWalletAddress: botWalletAddress.toLowerCase(),
+                        });
+                      }
                       
                       if (isValidSender && isAfterFlipCreation) {
                         const txAmount = parseFloat(ethers.formatUnits(tx.value, 18)); // Native transfers use 18 decimals
