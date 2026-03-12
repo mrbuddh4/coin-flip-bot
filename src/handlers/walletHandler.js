@@ -6,10 +6,12 @@ class WalletHandler {
   static async handleWalletCommand(ctx) {
     const userId = ctx.from.id;
     const models = ctx.state.models;
+    logger.info(`[WALLET] Command received from user ${userId}`);
 
     try {
       // Ensure deposit wallet columns exist (in case migration hasn't run)
       try {
+        logger.info(`[WALLET] Running database migration for user ${userId}`);
         await models.sequelize.query(`
           ALTER TABLE "UserProfiles" 
           ADD COLUMN IF NOT EXISTS "evmDepositWalletAddress" VARCHAR(255)
@@ -18,10 +20,13 @@ class WalletHandler {
           ALTER TABLE "UserProfiles" 
           ADD COLUMN IF NOT EXISTS "solanaDepositWalletAddress" VARCHAR(255)
         `);
+        logger.info(`[WALLET] Migration complete for user ${userId}`);
       } catch (migrationErr) {
         // Columns might already exist, continue
         logger.debug('Deposit wallet columns already exist or migration handled', migrationErr.message);
       }
+      
+      logger.info(`[WALLET] Fetching profile for user ${userId}`);
       
       // Get or create user profile
       let profile = await models.UserProfile.findByPk(userId);
@@ -33,6 +38,13 @@ class WalletHandler {
       const solAddress = profile.solanaWalletAddress || '(not set)';
       const evmDepositWallet = profile.evmDepositWalletAddress || '(not set)';
       const solDepositWallet = profile.solanaDepositWalletAddress || '(not set)';
+
+      logger.info(`[WALLET] Sending reply to user ${userId}`, {
+        evm: evmAddress,
+        sol: solAddress,
+        evmDeposit: evmDepositWallet,
+        solDeposit: solDepositWallet,
+      });
 
       await ctx.reply(
         `<b>💳 Your Wallet Addresses</b>\n\n` +
@@ -53,7 +65,7 @@ class WalletHandler {
         }
       );
     } catch (error) {
-      logger.error('Error in handleWalletCommand:', error);
+      logger.error(`[WALLET] Error in handleWalletCommand for user ${userId}:`, error);
       await ctx.reply('❌ Error loading wallet profile. Please try again.');
     }
   }
