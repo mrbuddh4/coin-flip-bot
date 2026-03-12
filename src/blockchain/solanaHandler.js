@@ -313,16 +313,49 @@ class SolanaHandler {
           // Check for token transfers
           if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
             for (const transfer of tx.tokenTransfers) {
-              // Look for transfers TO the bot wallet
-              if (transfer.toUserAccount !== botWalletAddress) continue;
+              // For SPL tokens, transfers go to an Associated Token Account (ATA), not the wallet directly
+              // Accept if:
+              // 1. Transfer is to the bot's main wallet (direct SOL transfer)
+              // 2. Transfer is to an ATA (computed based on mint and bot wallet)
+              
+              let isTransferToBot = false;
+              const transferMintPublicKey = new PublicKey(transfer.mint);
+              const botPublicKey = new PublicKey(botWalletAddress);
+              
+              try {
+                const expectedBotATA = await getAssociatedTokenAddress(
+                  transferMintPublicKey,
+                  botPublicKey
+                );
+                const expectedBotATAStr = expectedBotATA.toBase58();
+                
+                if (transfer.toUserAccount === botWalletAddress || transfer.toUserAccount === expectedBotATAStr) {
+                  isTransferToBot = true;
+                }
+              } catch (ataErr) {
+                // If ATA calculation fails, just check direct wallet
+                if (transfer.toUserAccount === botWalletAddress) {
+                  isTransferToBot = true;
+                }
+              }
+              
+              if (!isTransferToBot) {
+                console.log('[getRecentDepositSender] Skipping transfer to non-bot account', {
+                  toAccount: transfer.toUserAccount,
+                  botWallet: botWalletAddress,
+                  mint: transfer.mint,
+                });
+                continue;
+              }
 
               const transferMint = transfer.mint;
               const sender = transfer.fromUserAccount;
               const amount = parseFloat(transfer.tokenAmount);
               const decimals = transfer.tokenDecimals || 6;
 
-              console.log('[getRecentDepositSender] Found token transfer', {
+              console.log('[getRecentDepositSender] Found token transfer TO BOT', {
                 sender,
+                recipient: transfer.toUserAccount,
                 mint: transferMint,
                 amount,
                 signature: tx.signature,
@@ -527,8 +560,33 @@ class SolanaHandler {
           // Look for token transfers FROM the sender TO the bot of a wrong token
           if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
             for (const transfer of tx.tokenTransfers) {
-              // Look for transfers TO the bot FROM the sender
-              if (transfer.toUserAccount !== botWalletAddress || transfer.fromUserAccount !== senderAddress) {
+              // Check if sender matches
+              if (transfer.fromUserAccount !== senderAddress) {
+                continue;
+              }
+              
+              // For SPL tokens, check if transfer went to bot's ATA for that mint
+              let isTransferToBot = false;
+              const transferMintPublicKey = new PublicKey(transfer.mint);
+              const botPublicKey = new PublicKey(botWalletAddress);
+              
+              try {
+                const expectedBotATA = await getAssociatedTokenAddress(
+                  transferMintPublicKey,
+                  botPublicKey
+                );
+                const expectedBotATAStr = expectedBotATA.toBase58();
+                
+                if (transfer.toUserAccount === botWalletAddress || transfer.toUserAccount === expectedBotATAStr) {
+                  isTransferToBot = true;
+                }
+              } catch (ataErr) {
+                if (transfer.toUserAccount === botWalletAddress) {
+                  isTransferToBot = true;
+                }
+              }
+              
+              if (!isTransferToBot) {
                 continue;
               }
 
