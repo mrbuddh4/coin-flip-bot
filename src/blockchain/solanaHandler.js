@@ -412,32 +412,6 @@ class SolanaHandler {
               }
             }
           }
-
-          // Check for native SOL transfers
-          if (!tokenMint && tx.nativeTransfers && tx.nativeTransfers.length > 0) {
-            for (const transfer of tx.nativeTransfers) {
-              // Look for transfers TO the bot wallet
-              if (transfer.toUserAccount !== botWalletAddress) continue;
-
-              const sender = transfer.fromUserAccount;
-              const amount = transfer.amount / LAMPORTS_PER_SOL;
-
-              console.log('[getRecentDepositSender] Found native SOL transfer', {
-                sender,
-                amount,
-                signature: tx.signature,
-              });
-
-              deposits.push({
-                sender,
-                amount: amount.toString(),
-                signature: tx.signature,
-                slot: tx.slot || 0,
-                tokenMint: null,
-                wrongToken: null,
-              });
-            }
-          }
         } catch (txErr) {
           console.warn('[getRecentDepositSender] Error processing transaction:', txErr.message);
           continue;
