@@ -457,17 +457,29 @@ class EVMHandler {
                     resultCount: nativeData.result?.length || 0,
                   });
                   
-                  // Debug: Log all native transactions
+                  // Debug: Log all native transactions with timestamp info
+                  const now = Math.floor(Date.now() / 1000);
+                  const senderAddresses = new Set(nativeData.result.map(tx => tx.from.toLowerCase()));
+                  const targetIsFundingSender = senderAddresses.has(targetSender.toLowerCase());
+                  
                   console.log('[getRecentDepositSender] DEBUG - All native transactions in response', {
                     total: nativeData.result.length,
                     targetSender,
                     botWalletAddress: botWalletAddress.toLowerCase(),
                     flipCreatedAtSeconds,
+                    currentTimeSeconds: now,
+                    flipAge: flipCreatedAtSeconds ? (now - flipCreatedAtSeconds) + ' seconds ago' : 'N/A',
+                    targetIsFundingSender,
+                    uniqueSenders: Array.from(senderAddresses),
+                    fromBlock,
+                    currentBlock,
+                    blockRange: currentBlock - fromBlock,
                     firstFive: nativeData.result.slice(0, 5).map(tx => ({
                       from: tx.from,
                       to: tx.to,
                       value: tx.value,
                       timeStamp: tx.timeStamp,
+                      txAgeSeconds: now - parseInt(tx.timeStamp, 10),
                       hash: tx.hash,
                     })),
                   });
@@ -523,14 +535,16 @@ class EVMHandler {
                 }
               }
               
-              // If knownSender and still no transfers found, reject to prevent fraud
+              // If knownSender and still no transfers found, log but DON'T reject yet
+              // The user might be using a different wallet in THIS session
+              // Fall through to the final fallback below which accepts ANY sender
               if (transfers.length === 0 && knownSender) {
-                console.warn('[getRecentDepositSender] Known sender specified but no deposits found at all (checked tokens + native) - rejecting', {
+                console.warn('[getRecentDepositSender] Known sender specified but NO deposits found from that wallet', {
                   knownSender,
                   botWalletAddress,
                   expectedToken: tokenAddress.toLowerCase(),
+                  message: 'User may be using a different wallet - will accept deposits from ANY sender below',
                 });
-                return null;
               }
               
               // Fallback: accumulate ALL recent incoming transfers to bot wallet that are after flip creation
