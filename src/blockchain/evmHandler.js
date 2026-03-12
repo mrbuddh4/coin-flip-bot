@@ -96,7 +96,7 @@ class EVMHandler {
       const receipt = await tx.wait();
 
       return {
-        txHash: receipt.transactionHash,
+        txHash: tx.hash,
         from: receipt.from,
         to: receipt.to,
         blockNumber: receipt.blockNumber,
