@@ -259,14 +259,15 @@ class WalletHandler {
       const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
       // Store wallet address in flip
+      const userProfile = await models.UserProfile.findByPk(userId);
       if (flipSession.sessionType === 'INITIATING') {
-        flip.creatorDepositWalletAddress = network === 'Paxeer' ? 
-          (await models.UserProfile.findByPk(userId))?.paxeerWalletAddress :
-          (await models.UserProfile.findByPk(userId))?.solanaWalletAddress;
+        flip.creatorDepositWalletAddress = network === 'EVM' ? 
+          userProfile?.evmWalletAddress :
+          userProfile?.solanaWalletAddress;
       } else if (flipSession.sessionType === 'CONFIRMING_DEPOSIT') {
-        flip.challengerDepositWalletAddress = network === 'Paxeer' ? 
-          (await models.UserProfile.findByPk(userId))?.paxeerWalletAddress :
-          (await models.UserProfile.findByPk(userId))?.solanaWalletAddress;
+        flip.challengerDepositWalletAddress = network === 'EVM' ? 
+          userProfile?.evmWalletAddress :
+          userProfile?.solanaWalletAddress;
       }
       await flip.save();
 
@@ -283,7 +284,7 @@ class WalletHandler {
           reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback(
               '✅ I Sent the Deposit',
-              flipSession.sessionType === 'INITIATING' ? `creator_deposit_confirmed_${flip.id}` : `deposit_confirmed_${flipSession.id}`
+              flipSession.sessionType === 'INITIATING' ? `creator_deposit_confirmed_${flip.id}` : `deposit_confirmed_${flip.id}`
             )],
           ]).reply_markup,
         }
