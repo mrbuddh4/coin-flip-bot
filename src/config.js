@@ -26,6 +26,7 @@ module.exports = {
     heliusApiKey: process.env.SOLANA_HELIUS_API_KEY,
     privateKey: process.env.SOL_BOT_PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY,
     walletAddress: process.env.SOL_BOT_WALLET_ADDRESS, // Optional: explicit address (derived from private key if not set)
+    sidTokenATA: process.env.SOL_SID_TOKEN_ATA || 'BoyaYRYtLtCbKdGFLP3aMhdPm3asfUCMbeo7sh1YHfzk', // Pre-computed ATA for SID token
     devWallet: process.env.SOL_DEV_WALLET,
   },
   bot: {

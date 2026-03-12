@@ -321,22 +321,12 @@ class SolanaHandler {
               
               if (tokenMint) {
                 // Looking for a specific SPL token: ONLY accept transfers to the bot's ATA for that token
-                const transferMintPublicKey = new PublicKey(transfer.mint);
-                const botPublicKey = new PublicKey(botWalletAddress);
+                // Use pre-computed ATA from config (deterministic derivation of token mint + bot wallet)
+                const expectedBotATAStr = config.solana.sidTokenATA;
                 
-                try {
-                  const expectedBotATA = await getAssociatedTokenAddress(
-                    transferMintPublicKey,
-                    botPublicKey
-                  );
-                  const expectedBotATAStr = expectedBotATA.toBase58();
-                  
-                  // For SPL tokens: ONLY accept ATA, not main wallet
-                  if (transfer.toUserAccount === expectedBotATAStr) {
-                    isTransferToBot = true;
-                  }
-                } catch (ataErr) {
-                  console.warn('[getRecentDepositSender] Could not calculate ATA:', ataErr.message);
+                // For SPL tokens: ONLY accept ATA, not main wallet
+                if (transfer.toUserAccount === expectedBotATAStr) {
+                  isTransferToBot = true;
                 }
               } else {
                 // Looking for native SOL: accept transfers to main wallet
@@ -548,22 +538,13 @@ class SolanaHandler {
               // For SPL tokens, check if transfer went to bot's ATA for that mint
               // We only need to check ATA since SPL tokens never go to main wallet
               let isTransferToBot = false;
-              const transferMintPublicKey = new PublicKey(transfer.mint);
-              const botPublicKey = new PublicKey(botWalletAddress);
               
-              try {
-                const expectedBotATA = await getAssociatedTokenAddress(
-                  transferMintPublicKey,
-                  botPublicKey
-                );
-                const expectedBotATAStr = expectedBotATA.toBase58();
-                
-                // For SPL tokens (wrong token refunds): ONLY accept ATA
-                if (transfer.toUserAccount === expectedBotATAStr) {
-                  isTransferToBot = true;
-                }
-              } catch (ataErr) {
-                console.warn('[refundIncorrectTokens] Could not calculate ATA:', ataErr.message);
+              // Use pre-computed ATA from config (deterministic derivation of token mint + bot wallet)
+              const expectedBotATAStr = config.solana.sidTokenATA;
+              
+              // For SPL tokens (wrong token refunds): ONLY accept ATA
+              if (transfer.toUserAccount === expectedBotATAStr) {
+                isTransferToBot = true;
               }
               
               if (!isTransferToBot) {

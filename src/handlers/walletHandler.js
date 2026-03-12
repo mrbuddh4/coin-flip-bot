@@ -532,29 +532,14 @@ class WalletHandler {
       let botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
       const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
-      // For Solana SPL tokens, compute and show the bot's ATA instead of main wallet
+      // For Solana SPL tokens (SID), use the pre-computed ATA instead of main wallet
       if (flip.tokenNetwork === 'Solana' && flip.tokenAddress) {
-        try {
-          const { PublicKey } = require('@solana/web3.js');
-          const { getAssociatedTokenAddress } = require('@solana/spl-token');
-          
-          const botPublicKey = new PublicKey(botWalletAddress);
-          const tokenMintPublicKey = new PublicKey(flip.tokenAddress);
-          
-          const botATA = await getAssociatedTokenAddress(
-            tokenMintPublicKey,
-            botPublicKey
-          );
-          botWalletAddress = botATA.toBase58();
-          
-          console.log('[continueFlipAfterWallet] Using bot ATA for Solana SPL token deposit', {
-            mint: flip.tokenAddress,
-            ata: botWalletAddress,
-          });
-        } catch (ataErr) {
-          logger.error('[continueFlipAfterWallet] Failed to compute ATA:', ataErr);
-          // Fall back to main wallet if ATA computation fails
-        }
+        const config = require('../config');
+        botWalletAddress = config.solana.sidTokenATA;
+        
+        console.log('[continueFlipAfterWallet] Using pre-computed SID ATA for Solana deposit', {
+          ata: botWalletAddress,
+        });
       }
 
       // UserProfile is source of truth for wallet addresses - don't cache on flip
