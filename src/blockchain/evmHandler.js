@@ -249,7 +249,7 @@ class EVMHandler {
             }
             
             // If STILL no ERC20 transfers, check for native transfers
-            if ((!data.result || data.result.length === 0) && data.status === '1') {
+            if ((!data.result || data.result.length === 0)) {
               console.log('[getRecentDepositSender] No ERC20 transfers found, checking for native token transfers (PAX)', {
                 expectedToken: tokenAddress.toLowerCase(),
               });
