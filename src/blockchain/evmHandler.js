@@ -382,6 +382,139 @@ class EVMHandler {
       return null;
     }
   }
+
+  /**
+   * Find and refund incorrect token transfers (tokens that don't match the expected contract)
+   */
+  async refundIncorrectTokens(botWalletAddress, expectedTokenAddress, senderAddress, flipCreatedAt = null) {
+    try {
+      const currentBlock = await this.provider.getBlockNumber();
+      const lookbackBlocks = 10000;
+      const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
+
+      console.log('[refundIncorrectTokens] Searching for incorrect token transfers', {
+        botWallet: botWalletAddress,
+        expectedToken: expectedTokenAddress,
+        sender: senderAddress,
+        fromBlock,
+        toBlock: currentBlock,
+      });
+
+      try {
+        const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+        
+        const response = await fetch(paxscanUrl);
+        const data = await response.json();
+
+        console.log('[refundIncorrectTokens] Paxscan response', {
+          status: data.status,
+          resultCount: data.result?.length || 0,
+        });
+
+        if (data.status === '1' && data.result && data.result.length > 0) {
+          const senderLower = senderAddress.toLowerCase();
+          const expectedTokenLower = expectedTokenAddress.toLowerCase();
+          const botWalletLower = botWalletAddress.toLowerCase();
+          const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
+          const incorrectTransfers = [];
+
+          for (const tx of data.result) {
+            const txSenderLower = tx.from.toLowerCase();
+            const txRecipientLower = tx.to?.toLowerCase() || '';
+            const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
+            const txTimestamp = parseInt(tx.timeStamp, 10);
+            
+            // Find transfers TO the bot FROM the user that are INCORRECT tokens
+            const isFromSender = txSenderLower === senderLower;
+            const isToBotWallet = txRecipientLower === botWalletLower;
+            const isIncorrectToken = txContractAddressLower !== expectedTokenLower;
+            const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+
+            if (isFromSender && isToBotWallet && isIncorrectToken && isAfterFlipCreation) {
+              incorrectTransfers.push({
+                tokenAddress: txContractAddressLower,
+                amount: tx.value,
+                txHash: tx.hash,
+                sender: txSenderLower,
+              });
+            }
+          }
+
+          if (incorrectTransfers.length > 0) {
+            console.log('[refundIncorrectTokens] Found incorrect token transfers to refund', {
+              count: incorrectTransfers.length,
+              transfers: incorrectTransfers,
+            });
+
+            // Refund each incorrect token
+            const refundResults = [];
+            for (const transfer of incorrectTransfers) {
+              try {
+                // Get token decimals
+                const erc20ABI = ['function decimals() view returns (uint8)'];
+                const contract = new ethers.Contract(transfer.tokenAddress, erc20ABI, this.provider);
+                let decimals = 18;
+                
+                try {
+                  decimals = await contract.decimals();
+                } catch (err) {
+                  console.warn('[refundIncorrectTokens] Could not get token decimals, assuming 18', { tokenAddress: transfer.tokenAddress });
+                }
+
+                // Send the token back to sender
+                const amountFormatted = ethers.formatUnits(transfer.amount, decimals);
+                const result = await this.transferToken(
+                  transfer.tokenAddress,
+                  config.evm.privateKey,
+                  senderAddress,
+                  amountFormatted,
+                  decimals
+                );
+
+                refundResults.push({
+                  tokenAddress: transfer.tokenAddress,
+                  amount: amountFormatted,
+                  refundTxHash: result.txHash,
+                  status: 'success',
+                });
+
+                console.log('[refundIncorrectTokens] Refunded incorrect token', {
+                  tokenAddress: transfer.tokenAddress,
+                  amount: amountFormatted,
+                  refundTxHash: result.txHash,
+                  recipient: senderAddress,
+                });
+              } catch (refundErr) {
+                console.error('[refundIncorrectTokens] Failed to refund token', {
+                  tokenAddress: transfer.tokenAddress,
+                  error: refundErr.message,
+                });
+
+                refundResults.push({
+                  tokenAddress: transfer.tokenAddress,
+                  amount: ethers.formatUnits(transfer.amount, 18),
+                  status: 'failed',
+                  error: refundErr.message,
+                });
+              }
+            }
+
+            return refundResults;
+          } else {
+            console.log('[refundIncorrectTokens] No incorrect token transfers found');
+            return [];
+          }
+        }
+      } catch (paxscanErr) {
+        console.error('[refundIncorrectTokens] Paxscan API query failed', { error: paxscanErr.message });
+      }
+
+      return [];
+    } catch (error) {
+      console.error('[refundIncorrectTokens] Error:', error.message);
+      return [];
+    }
+  }
 }
 
 module.exports = EVMHandler;

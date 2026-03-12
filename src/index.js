@@ -986,6 +986,49 @@ async function initBot() {
           const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
           const timeSinceLastNotification = Date.now() - lastNotificationTime;
           
+          // Attempt to refund any incorrect tokens that were sent
+          if (timeSinceLastNotification > 30000 && flip.challengerDepositWalletAddress) {
+            try {
+              const blockchainManager = getBlockchainManager();
+              const supportedTokens = config.supportedTokens;
+              let tokenAddress = 'NATIVE';
+              
+              for (const key in supportedTokens) {
+                if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
+                  tokenAddress = supportedTokens[key].address || 'NATIVE';
+                  break;
+                }
+              }
+
+              if (tokenAddress !== 'NATIVE') {
+                logger.info('[deposit_confirmed] Attempting to refund incorrect tokens', { 
+                  flipId, 
+                  expectedToken: tokenAddress, 
+                  sender: flip.challengerDepositWalletAddress 
+                });
+                
+                const refundResults = await blockchainManager.refundIncorrectTokens(
+                  flip.tokenNetwork,
+                  tokenAddress,
+                  flip.challengerDepositWalletAddress,
+                  flip.createdAt
+                );
+
+                if (refundResults.length > 0) {
+                  logger.info('[deposit_confirmed] Refunded incorrect tokens', { 
+                    flipId, 
+                    refunds: refundResults 
+                  });
+                }
+              }
+            } catch (refundErr) {
+              logger.error('[deposit_confirmed] Error refunding incorrect tokens', { 
+                flipId, 
+                error: refundErr.message 
+              });
+            }
+          }
+          
           // Only send notification if more than 30 seconds have passed since last one
           if (timeSinceLastNotification > 30000) {
             const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });

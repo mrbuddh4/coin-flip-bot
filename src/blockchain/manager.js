@@ -205,6 +205,27 @@ class BlockchainManager {
   }
 
   /**
+   * Refund incorrect token transfers (tokens that don't match the expected contract)
+   */
+  async refundIncorrectTokens(network, expectedTokenAddress, senderAddress, flipCreatedAt = null) {
+    const handler = this.getHandler(network);
+
+    if (network !== 'EVM' || !handler.refundIncorrectTokens) {
+      console.log('[refundIncorrectTokens] Refund not supported for network:', network);
+      return [];
+    }
+
+    try {
+      const botWallet = network === 'EVM' ? config.evm.botWallet : config.solana.botWallet;
+      const results = await handler.refundIncorrectTokens(botWallet, expectedTokenAddress, senderAddress, flipCreatedAt);
+      return results;
+    } catch (error) {
+      console.error('[refundIncorrectTokens] Error refunding incorrect tokens:', error);
+      return [];
+    }
+  }
+
+  /**
    * Check transaction confirmation
    */
   async checkTransactionConfirmation(network, txHash, requiredConfirmations = 1) {
