@@ -853,29 +853,21 @@ async function initBot() {
     bot.action(/^deposit_confirmed_(.+)$/, async (ctx) => {
       try {
         const { models } = getDB();
-        const sessionId = ctx.match[1];
+        const flipId = ctx.match[1];  // This is actually the flipId, not sessionId
         const userId = ctx.from.id;
 
-        logger.info('[deposit_confirmed] Button clicked', { sessionId, userId });
+        logger.info('[deposit_confirmed] Button clicked', { flipId, userId });
 
-        const session = await models.BotSession.findByPk(sessionId);
-        if (!session) {
-          logger.warn('[deposit_confirmed] Session not found', { sessionId });
+        const flip = await models.CoinFlip.findByPk(flipId);
+        if (!flip) {
+          logger.warn('[deposit_confirmed] Flip not found', { flipId });
           await ctx.answerCbQuery('❌ Session expired');
           return;
         }
 
-        // Verify user
-        if (parseInt(session.userId) !== userId) {
+        // Verify user is the challenger
+        if (parseInt(flip.challengerId) !== userId) {
           await ctx.answerCbQuery('❌ This is not your challenge');
-          return;
-        }
-
-        const flipId = session.data?.flipId;
-        const flip = await models.CoinFlip.findByPk(flipId);
-
-        if (!flip) {
-          await ctx.answerCbQuery('❌ Flip not found');
           return;
         }
 
