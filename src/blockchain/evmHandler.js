@@ -174,6 +174,9 @@ class EVMHandler {
       const currentBlock = await this.provider.getBlockNumber();
       const lookbackBlocks = 10000; // Paxscan doesn't have RPC restrictions
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
+      
+      // Declare once at function scope so all queries (main, fallback 1, fallback 2, fallback 3) can access
+      const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
 
       console.log('[getRecentDepositSender] Searching for deposits', {
         botWallet: botWalletAddress,
@@ -310,9 +313,6 @@ class EVMHandler {
             let totalAmount = 0;
             let latestTxForReturn = null;
             const transfers = [];
-            
-            // Convert flipCreatedAt to seconds for timestamp comparisons (must be BEFORE fallback queries use it)
-            const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
             
             for (const tx of data.result) {
               const txSenderLower = tx.from.toLowerCase();
@@ -496,7 +496,6 @@ class EVMHandler {
               let fallbackLatestTx = null;
               let fallbackSender = null;
               const fallbackTransfers = [];
-              const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
               
               for (const tx of data.result) {
                 const txRecipientLower = tx.to?.toLowerCase() || '';
@@ -656,7 +655,6 @@ class EVMHandler {
           const senderLower = senderAddress.toLowerCase();
           const expectedTokenLower = expectedTokenAddress.toLowerCase();
           const botWalletLower = botWalletAddress.toLowerCase();
-          const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
           const incorrectTransfers = [];
 
           for (const tx of data.result) {
