@@ -240,7 +240,7 @@ class BlockchainManager {
   async refundIncorrectTokens(network, expectedTokenAddress, senderAddress, flipCreatedAt = null) {
     const handler = this.getHandler(network);
 
-    if (network !== 'EVM' || !handler.refundIncorrectTokens) {
+    if (!handler.refundIncorrectTokens) {
       console.log('[refundIncorrectTokens] Refund not supported for network:', network);
       return [];
     }

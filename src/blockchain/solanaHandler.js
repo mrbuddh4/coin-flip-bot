@@ -238,10 +238,11 @@ class SolanaHandler {
     try {
       const botPublicKey = new PublicKey(botWalletAddress);
       // Check recent signatures only (~30 minute window on Solana)
-      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 50 });
+      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 100 });
 
       // Collect all deposits to find sender info
       let deposits = [];
+      let wrongTokenDeposits = [];
       
       for (const sig of signatures) {
         try {
@@ -277,11 +278,27 @@ class SolanaHandler {
                       const destAccount = tx.message.accountKeys[destIndex];
                       const sourceAccount = tx.message.accountKeys[sourceIndex];
                       
-                      // Check if this is the bot's token account receiving tokens
+                      // Check if this is any token transfer to the bot
                       if (destAccount && sourceAccount) {
                         const destStr = destAccount.toBase58();
                         
-                        // Get bot's ATA for the token mint
+                        // Parse the token instruction to get token mint
+                        let transferTokenMint = null;
+                        try {
+                          // Token program instruction format: opcode (1) + amount (8) + other data
+                          const buffer = Buffer.from(instruction.data);
+                          if (buffer.length >= 1) {
+                            // Get the mint from the source account's parsed data
+                            const sourceAccountInfo = await this.connection.getParsedAccountInfo(sourceAccount);
+                            if (sourceAccountInfo.value?.data?.parsed?.info?.mint) {
+                              transferTokenMint = sourceAccountInfo.value.data.parsed.info.mint;
+                            }
+                          }
+                        } catch (err) {
+                          console.warn('Could not determine token mint from transfer');
+                        }
+                        
+                        // Get bot's ATA for the token mint to check if this is received by bot
                         try {
                           const { getAssociatedTokenAddress } = require('@solana/spl-token');
                           const botATA = await getAssociatedTokenAddress(
@@ -290,41 +307,57 @@ class SolanaHandler {
                           );
                           const botATAStr = botATA.toBase58();
                           
-                          // If destination is bot's ATA, this is a deposit
-                          if (destStr === botATAStr) {
-                            // Try to find the original sender from the authority account
-                            if (tx.message.accountKeys.length > 2) {
-                              const authorityIndex = instruction.accounts[2];
-                              if (authorityIndex !== undefined) {
-                                const authority = tx.message.accountKeys[authorityIndex];
-                                const authorityStr = authority.toBase58();
-                                
-                                // Extract amount from instruction data if available
-                                // Token program Transfer instruction: opcode (1 byte) + amount (8 bytes little-endian)
-                                if (instruction.data && instruction.data.length > 1) {
-                                  const buffer = Buffer.from(instruction.data);
-                                  if (buffer.length >= 9) {
-                                    // Read 8 bytes for amount (little-endian)
-                                    const amount = buffer.readBigUInt64LE(1);
-                                    
-                                    // Get token decimals from account data
-                                    let decimals = 6; // Default for most SPL tokens
-                                    try {
-                                      const mintInfo = await this.connection.getParsedAccountInfo(new PublicKey(tokenMint));
-                                      if (mintInfo.value?.data?.parsed?.info?.decimals !== undefined) {
-                                        decimals = mintInfo.value.data.parsed.info.decimals;
-                                      }
-                                    } catch (err) {
-                                      console.warn('Could not get token decimals, using default 6');
+                          if (tx.message.accountKeys.length > 2) {
+                            const authorityIndex = instruction.accounts[2];
+                            if (authorityIndex !== undefined) {
+                              const authority = tx.message.accountKeys[authorityIndex];
+                              const authorityStr = authority.toBase58();
+                              
+                              // Extract amount from instruction data
+                              if (instruction.data && instruction.data.length > 1) {
+                                const buffer = Buffer.from(instruction.data);
+                                if (buffer.length >= 9) {
+                                  const amount = buffer.readBigUInt64LE(1);
+                                  
+                                  // Get token decimals
+                                  let decimals = 6; // Default for most SPL tokens
+                                  try {
+                                    const mintInfo = await this.connection.getParsedAccountInfo(new PublicKey(tokenMint));
+                                    if (mintInfo.value?.data?.parsed?.info?.decimals !== undefined) {
+                                      decimals = mintInfo.value.data.parsed.info.decimals;
                                     }
-                                    
-                                    const formattedAmount = Number(amount) / Math.pow(10, decimals);
-                                    
+                                  } catch (err) {
+                                    console.warn('Could not get token decimals, using default 6');
+                                  }
+                                  
+                                  const formattedAmount = Number(amount) / Math.pow(10, decimals);
+                                  
+                                  // Check if this is the expected token or wrong token
+                                  if (destStr === botATAStr) {
+                                    // Correct token received
                                     deposits.push({
                                       sender: authorityStr,
                                       amount: formattedAmount,
                                       signature: sig.signature,
                                       slot: sig.slot,
+                                      tokenMint,
+                                      wrongToken: null,
+                                    });
+                                  } else if (transferTokenMint && transferTokenMint !== tokenMint) {
+                                    // Wrong token detected
+                                    console.log('[getRecentDepositSender] Wrong token detected', {
+                                      sender: authorityStr,
+                                      expectedMint: tokenMint,
+                                      receivedMint: transferTokenMint,
+                                      amount: formattedAmount,
+                                    });
+                                    wrongTokenDeposits.push({
+                                      sender: authorityStr,
+                                      amount: formattedAmount,
+                                      signature: sig.signature,
+                                      slot: sig.slot,
+                                      tokenMint: transferTokenMint,
+                                      wrongToken: transferTokenMint,
                                     });
                                   }
                                 }
@@ -365,6 +398,8 @@ class SolanaHandler {
                         amount: transactionAmount,
                         signature: sig.signature,
                         slot: sig.slot,
+                        tokenMint: null,
+                        wrongToken: null,
                       });
                     }
                   }
@@ -377,58 +412,183 @@ class SolanaHandler {
           continue;
         }
       }
-
-      // Process the collected deposits
-      if (deposits.length === 0) {
-        console.warn('[getRecentDepositSender] No deposits found');
-        return null;
-      }
-
-      if (knownSender) {
-        // If a known sender is provided, accumulate ALL deposits from that sender
-        // NOTE: Solana base58 addresses are case-sensitive, do NOT use toLowerCase
-        const fromSender = deposits.filter(d => d.sender === knownSender);
-        
-        if (fromSender.length === 0) {
-          console.warn('[getRecentDepositSender] No deposits found from known sender', { knownSender });
-          return null;
-        }
-        
-        const totalAmount = fromSender.reduce((sum, d) => sum + d.amount, 0);
-        
-        console.log('[getRecentDepositSender] Accumulated deposits from known sender (Solana)', {
-          sender: knownSender,
-          depositCount: fromSender.length,
-          totalAmount,
-        });
-        
-        return {
-          sender: knownSender,
-          amount: totalAmount.toString(),
-          signature: fromSender[0].signature,
-          slot: fromSender[0].slot,
-        };
-      } else {
-        // If no known sender, just return the most recent deposit (no accumulation)
-        const mostRecent = deposits[0];
-        
-        console.log('[getRecentDepositSender] Found recent deposit (Solana - no accumulation)', {
-          sender: mostRecent.sender,
-          amount: mostRecent.amount,
-          signature: mostRecent.signature,
-          slot: mostRecent.slot,
-        });
-        
-        return {
-          sender: mostRecent.sender,
-          amount: mostRecent.amount.toString(),
-          signature: mostRecent.signature,
-          slot: mostRecent.slot,
-        };
-      }
     } catch (error) {
       console.error('Error getting recent Solana deposit sender:', error);
       return null;
+    }
+  }
+
+  /**
+   * Refund incorrect tokens on Solana (for wrong token deposits)
+   */
+  async refundIncorrectTokens(botWalletAddress, expectedTokenMint, senderAddress, flipCreatedAt = null) {
+    try {
+      console.log('[refundIncorrectTokens] Starting Solana token refund', {
+        senderAddress,
+        expectedTokenMint,
+        botWalletAddress,
+      });
+
+      // Get recent transactions to find wrong token transfers
+      const botPublicKey = new PublicKey(botWalletAddress);
+      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 100 });
+
+      let refundSigs = [];
+      const expectedMintStr = expectedTokenMint?.toLowerCase() || null;
+
+      for (const sig of signatures) {
+        try {
+          const transaction = await this.connection.getTransaction(sig.signature, {
+            maxSupportedTransactionVersion: 0,
+          });
+
+          if (!transaction) continue;
+
+          const { meta, transaction: tx } = transaction;
+
+          // Only look at transactions after the flip was created
+          if (flipCreatedAt && sig.blockTime) {
+            const flipCreatedAtSeconds = Math.floor(flipCreatedAt / 1000);
+            if (sig.blockTime < flipCreatedAtSeconds) {
+              continue;
+            }
+          }
+
+          // Look for token transfers in this transaction
+          if (tx.message && tx.message.instructions) {
+            for (const instruction of tx.message.instructions) {
+              try {
+                const programId = tx.message.accountKeys[instruction.programIdIndex];
+                if (!programId) continue;
+
+                const programIdStr = programId.toBase58();
+                const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJsyFbPVwwQQfuls8PsPkkP7gC9j';
+
+                if (programIdStr === TOKEN_PROGRAM_ID && instruction.accounts && instruction.accounts.length >= 3) {
+                  const sourceIndex = instruction.accounts[0];
+                  const destIndex = instruction.accounts[1];
+                  const authorityIndex = instruction.accounts[2];
+
+                  if (sourceIndex !== undefined && destIndex !== undefined) {
+                    const sourceAccount = tx.message.accountKeys[sourceIndex];
+                    const destAccount = tx.message.accountKeys[destIndex];
+                    const authority = tx.message.accountKeys[authorityIndex];
+
+                    // Check if sender is the authority
+                    if (authority && authority.toBase58() === senderAddress) {
+                      // Parse the source account to get the token mint
+                      try {
+                        const sourceAccountInfo = await this.connection.getParsedAccountInfo(sourceAccount);
+                        if (sourceAccountInfo.value?.data?.parsed?.info?.mint) {
+                          const transferMint = sourceAccountInfo.value.data.parsed.info.mint;
+                          const transferMintStr = transferMint.toLowerCase();
+
+                          // Check if this is a wrong token transfer (mint doesn't match expected)
+                          if (expectedMintStr && transferMintStr !== expectedMintStr) {
+                            console.log('[refundIncorrectTokens] Found wrong token transfer, initiating refund', {
+                              signature: sig.signature,
+                              wrongMint: transferMint,
+                              expectedMint: expectedTokenMint,
+                              source: sourceAccount.toBase58(),
+                              destination: destAccount.toBase58(),
+                            });
+
+                            // Get token decimals
+                            let decimals = 6;
+                            try {
+                              const mintInfo = await this.connection.getParsedAccountInfo(new PublicKey(transferMint));
+                              if (mintInfo.value?.data?.parsed?.info?.decimals !== undefined) {
+                                decimals = mintInfo.value.data.parsed.info.decimals;
+                              }
+                            } catch (err) {
+                              console.warn('Could not get token decimals for wrong token, using default 6');
+                            }
+
+                            // Get bot's ATA balance for the wrong token to determine refund amount
+                            try {
+                              const botATA = await getAssociatedTokenAddress(
+                                new PublicKey(transferMint),
+                                botPublicKey
+                              );
+
+                              const botATAInfo = await this.connection.getParsedAccountInfo(botATA);
+                              const balance = botATAInfo.value?.data?.parsed?.info?.tokenAmount?.amount;
+
+                              if (balance && Number(balance) > 0) {
+                                const refundAmount = BigInt(balance);
+                                
+                                // Get sender's ATA for the wrong token
+                                const senderPublicKey = new PublicKey(senderAddress);
+                                const senderATA = await getAssociatedTokenAddress(
+                                  new PublicKey(transferMint),
+                                  senderPublicKey
+                                );
+
+                                console.log('[refundIncorrectTokens] Refunding wrong token', {
+                                  amount: refundAmount.toString(),
+                                  decimals,
+                                  formattedAmount: Number(refundAmount) / Math.pow(10, decimals),
+                                });
+
+                                // Create transfer instruction to refund
+                                const transferInstruction = createTransferInstruction(
+                                  botATA,
+                                  senderATA,
+                                  this.wallet.publicKey,
+                                  refundAmount,
+                                  []
+                                );
+
+                                // Create and send transaction
+                                const refundTx = new Transaction().add(transferInstruction);
+                                const refundSignature = await this.connection.sendTransaction(refundTx, [this.wallet], {
+                                  skipPreflight: false,
+                                  preflightCommitment: 'confirmed',
+                                });
+
+                                // Wait for confirmation
+                                await this.connection.confirmTransaction(refundSignature, 'confirmed');
+
+                                console.log('[refundIncorrectTokens] ✅ Refund successful', {
+                                  transactionSignature: refundSignature,
+                                  refundAmount: refundAmount.toString(),
+                                });
+
+                                refundSigs.push({
+                                  txHash: refundSignature,
+                                  amount: Number(refundAmount) / Math.pow(10, decimals),
+                                  token: transferMint,
+                                });
+                              }
+                            } catch (ataErr) {
+                              console.error('[refundIncorrectTokens] Error refunding balance', {
+                                error: ataErr.message,
+                              });
+                            }
+                          }
+                        }
+                      } catch (parseErr) {
+                        console.warn('Could not parse source account mint:', parseErr.message);
+                      }
+                    }
+                  }
+                }
+              } catch (instructionErr) {
+                console.warn('Error processing instruction for refund:', instructionErr.message);
+                continue;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Error processing Solana transaction for refund:', err.message);
+          continue;
+        }
+      }
+
+      return refundSigs;
+    } catch (error) {
+      console.error('[refundIncorrectTokens] Error refunding incorrect tokens on Solana:', error);
+      return [];
     }
   }
 }
