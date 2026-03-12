@@ -103,6 +103,34 @@ class BlockchainManager {
         // Allow 1% variance for rounding/fees
         const variance = expectedAmountNum * 0.01;
         const hasDeposit = receivedAmount >= (expectedAmountNum - variance);
+        
+        // CRITICAL: Check if the deposit is the WRONG TOKEN
+        // If it is, reject it so the refund logic can trigger
+        const hasWrongTokens = depositInfo.hasWrongTokens || depositInfo.wrongToken;
+        
+        if (hasWrongTokens) {
+          console.log('[verifyDeposit] WRONG TOKEN DETECTED - rejecting deposit to trigger refund', {
+            network,
+            received: receivedAmount,
+            expected: expectedAmountNum,
+            sender: depositInfo.sender,
+            wrongTokenInfo: depositInfo.wrongToken,
+            hasWrongTokens,
+          });
+
+          // Return with depositSender so refund logic can execute
+          return {
+            received: false,
+            amount: receivedAmount,
+            expected: expectedAmountNum,
+            botWallet: botWallet,
+            depositSender: depositInfo.sender,  // Keep sender so refund can happen!
+            depositTransaction: depositInfo.transactionHash || depositInfo.signature || null,
+            blockNumber: depositInfo.blockNumber || depositInfo.slot || null,
+            verified: 'blockchain',
+            error: 'Wrong token sent - will refund automatically',
+          };
+        }
 
         console.log('[verifyDeposit] Blockchain transaction found', {
           network,
