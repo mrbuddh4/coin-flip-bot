@@ -2585,6 +2585,26 @@ async function main() {
     process.once('SIGINT', () => bot.stop('SIGINT'));
     process.once('SIGTERM', () => bot.stop('SIGTERM'));
   } catch (error) {
+    // Handle Telegram conflict error (409) gracefully
+    if (error.response?.error_code === 409) {
+      logger.warn('Telegram conflict detected (409) - another bot instance may be running', { 
+        error: error.response?.description 
+      });
+      logger.info('Waiting 5 seconds before retrying...');
+      
+      // Wait 5 seconds and retry instead of exiting
+      setTimeout(() => {
+        logger.info('Retrying bot launch after conflict...');
+        main().catch(err => {
+          logger.error('Fatal error on retry', err);
+          process.exit(1);
+        });
+      }, 5000);
+      
+      return;
+    }
+    
+    // All other errors: exit
     logger.error('Fatal error', error);
     process.exit(1);
   }
