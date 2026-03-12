@@ -422,6 +422,40 @@ class WalletHandler {
 
       logger.info('Continuing flip after wallet update', { flipId: flip.id, userId, network });
 
+      // Check if BOTH receive and deposit wallets are set
+      const userProfile = await models.UserProfile.findByPk(userId);
+      const receiveWallet = flip.tokenNetwork === 'EVM' 
+        ? userProfile?.evmWalletAddress 
+        : userProfile?.solanaWalletAddress;
+      const depositWallet = flip.tokenNetwork === 'EVM' 
+        ? userProfile?.evmDepositWalletAddress 
+        : userProfile?.solanaDepositWalletAddress;
+
+      // If either wallet is missing, prompt user to set up both
+      if (!receiveWallet || !depositWallet) {
+        logger.info('Missing wallets for flip continuation', { 
+          flipId: flip.id, 
+          userId, 
+          hasReceive: !!receiveWallet,
+          hasDeposit: !!depositWallet 
+        });
+
+        await ctx.reply(
+          `❌ <b>Setup Complete Wallet Configuration</b>\n\n` +
+          `Before you can play, you need to set up both:\n` +
+          `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
+          `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+          `Please set up your wallets:`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
+            ]).reply_markup,
+          }
+        );
+        return;
+      }
+
       // Update session to awaiting deposit
       flipSession.currentStep = 'AWAITING_DEPOSIT';
       await flipSession.save();
@@ -432,15 +466,10 @@ class WalletHandler {
       const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
       // Store wallet address in flip
-      const userProfile = await models.UserProfile.findByPk(userId);
       if (flipSession.sessionType === 'INITIATING') {
-        flip.creatorDepositWalletAddress = network === 'EVM' ? 
-          userProfile?.evmWalletAddress :
-          userProfile?.solanaWalletAddress;
+        flip.creatorDepositWalletAddress = depositWallet;
       } else if (flipSession.sessionType === 'CONFIRMING_DEPOSIT') {
-        flip.challengerDepositWalletAddress = network === 'EVM' ? 
-          userProfile?.evmWalletAddress :
-          userProfile?.solanaWalletAddress;
+        flip.challengerDepositWalletAddress = depositWallet;
       }
       await flip.save();
 

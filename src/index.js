@@ -717,17 +717,20 @@ async function initBot() {
         await flip.save();
         logger.info('[confirm_flip] Flip updated', { flipId, newStatus: flip.status });
 
-        // Check if user has a wallet address in their profile
+        // Check if user has both required wallet addresses in their profile
         const userProfile = await models.UserProfile.findByPk(userId);
-        const walletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
-        const storedWallet = userProfile?.[walletField];
+        const receiveWalletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
+        const depositWalletField = flip.tokenNetwork === 'EVM' ? 'evmDepositWalletAddress' : 'solanaDepositWalletAddress';
+        
+        const receiveWallet = userProfile?.[receiveWalletField];
+        const depositWallet = userProfile?.[depositWalletField];
 
-        if (storedWallet) {
-          // Use stored wallet address
-          flip.challengerDepositWalletAddress = storedWallet;
+        if (receiveWallet && depositWallet) {
+          // Both wallets are set - use them and show deposit instructions
+          flip.challengerDepositWalletAddress = depositWallet;
           await flip.save();
 
-          logger.info('Using stored wallet address for challenger', { flipId, network: flip.tokenNetwork });
+          logger.info('Using stored wallet addresses for challenger', { flipId, network: flip.tokenNetwork, hasReceive: !!receiveWallet, hasDeposit: !!depositWallet });
 
           session.currentStep = 'AWAITING_DEPOSIT';
           await session.save();
@@ -755,24 +758,26 @@ async function initBot() {
 
           await ctx.answerCbQuery('✅ Challenge confirmed! Deposit address ready.');
         } else {
-          // No stored wallet - ask user to set it up
+          // Missing one or both wallets - ask user to set them up
           session.currentStep = 'AWAITING_WALLET_ADDRESS';
           await session.save();
-          logger.info('[confirm_flip] No stored wallet, asking user to set up', { sessionId, network: flip.tokenNetwork });
+          logger.info('[confirm_flip] Missing wallets, asking user to set up', { sessionId, network: flip.tokenNetwork, hasReceive: !!receiveWallet, hasDeposit: !!depositWallet });
 
           await ctx.reply(
-            `❌ <b>Wallet Address Required</b>\n\n` +
-            `We need your ${flip.tokenNetwork} wallet address to send you your winnings!\n\n` +
-            `Set up your wallet now to continue:`,
+            `❌ <b>Setup Complete Wallet Configuration</b>\n\n` +
+            `Before you can play, you need to set up both:\n` +
+            `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
+            `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+            `Configure your wallets to continue:`,
             {
               parse_mode: 'HTML',
               reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('💳 Add Wallet Address', 'open_wallet_menu')],
+                [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
               ]).reply_markup,
             }
           );
 
-          await ctx.answerCbQuery('✅ Challenge confirmed! Please set up your wallet.');
+          await ctx.answerCbQuery('✅ Challenge confirmed! Please set up your wallets.');
         }
 
         logger.info('Flip challenge confirmed', { userId, flipId });
@@ -951,19 +956,23 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Verifying challenger deposit', { flipId, userId });
         
-        // GET USER'S DEPOSIT WALLET - Required for verification
+        // GET USER'S WALLETS - Both required for flip
         const userProfile = await models.UserProfile.findByPk(userId);
+        const receiveWallet = flip.tokenNetwork === 'EVM' 
+          ? userProfile?.evmWalletAddress 
+          : userProfile?.solanaWalletAddress;
         const depositWallet = flip.tokenNetwork === 'EVM' 
           ? userProfile?.evmDepositWalletAddress 
           : userProfile?.solanaDepositWalletAddress;
         
-        // Require user to set deposit wallet first
-        if (!depositWallet) {
+        // Require user to set both wallets first
+        if (!receiveWallet || !depositWallet) {
           try {
             await ctx.editMessageText(
-              `❌ <b>Deposit Wallet Not Set</b>\n\n` +
-              `Before you can play, you need to set your deposit wallet.\n\n` +
-              `Use /wallet and select "<b>Update ${flip.tokenNetwork === 'EVM' ? 'Paxeer' : 'Solana'} Deposit Wallet</b>"`,
+              `❌ <b>Wallet Configuration Required</b>\n\n` +
+              `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
+              `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+              `Use /wallet to complete your setup.`,
               { parse_mode: 'HTML' }
             );
           } catch (err) {
@@ -1438,19 +1447,23 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Verifying creator deposit', { flipId, userId });
         
-        // GET USER'S DEPOSIT WALLET - Required for verification
+        // GET USER'S WALLETS - Both required for flip
         const userProfile = await models.UserProfile.findByPk(userId);
+        const receiveWallet = flip.tokenNetwork === 'EVM' 
+          ? userProfile?.evmWalletAddress 
+          : userProfile?.solanaWalletAddress;
         const depositWallet = flip.tokenNetwork === 'EVM' 
           ? userProfile?.evmDepositWalletAddress 
           : userProfile?.solanaDepositWalletAddress;
         
-        // Require user to set deposit wallet first
-        if (!depositWallet) {
+        // Require user to set both wallets first
+        if (!receiveWallet || !depositWallet) {
           try {
             await ctx.editMessageText(
-              `❌ <b>Deposit Wallet Not Set</b>\n\n` +
-              `Before you can play, you need to set your deposit wallet.\n\n` +
-              `Use /wallet and select "<b>Update ${flip.tokenNetwork === 'EVM' ? 'Paxeer' : 'Solana'} Deposit Wallet</b>"`,
+              `❌ <b>Wallet Configuration Required</b>\n\n` +
+              `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
+              `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+              `Use /wallet to complete your setup.`,
               { parse_mode: 'HTML' }
             );
           } catch (err) {
@@ -2090,17 +2103,20 @@ const handlers = {
             logger.warn('[start] Failed to send new challenger message', { error: sendErr.message, flipId, groupChatId: flip.groupChatId });
           }
 
-          // Check if user has a wallet address in their profile
+          // Check if user has both required wallet addresses in their profile
           const userProfile = await models.UserProfile.findByPk(userId);
-          const walletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
-          const storedWallet = userProfile?.[walletField];
+          const receiveWalletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
+          const depositWalletField = flip.tokenNetwork === 'EVM' ? 'evmDepositWalletAddress' : 'solanaDepositWalletAddress';
+          
+          const receiveWallet = userProfile?.[receiveWalletField];
+          const depositWallet = userProfile?.[depositWalletField];
 
-          if (storedWallet) {
-            // Use stored wallet address
-            flip.challengerDepositWalletAddress = storedWallet;
+          if (receiveWallet && depositWallet) {
+            // Both wallets are set - use them and show deposit instructions
+            flip.challengerDepositWalletAddress = depositWallet;
             await flip.save();
 
-            logger.info('[start] Using stored wallet for challenger', { flipId, network: flip.tokenNetwork });
+            logger.info('[start] Using stored wallets for challenger', { flipId, network: flip.tokenNetwork });
 
             confirmSession.currentStep = 'AWAITING_DEPOSIT';
             await confirmSession.save();
@@ -2126,20 +2142,22 @@ const handlers = {
               }
             );
           } else {
-            // No stored wallet - ask user to set it up
+            // Missing one or both wallets - ask user to set them up
             confirmSession.currentStep = 'AWAITING_WALLET_ADDRESS';
             await confirmSession.save();
 
-            logger.info('[start] No stored wallet for challenger, asking to set up', { flipId, network: flip.tokenNetwork });
+            logger.info('[start] Missing wallets for challenger, asking to set up', { flipId, network: flip.tokenNetwork, hasReceive: !!receiveWallet, hasDeposit: !!depositWallet });
 
             await ctx.reply(
-              `❌ <b>Wallet Address Required</b>\n\n` +
-              `We need your ${flip.tokenNetwork} wallet address to send you your winnings!\n\n` +
-              `Set up your wallet now to continue:`,
+              `❌ <b>Setup Complete Wallet Configuration</b>\n\n` +
+              `Before you can play, you need to set up both:\n` +
+              `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
+              `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+              `Configure your wallets to continue:`,
               {
                 parse_mode: 'HTML',
                 reply_markup: Markup.inlineKeyboard([
-                  [Markup.button.callback('💳 Add Wallet Address', 'open_wallet_menu')],
+                  [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
                 ]).reply_markup,
               }
             );
@@ -2174,17 +2192,21 @@ const handlers = {
             await flip.save();
             logger.info('[start] Set challengerId on flip', { flipId: flip.id, challengerId: userId });
 
-            // Check if user has a wallet address in their profile
+            // Check if user has both required wallet addresses in their profile
             const userProfile = await models.UserProfile.findByPk(userId);
-            const walletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
-            const storedWallet = userProfile?.[walletField];
+            const receiveWalletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
+            const depositWalletField = flip.tokenNetwork === 'EVM' ? 'evmDepositWalletAddress' : 'solanaDepositWalletAddress';
+            
+            const receiveWallet = userProfile?.[receiveWalletField];
+            const depositWallet = userProfile?.[depositWalletField];
+            const storedWallet = depositWallet; // For backward compatibility in naming
 
-            if (storedWallet) {
-              // Use stored wallet address
-              flip.challengerDepositWalletAddress = storedWallet;
+            if (receiveWallet && depositWallet) {
+              // Both wallets are set - use them and show deposit instructions
+              flip.challengerDepositWalletAddress = depositWallet;
               await flip.save();
 
-              logger.info('[start] Using stored wallet for challenger', { flipId: flip.id, network: flip.tokenNetwork });
+              logger.info('[start] Using stored wallets for challenger', { flipId: flip.id, network: flip.tokenNetwork });
 
               session.currentStep = 'AWAITING_DEPOSIT';
               await session.save();
@@ -2210,20 +2232,22 @@ const handlers = {
                 }
               );
             } else {
-              // No stored wallet - ask user to set it up
+              // Missing one or both wallets - ask user to set them up
               session.currentStep = 'AWAITING_WALLET_ADDRESS';
               await session.save();
 
-              logger.info('[start] No stored wallet for challenger, asking to set up', { sessionId, network: flip.tokenNetwork });
+              logger.info('[start] Missing wallets for challenger, asking to set up', { sessionId, network: flip.tokenNetwork, hasReceive: !!receiveWallet, hasDeposit: !!depositWallet });
 
               await ctx.reply(
-                `❌ <b>Wallet Address Required</b>\n\n` +
-                `We need your ${flip.tokenNetwork} wallet address to send you your winnings!\n\n` +
-                `Set up your wallet now to continue:`,
+                `❌ <b>Setup Complete Wallet Configuration</b>\n\n` +
+                `Before you can play, you need to set up both:\n` +
+                `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
+                `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+                `Configure your wallets to continue:`,
                 {
                   parse_mode: 'HTML',
                   reply_markup: Markup.inlineKeyboard([
-                    [Markup.button.callback('💳 Add Wallet Address', 'open_wallet_menu')],
+                    [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
                   ]).reply_markup,
                 }
               );
