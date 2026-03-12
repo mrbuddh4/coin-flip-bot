@@ -993,44 +993,30 @@ async function initBot() {
             });
           }
           
-          // Check if notification already sent for this verification attempt
-          const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
-          const timeSinceLastNotification = Date.now() - lastNotificationTime;
-          
-          // Attempt to refund any incorrect tokens that were sent
-          if (timeSinceLastNotification > 30000 && flip.challengerDepositWalletAddress) {
+          // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
+          if (flip.challengerDepositWalletAddress && flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
             try {
               const blockchainManager = getBlockchainManager();
-              const supportedTokens = config.supportedTokens;
-              let tokenAddress = 'NATIVE';
+              logger.info('[deposit_confirmed] Attempting to refund incorrect tokens from challenger', { 
+                flipId, 
+                expectedToken: flip.tokenAddress, 
+                sender: flip.challengerDepositWalletAddress 
+              });
               
-              for (const key in supportedTokens) {
-                if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
-                  tokenAddress = supportedTokens[key].address || 'NATIVE';
-                  break;
-                }
-              }
+              // Call refund immediately on first detection, don't throttle this
+              const refundResults = await blockchainManager.refundIncorrectTokens(
+                flip.tokenNetwork,
+                flip.tokenAddress,
+                flip.challengerDepositWalletAddress,
+                flip.createdAt
+              );
 
-              if (tokenAddress !== 'NATIVE') {
-                logger.info('[deposit_confirmed] Attempting to refund incorrect tokens', { 
+              if (refundResults && refundResults.length > 0) {
+                logger.info('[deposit_confirmed] Refunded incorrect tokens to challenger', { 
                   flipId, 
-                  expectedToken: tokenAddress, 
-                  sender: flip.challengerDepositWalletAddress 
+                  refundCount: refundResults.length,
+                  refunds: refundResults 
                 });
-                
-                const refundResults = await blockchainManager.refundIncorrectTokens(
-                  flip.tokenNetwork,
-                  tokenAddress,
-                  flip.challengerDepositWalletAddress,
-                  flip.createdAt
-                );
-
-                if (refundResults.length > 0) {
-                  logger.info('[deposit_confirmed] Refunded incorrect tokens', { 
-                    flipId, 
-                    refunds: refundResults 
-                  });
-                }
               }
             } catch (refundErr) {
               logger.error('[deposit_confirmed] Error refunding incorrect tokens', { 
@@ -1039,6 +1025,10 @@ async function initBot() {
               });
             }
           }
+          
+          // Check if notification already sent for this verification attempt (separate from refund logic)
+          const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
+          const timeSinceLastNotification = Date.now() - lastNotificationTime;
           
           // Only send notification if more than 30 seconds have passed since last one
           if (timeSinceLastNotification > 30000) {
@@ -1514,6 +1504,39 @@ async function initBot() {
             }
           } else {
             logger.info('[creator_deposit_confirmed] Skipping duplicate notification (sent within last 30s)', { flipId });
+          }
+          
+          // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
+          if (flip.creatorDepositWalletAddress && flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
+            try {
+              const blockchainManager = getBlockchainManager();
+              logger.info('[creator_deposit_confirmed] Attempting to refund incorrect tokens from creator', { 
+                flipId, 
+                expectedToken: flip.tokenAddress, 
+                sender: flip.creatorDepositWalletAddress 
+              });
+              
+              // Call refund immediately on first detection, don't throttle this
+              const refundResults = await blockchainManager.refundIncorrectTokens(
+                flip.tokenNetwork,
+                flip.tokenAddress,
+                flip.creatorDepositWalletAddress,
+                flip.createdAt
+              );
+
+              if (refundResults && refundResults.length > 0) {
+                logger.info('[creator_deposit_confirmed] Refunded incorrect tokens to creator', { 
+                  flipId, 
+                  refundCount: refundResults.length,
+                  refunds: refundResults 
+                });
+              }
+            } catch (refundErr) {
+              logger.error('[creator_deposit_confirmed] Error refunding incorrect tokens', { 
+                flipId, 
+                error: refundErr.message 
+              });
+            }
           }
           
           // CRITICAL: Save the sender address before returning if we just detected it
