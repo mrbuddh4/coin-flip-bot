@@ -203,34 +203,74 @@ class EVMHandler {
         // Use Paxscan API directly
         try {
           // First query: Look for transfers of the EXPECTED token only
-          const paxscanUrlExpectedToken = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+          let paxscanUrl;
+          let response;
+          let data;
+          let queriedAllTokens = false;
           
-          console.log('[getRecentDepositSender] Querying Paxscan API for expected token', { url: paxscanUrlExpectedToken });
-          
-          let response = await fetch(paxscanUrlExpectedToken);
-          let data = await response.json();
-          let queriedAllTokens = false; // Track if we had to do the all-tokens query
-          
-          console.log('[getRecentDepositSender] Paxscan API response (expected token)', {
-            status: data.status,
-            message: data.message,
-            resultCount: data.result?.length || 0,
-          });
-          
-          // If no results with contract filter, query ALL tokens to find wrong-token transfers
-          if ((!data.result || data.result.length === 0) && data.status === '1') {
-            console.log('[getRecentDepositSender] No transfers of expected token found, querying for ALL token transfers to detect wrong tokens', {
-              expectedToken: tokenAddress.toLowerCase(),
+          // Special handling: if looking for a CONTRACT token but none found, also check native transfers
+          // This catches cases where user sends native token (PAX) instead of ERC20 (SID)
+          if (tokenAddress && tokenAddress !== 'NATIVE') {
+            paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+            
+            console.log('[getRecentDepositSender] Querying Paxscan API for expected token', { url: paxscanUrl });
+            
+            response = await fetch(paxscanUrl);
+            data = await response.json();
+            
+            console.log('[getRecentDepositSender] Paxscan API response (expected token)', {
+              status: data.status,
+              message: data.message,
+              resultCount: data.result?.length || 0,
             });
             
-            const paxscanUrlAllTokens = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
-            console.log('[getRecentDepositSender] Querying Paxscan API for all tokens (wrong token detection)', { url: paxscanUrlAllTokens });
+            // If no ERC20 transfers found, query ALL tokens to find wrong ERC20 transfers
+            if ((!data.result || data.result.length === 0) && data.status === '1') {
+              console.log('[getRecentDepositSender] No transfers of expected token found, querying for ALL token transfers to detect wrong tokens', {
+                expectedToken: tokenAddress.toLowerCase(),
+              });
+              
+              paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+              console.log('[getRecentDepositSender] Querying Paxscan API for all ERC20 tokens (wrong token detection)', { url: paxscanUrl });
+              
+              response = await fetch(paxscanUrl);
+              data = await response.json();
+              queriedAllTokens = true;
+              
+              console.log('[getRecentDepositSender] Paxscan API response (all ERC20 tokens)', {
+                status: data.status,
+                message: data.message,
+                resultCount: data.result?.length || 0,
+              });
+            }
             
-            response = await fetch(paxscanUrlAllTokens);
+            // If STILL no ERC20 transfers, check for native transfers
+            if ((!data.result || data.result.length === 0) && data.status === '1') {
+              console.log('[getRecentDepositSender] No ERC20 transfers found, checking for native token transfers (PAX)', {
+                expectedToken: tokenAddress.toLowerCase(),
+              });
+              
+              paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+              console.log('[getRecentDepositSender] Querying Paxscan API for native transfers', { url: paxscanUrl });
+              
+              response = await fetch(paxscanUrl);
+              data = await response.json();
+              
+              console.log('[getRecentDepositSender] Paxscan API response (native transfers)', {
+                status: data.status,
+                message: data.message,
+                resultCount: data.result?.length || 0,
+              });
+            }
+          } else if (tokenAddress === 'NATIVE') {
+            // Looking for native transfers directly
+            paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+            console.log('[getRecentDepositSender] Querying Paxscan API for native token transfers', { url: paxscanUrl });
+            
+            response = await fetch(paxscanUrl);
             data = await response.json();
-            queriedAllTokens = true; // Flag that we queried all tokens
             
-            console.log('[getRecentDepositSender] Paxscan API response (all tokens)', {
+            console.log('[getRecentDepositSender] Paxscan API response (native transfers)', {
               status: data.status,
               message: data.message,
               resultCount: data.result?.length || 0,
@@ -247,17 +287,22 @@ class EVMHandler {
               targetSender = latestTx.from.toLowerCase();
             }
             
+            // Detect if these are native transfers (txlist) vs token transfers (tokentx)
+            const isNativeTransferResult = !data.result[0].contractAddress; // Native transfers don't have contractAddress
+            
             console.log('[getRecentDepositSender] Paxscan filtering results', {
               targetSender,
               knownSenderProvided: !!knownSender,
               totalTransactions: data.result.length,
               queriedAllTokens, // Log which query we used
+              isNativeTransferResult,
               transactionsFromAddresses: data.result.map(tx => tx.from.toLowerCase()),
               first5Transactions: data.result.slice(0, 5).map(tx => ({
                 from: tx.from,
                 to: tx.to,
                 value: tx.value,
                 hash: tx.hash,
+                contractAddress: tx.contractAddress,
               })),
             });
             
@@ -279,12 +324,15 @@ class EVMHandler {
               const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
               const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
               
-              // CRITICAL: If we queried ALL tokens and found no correct-token transfers,
-              // we should accept ANY transfer (even wrong tokens) to enable refunds
+              // CRITICAL: Accept wrong ERC20 tokens if we did all-tokens query, or native transfers
               const shouldAcceptWrongToken = queriedAllTokens && !isCorrectToken;
+              const isNativeTransfer = isNativeTransferResult && !txContractAddressLower;
+              const shouldAccept = isCorrectToken || shouldAcceptWrongToken || isNativeTransfer;
               
-              if (isValidSender && isAfterFlipCreation && (isCorrectToken || shouldAcceptWrongToken)) {
-                const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
+              if (isValidSender && isAfterFlipCreation && shouldAccept) {
+                // For native transfers, use decimals 18; for token transfers use provided decimals
+                const transferDecimals = isNativeTransfer ? 18 : decimals;
+                const txAmount = parseFloat(ethers.formatUnits(tx.value, transferDecimals));
                 totalAmount += txAmount;
                 if (!latestTxForReturn) latestTxForReturn = tx;
                 transfers.push({
@@ -292,8 +340,9 @@ class EVMHandler {
                   hash: tx.hash,
                   blockNumber: tx.blockNumber,
                   timestamp: txTimestamp,
-                  contractAddress: txContractAddressLower,
-                  wrongToken: shouldAcceptWrongToken ? txContractAddressLower : null,
+                  contractAddress: txContractAddressLower || 'NATIVE',
+                  isNativeTransfer,
+                  wrongToken: (!isCorrectToken && !isNativeTransfer) ? txContractAddressLower : null,
                 });
                 
                 console.log('[getRecentDepositSender] Matched incoming transaction', {
