@@ -448,7 +448,6 @@ async function initBot() {
       try {
         ctx.state.models = getDB().models;
         await WalletHandler.handleUpdateEVM(ctx);
-        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error updating Paxeer wallet', error);
         await ctx.answerCbQuery('Error', true);
@@ -459,7 +458,6 @@ async function initBot() {
       try {
         ctx.state.models = getDB().models;
         await WalletHandler.handleUpdateSolana(ctx);
-        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error updating Solana wallet', error);
         await ctx.answerCbQuery('Error', true);
@@ -470,7 +468,6 @@ async function initBot() {
       try {
         ctx.state.models = getDB().models;
         await WalletHandler.handleRemoveAll(ctx);
-        await ctx.deleteMessage().catch(() => {});
       } catch (error) {
         logger.error('Error removing wallets', error);
         await ctx.answerCbQuery('Error', true);
