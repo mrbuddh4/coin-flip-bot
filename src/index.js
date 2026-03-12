@@ -2117,8 +2117,6 @@ async function initBot() {
           dataField: flip.data?.groupMessageId,
           verified: savedFlipAfterMsg?.data?.groupMessageId === groupMessage.message_id
         });
-          groupId: flip.groupChatId 
-        });
 
         // Set 3-minute timeout for challenge acceptance
         setChallengeTimeout(flip.id, flip.groupChatId, groupMessage.message_id, ctx.telegram);
