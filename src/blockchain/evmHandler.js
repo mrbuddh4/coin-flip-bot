@@ -717,6 +717,7 @@ class EVMHandler {
       const currentBlock = await this.provider.getBlockNumber();
       const lookbackBlocks = 10000;
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
+      const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
 
       console.log('[refundIncorrectTokens] Searching for incorrect token transfers', {
         botWallet: botWalletAddress,
