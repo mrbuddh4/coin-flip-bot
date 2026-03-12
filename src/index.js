@@ -18,6 +18,7 @@ let bot;
 let sessionStore = {};
 let challengeTimeouts = {}; // Store challenge acceptance timeouts by flipId
 let conflictRetryAttempts = 0; // Prevent infinite retry loop on Telegram 409 conflicts
+let botInitialized = false; // Guard to prevent re-initializing bot on retries
 
 /**
  * Set a challenge acceptance timeout (3 minutes for challenger to accept)
@@ -221,6 +222,12 @@ function clearChallengeTimeout(flipId) {
  */
 async function initBot() {
   try {
+    // Skip re-initialization if bot already initialized (prevents duplicate from retry)
+    if (botInitialized && bot) {
+      logger.info('Bot already initialized, skipping re-init');
+      return;
+    }
+
     // Validate configuration
     validateConfig();
 
@@ -443,6 +450,9 @@ async function initBot() {
     }
 
     logger.info('[startup] Restored timeouts for waiting challenges', { count: waitingChallenges.length });
+    
+    // Mark bot as successfully initialized to prevent re-init on retries
+    botInitialized = true;
 
     // Handle bot joining a group
     bot.on('my_chat_member', async (ctx) => {
