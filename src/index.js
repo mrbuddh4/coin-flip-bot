@@ -3,6 +3,8 @@ const { Op } = require('sequelize');
 const config = require('./config');
 const { initDB, getDB } = require('./database');
 const { initBlockchainManager, getBlockchainManager } = require('./blockchain/manager');
+const fs = require('fs');
+const path = require('path');
 const FlipHandler = require('./handlers/flipHandler');
 const ExecutionHandler = require('./handlers/executionHandler');
 const AdminHandler = require('./handlers/adminHandler');
@@ -42,22 +44,42 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
         logger.info('[challengeTimeout] Sending timeout alert to group', { flipId, groupId });
 
         try {
-          // Send alert message to group
+          // Send alert video to group
           const botInfo = await telegram.getMe();
           const deeplink = `https://t.me/${botInfo.username}?start=accept_${flipId}`;
-          await telegram.sendMessage(
-            groupId,
-            `⏰ <b>Challenge Expiring!</b>\n\n` +
-            `The challenge for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b> ` +
-            `will expire in <b>1 minute</b> if no one accepts!\n\n` +
-            `⚡ Tap the button below to join:`,
-            {
-              parse_mode: 'HTML',
-              reply_markup: Markup.inlineKeyboard([
-                [Markup.button.url('Accept Challenge', deeplink)],
-              ]).reply_markup,
-            }
-          );
+          const videoPath = path.join(process.cwd(), 'assets/accept-it-stan-marsh.mp4');
+          
+          if (fs.existsSync(videoPath)) {
+            await telegram.sendVideo(
+              groupId,
+              { filename: 'accept-it-stan-marsh.mp4', source: fs.createReadStream(videoPath) },
+              {
+                caption: `⏰ <b>Challenge Expiring!</b>\n\n` +
+                  `The challenge for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b> ` +
+                  `will expire in <b>1 minute</b> if no one accepts!\n\n` +
+                  `⚡ Tap the button below to join:`,
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.url('Accept Challenge', deeplink)],
+                ]).reply_markup,
+              }
+            );
+          } else {
+            // Fallback to text message if video not found
+            await telegram.sendMessage(
+              groupId,
+              `⏰ <b>Challenge Expiring!</b>\n\n` +
+              `The challenge for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b> ` +
+              `will expire in <b>1 minute</b> if no one accepts!\n\n` +
+              `⚡ Tap the button below to join:`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.url('Accept Challenge', deeplink)],
+                ]).reply_markup,
+              }
+            );
+          }
         } catch (err) {
           logger.error('[challengeTimeout] Error sending alert message', { flipId, error: err.message });
         }
@@ -340,19 +362,39 @@ async function initBot() {
               try {
                 const botInfo = await bot.telegram.getMe();
                 const deeplink = `https://t.me/${botInfo.username}?start=accept_${flipCheck.id}`;
-                await bot.telegram.sendMessage(
-                  flipCheck.groupChatId,
-                  `⏰ <b>Challenge Expiring!</b>\n\n` +
-                  `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
-                  `will expire in <b>1 minute</b> if no one accepts!\n\n` +
-                  `⚡ Tap the button below to join:`,
-                  {
-                    parse_mode: 'HTML',
-                    reply_markup: Markup.inlineKeyboard([
-                      [Markup.button.url('Accept Challenge', deeplink)],
-                    ]).reply_markup,
-                  }
-                );
+                const videoPath = path.join(process.cwd(), 'assets/accept-it-stan-marsh.mp4');
+                
+                if (fs.existsSync(videoPath)) {
+                  await bot.telegram.sendVideo(
+                    flipCheck.groupChatId,
+                    { filename: 'accept-it-stan-marsh.mp4', source: fs.createReadStream(videoPath) },
+                    {
+                      caption: `⏰ <b>Challenge Expiring!</b>\n\n` +
+                        `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
+                        `will expire in <b>1 minute</b> if no one accepts!\n\n` +
+                        `⚡ Tap the button below to join:`,
+                      parse_mode: 'HTML',
+                      reply_markup: Markup.inlineKeyboard([
+                        [Markup.button.url('Accept Challenge', deeplink)],
+                      ]).reply_markup,
+                    }
+                  );
+                } else {
+                  // Fallback to text message if video not found
+                  await bot.telegram.sendMessage(
+                    flipCheck.groupChatId,
+                    `⏰ <b>Challenge Expiring!</b>\n\n` +
+                    `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
+                    `will expire in <b>1 minute</b> if no one accepts!\n\n` +
+                    `⚡ Tap the button below to join:`,
+                    {
+                      parse_mode: 'HTML',
+                      reply_markup: Markup.inlineKeyboard([
+                        [Markup.button.url('Accept Challenge', deeplink)],
+                      ]).reply_markup,
+                    }
+                  );
+                }
               } catch (err) {
                 logger.error('[startup-timeout] Error sending alert', { flipId: flip.id, error: err.message });
               }
