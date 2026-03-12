@@ -162,6 +162,7 @@ const defineModels = (sequelize) => {
     Transaction,
     BotSession,
     UserProfile,
+    sequelize, // Export sequelize so handlers can use it for queries
   };
 };
 

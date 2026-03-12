@@ -8,6 +8,18 @@ class WalletHandler {
     const models = ctx.state.models;
 
     try {
+      // Ensure deposit wallet columns exist (in case migration hasn't run)
+      try {
+        await models.sequelize.query(`
+          ALTER TABLE "UserProfiles" 
+          ADD COLUMN IF NOT EXISTS "evmDepositWalletAddress" VARCHAR(255),
+          ADD COLUMN IF NOT EXISTS "solanaDepositWalletAddress" VARCHAR(255)
+        `);
+      } catch (migrationErr) {
+        // Columns might already exist, continue
+        logger.debug('Deposit wallet columns already exist or migration handled', migrationErr.message);
+      }
+      
       // Get or create user profile
       let profile = await models.UserProfile.findByPk(userId);
       if (!profile) {
