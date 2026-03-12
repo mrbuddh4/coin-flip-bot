@@ -2279,6 +2279,39 @@ const handlers = {
           });
           
           if (session && parseInt(session.userId) === userId) {
+            // Check if user has BOTH required wallet addresses
+            const userProfile = await models.UserProfile.findByPk(userId);
+            const receiveWalletField = 'evmWalletAddress'; // For receiving winnings
+            const depositWalletField = 'evmDepositWalletAddress'; // For sending deposits
+            
+            // No need to check network-specific here - user needs both for any flip
+            const hasReceiveWallet = userProfile?.evmWalletAddress || userProfile?.solanaWalletAddress;
+            const hasDepositWallet = userProfile?.evmDepositWalletAddress || userProfile?.solanaDepositWalletAddress;
+            
+            if (!hasReceiveWallet || !hasDepositWallet) {
+              // Missing wallets - prompt to set up
+              logger.info('[flip_deeplink] Missing wallets, redirecting to wallet setup', {
+                sessionId,
+                hasReceive: !!hasReceiveWallet,
+                hasDeposit: !!hasDepositWallet
+              });
+
+              await ctx.reply(
+                `❌ <b>Setup Complete Wallet Configuration</b>\n\n` +
+                `Before you can play, you need to set up both:\n` +
+                `${hasReceiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
+                `${hasDepositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+                `Configure your wallets to continue:`,
+                {
+                  parse_mode: 'HTML',
+                  reply_markup: Markup.inlineKeyboard([
+                    [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
+                  ]).reply_markup,
+                }
+              );
+              return;
+            }
+
             // Delete the original "Start a Coin Flip!" message from the group
             logger.info('[flip_deeplink] Attempting to delete initial message', {
               sessionId,
@@ -2345,21 +2378,23 @@ const handlers = {
 
       // Regular start message
       
-      // Check if user has wallet addresses set up
+      // Check if user has BOTH required wallet addresses
       const userProfile = await models.UserProfile.findByPk(userId);
-      const hasWallets = userProfile?.evmWalletAddress || userProfile?.solanaWalletAddress;
+      const hasReceiveWallet = userProfile?.evmWalletAddress || userProfile?.solanaWalletAddress;
+      const hasDepositWallet = userProfile?.evmDepositWalletAddress || userProfile?.solanaDepositWalletAddress;
       
-      if (!hasWallets) {
-        // First time user - prompt to add wallets
+      if (!hasReceiveWallet || !hasDepositWallet) {
+        // Missing wallets - prompt to set up
         await ctx.reply(
-          `🪙 <b>Welcome to Coin Flip Bot!</b>\n\n` +
-          `Before you can start playing, please set up your wallet addresses.\n\n` +
-          `These will be used to send you your winnings automatically.\n\n` +
-          `Tap the button below to add your wallets:`,
+          `❌ <b>Setup Complete Wallet Configuration</b>\n\n` +
+          `Before you can start playing, you need to set up both:\n` +
+          `${hasReceiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
+          `${hasDepositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+          `Configure your wallets to continue:`,
           {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('💳 Add Wallet Addresses', 'open_wallet_menu')],
+              [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
             ]).reply_markup,
           }
         );
