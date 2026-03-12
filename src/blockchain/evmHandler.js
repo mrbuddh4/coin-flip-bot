@@ -202,18 +202,38 @@ class EVMHandler {
         
         // Use Paxscan API directly
         try {
-          const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+          // First query: Look for transfers of the EXPECTED token only
+          const paxscanUrlExpectedToken = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
           
-          console.log('[getRecentDepositSender] Querying Paxscan API', { url: paxscanUrl });
+          console.log('[getRecentDepositSender] Querying Paxscan API for expected token', { url: paxscanUrlExpectedToken });
           
-          const response = await fetch(paxscanUrl);
-          const data = await response.json();
+          let response = await fetch(paxscanUrlExpectedToken);
+          let data = await response.json();
           
-          console.log('[getRecentDepositSender] Paxscan API response', {
+          console.log('[getRecentDepositSender] Paxscan API response (expected token)', {
             status: data.status,
             message: data.message,
             resultCount: data.result?.length || 0,
           });
+          
+          // If no results with contract filter, query ALL tokens to find wrong-token transfers
+          if ((!data.result || data.result.length === 0) && data.status === '1') {
+            console.log('[getRecentDepositSender] No transfers of expected token found, querying for ALL token transfers to detect wrong tokens', {
+              expectedToken: tokenAddress.toLowerCase(),
+            });
+            
+            const paxscanUrlAllTokens = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+            console.log('[getRecentDepositSender] Querying Paxscan API for all tokens (wrong token detection)', { url: paxscanUrlAllTokens });
+            
+            response = await fetch(paxscanUrlAllTokens);
+            data = await response.json();
+            
+            console.log('[getRecentDepositSender] Paxscan API response (all tokens)', {
+              status: data.status,
+              message: data.message,
+              resultCount: data.result?.length || 0,
+            });
+          }
 
           if (data.status === '1' && data.result && data.result.length > 0) {
             // Determine which sender to look for
