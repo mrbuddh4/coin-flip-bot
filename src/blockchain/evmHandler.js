@@ -359,17 +359,127 @@ class EVMHandler {
             }
             
             if (transfers.length === 0) {
-              console.warn('[getRecentDepositSender] No transfers from target sender via Paxscan', { 
+              console.warn('[getRecentDepositSender] No transfers from target sender via current query', { 
                 targetSender,
                 knownSender,
                 transactionsChecked: data.result.length,
+                currentQuery: queriedAllTokens ? 'all-tokens' : 'expected-token-only',
               });
               
               // CRITICAL FIX: If we have a knownSender (e.g., challenger's known wallet), 
-              // do NOT fall back to using other senders - fail the deposit verification instead
-              // This prevents accepting deposits from the wrong user (e.g., creator's deposit as challenger)
-              if (knownSender) {
-                console.warn('[getRecentDepositSender] Known sender was specified but no deposits found from them - rejecting to prevent fraud', {
+              // we still need to check native transfers before giving up
+              
+              // If we only queried the expected token, now query all ERC20s (no contract filter)
+              if (!queriedAllTokens && tokenAddress && tokenAddress !== 'NATIVE') {
+                console.log('[getRecentDepositSender] Fallback 1: Querying ALL ERC20 tokens (no contract filter)', {
+                  targetSender,
+                  expectedToken: tokenAddress.toLowerCase(),
+                });
+                
+                const paxscanUrlAllTokens = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+                
+                try {
+                  const allTokensResponse = await fetch(paxscanUrlAllTokens);
+                  const allTokensData = await allTokensResponse.json();
+                  
+                  console.log('[getRecentDepositSender] Paxscan API response (all ERC20 tokens fallback)', {
+                    status: allTokensData.status,
+                    message: allTokensData.message,
+                    resultCount: allTokensData.result?.length || 0,
+                  });
+                  
+                  // Try to find transfers from target sender in the all-tokens result
+                  if (allTokensData.status === '1' && allTokensData.result && allTokensData.result.length > 0) {
+                    for (const tx of allTokensData.result) {
+                      const txSenderLower = tx.from.toLowerCase();
+                      const txRecipientLower = tx.to?.toLowerCase() || '';
+                      const txTimestamp = parseInt(tx.timeStamp, 10);
+                      const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
+                      
+                      const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
+                      const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                      
+                      if (isValidSender && isAfterFlipCreation) {
+                        const transferDecimals = 6; // Assume 6 decimals for ERC20s (SID/other tokens)
+                        const txAmount = parseFloat(ethers.formatUnits(tx.value, transferDecimals));
+                        totalAmount += txAmount;
+                        if (!latestTxForReturn) latestTxForReturn = tx;
+                        transfers.push({
+                          amount: txAmount,
+                          hash: tx.hash,
+                          blockNumber: tx.blockNumber,
+                          timestamp: txTimestamp,
+                          contractAddress: txContractAddressLower,
+                          isNativeTransfer: false,
+                          wrongToken: txContractAddressLower !== tokenAddress.toLowerCase() ? txContractAddressLower : null,
+                        });
+                      }
+                    }
+                  }
+                } catch (fallbackErr) {
+                  console.error('[getRecentDepositSender] Fallback all-tokens query failed', { error: fallbackErr.message });
+                }
+              }
+              
+              // If still no transfers found, query NATIVE transfers (txlist API)
+              if (transfers.length === 0 && tokenAddress !== 'NATIVE') {
+                console.log('[getRecentDepositSender] Fallback 2: Querying NATIVE transfers (PAX)', {
+                  targetSender,
+                  botWallet: botWalletAddress,
+                });
+                
+                const paxscanUrlNative = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+                
+                try {
+                  const nativeResponse = await fetch(paxscanUrlNative);
+                  const nativeData = await nativeResponse.json();
+                  
+                  console.log('[getRecentDepositSender] Paxscan API response (native transfers fallback)', {
+                    status: nativeData.status,
+                    message: nativeData.message,
+                    resultCount: nativeData.result?.length || 0,
+                  });
+                  
+                  // Try to find native transfers from target sender
+                  if (nativeData.status === '1' && nativeData.result && nativeData.result.length > 0) {
+                    for (const tx of nativeData.result) {
+                      const txSenderLower = tx.from.toLowerCase();
+                      const txRecipientLower = tx.to?.toLowerCase() || '';
+                      const txTimestamp = parseInt(tx.timeStamp, 10);
+                      
+                      const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
+                      const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                      
+                      if (isValidSender && isAfterFlipCreation) {
+                        const txAmount = parseFloat(ethers.formatUnits(tx.value, 18)); // Native transfers use 18 decimals
+                        totalAmount += txAmount;
+                        if (!latestTxForReturn) latestTxForReturn = tx;
+                        transfers.push({
+                          amount: txAmount,
+                          hash: tx.hash,
+                          blockNumber: tx.blockNumber,
+                          timestamp: txTimestamp,
+                          contractAddress: 'NATIVE',
+                          isNativeTransfer: true,
+                          wrongToken: 'NATIVE', // Native PAX is "wrong" when SID was expected
+                        });
+                        
+                        console.log('[getRecentDepositSender] Found native transfer from target sender', {
+                          sender: txSenderLower,
+                          amount: txAmount,
+                          txHash: tx.hash,
+                        });
+                      }
+                    }
+                  }
+                } catch (fallbackErr) {
+                  console.error('[getRecentDepositSender] Fallback native-transfer query failed', { error: fallbackErr.message });
+                }
+              }
+              
+              // If knownSender and still no transfers found, reject to prevent fraud
+              if (transfers.length === 0 && knownSender) {
+                console.warn('[getRecentDepositSender] Known sender specified but no deposits found at all (checked tokens + native) - rejecting', {
                   knownSender,
                   botWalletAddress,
                   expectedToken: tokenAddress.toLowerCase(),
