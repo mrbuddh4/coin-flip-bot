@@ -945,9 +945,12 @@ async function initBot() {
         }
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
-        // If we already detected a sender, pass it to accumulate all their transfers
+        // CRITICAL: Don't pass the stored wallet on first detection - user may be using a different wallet
+        // Once we detect their wallet, it gets stored and will be used for subsequent calls
         const blockchainManager = getBlockchainManager();
-        const knownSender = flip.challengerDepositWalletAddress || null;
+        
+        // Don't use knownSender - let the system detect any sender
+        // This allows users to send from any wallet in their current session
         const verification = await blockchainManager.verifyDepositWithRetry(
           flip.tokenNetwork,
           flip.tokenAddress,
@@ -955,7 +958,7 @@ async function initBot() {
           flip.tokenDecimals,
           4, // maxRetries
           2000, // retryDelayMs
-          knownSender, // pass known sender to accumulate multi-deposits
+          null, // Don't constrain to old wallet - detect ANY sender
           flip.createdAt // pass flip creation time to filter old deposits
         );
 
@@ -1411,9 +1414,12 @@ async function initBot() {
         }
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
-        // If we already detected a sender, pass it to accumulate all their transfers
+        // CRITICAL: Don't pass the stored wallet on first detection - user may be using a different wallet
+        // Once we detect their wallet, it gets stored and will be used for subsequent calls
         const blockchainManager = getBlockchainManager();
-        const knownSender = flip.creatorDepositWalletAddress || null;
+        
+        // Don't use knownSender - let the system detect any sender
+        // This allows users to send from any wallet in their current session
         const verification = await blockchainManager.verifyDepositWithRetry(
           flip.tokenNetwork,
           flip.tokenAddress,
@@ -1421,7 +1427,7 @@ async function initBot() {
           flip.tokenDecimals,
           4, // maxRetries
           2000, // retryDelayMs
-          knownSender, // pass known sender to accumulate multi-deposits
+          null, // Don't constrain to old wallet - detect ANY sender
           flip.createdAt // pass flip creation time to filter old deposits
         );
 
