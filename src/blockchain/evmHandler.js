@@ -209,6 +209,7 @@ class EVMHandler {
           
           let response = await fetch(paxscanUrlExpectedToken);
           let data = await response.json();
+          let queriedAllTokens = false; // Track if we had to do the all-tokens query
           
           console.log('[getRecentDepositSender] Paxscan API response (expected token)', {
             status: data.status,
@@ -227,6 +228,7 @@ class EVMHandler {
             
             response = await fetch(paxscanUrlAllTokens);
             data = await response.json();
+            queriedAllTokens = true; // Flag that we queried all tokens
             
             console.log('[getRecentDepositSender] Paxscan API response (all tokens)', {
               status: data.status,
@@ -249,6 +251,7 @@ class EVMHandler {
               targetSender,
               knownSenderProvided: !!knownSender,
               totalTransactions: data.result.length,
+              queriedAllTokens, // Log which query we used
               transactionsFromAddresses: data.result.map(tx => tx.from.toLowerCase()),
               first5Transactions: data.result.slice(0, 5).map(tx => ({
                 from: tx.from,
@@ -272,12 +275,15 @@ class EVMHandler {
               
               // Only process if this is an INCOMING transfer to the bot wallet
               // AND sender matches our target AND tx happened after flip was created
-              // AND it's from the correct token contract
               const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
               const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
               const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
               
-              if (isValidSender && isAfterFlipCreation && isCorrectToken) {
+              // CRITICAL: If we queried ALL tokens and found no correct-token transfers,
+              // we should accept ANY transfer (even wrong tokens) to enable refunds
+              const shouldAcceptWrongToken = queriedAllTokens && !isCorrectToken;
+              
+              if (isValidSender && isAfterFlipCreation && (isCorrectToken || shouldAcceptWrongToken)) {
                 const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                 totalAmount += txAmount;
                 if (!latestTxForReturn) latestTxForReturn = tx;
@@ -287,6 +293,7 @@ class EVMHandler {
                   blockNumber: tx.blockNumber,
                   timestamp: txTimestamp,
                   contractAddress: txContractAddressLower,
+                  wrongToken: shouldAcceptWrongToken ? txContractAddressLower : null,
                 });
                 
                 console.log('[getRecentDepositSender] Matched incoming transaction', {
@@ -425,6 +432,9 @@ class EVMHandler {
               knownSenderProvided: !!knownSender,
               transferCount: transfers.length,
               totalAmount,
+              queriedAllTokens, // Include flag showing we had to query all tokens
+              hasWrongTokens: transfers.some(t => t.wrongToken), // Flag if any wrong tokens present
+              transfers, // Include full transfer details for debugging
             });
 
             return {
@@ -433,6 +443,7 @@ class EVMHandler {
               transactionHash: latestTxForReturn.hash,
               blockNumber: latestTxForReturn.blockNumber,
               transferCount: transfers.length,
+              hasWrongTokens: transfers.some(t => t.wrongToken), // Include flag in return
             };
           } else {
             console.warn('[getRecentDepositSender] No transfers found via Paxscan API', {
