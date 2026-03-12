@@ -286,8 +286,26 @@ class EVMHandler {
             if (knownSender) {
               targetSender = knownSender.toLowerCase();
             } else {
-              const latestTx = data.result[0];
-              targetSender = latestTx.from.toLowerCase();
+              // If no knownSender, find the LATEST transaction from ANY SENDER
+              // BUT exclude the bot wallet itself (could have refund txns)
+              const botWalletLower = botWalletAddress.toLowerCase();
+              let foundSender = null;
+              
+              for (const tx of data.result) {
+                const txSenderLower = tx.from.toLowerCase();
+                // Skip if sender is the bot itself
+                if (txSenderLower !== botWalletLower) {
+                  foundSender = txSenderLower;
+                  break; // Found the latest external sender
+                }
+              }
+              
+              targetSender = foundSender || data.result[0].from.toLowerCase(); // Fallback to first if all are bot
+              console.log('[getRecentDepositSender] No knownSender - selected target from transaction data', {
+                selectedSender: targetSender,
+                botWallet: botWalletLower,
+                foundExternalSender: !!foundSender,
+              });
             }
             
             // Detect if these are native transfers (txlist) vs token transfers (tokentx)
