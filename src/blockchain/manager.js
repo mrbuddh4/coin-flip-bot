@@ -244,7 +244,7 @@ class BlockchainManager {
     }
 
     try {
-      const botWallet = network === 'EVM' ? config.evm.botWallet : config.solana.botWallet;
+      const botWallet = this.getBotWalletAddress(network);
       const results = await handler.refundIncorrectTokens(botWallet, expectedTokenAddress, senderAddress, flipCreatedAt);
       return results;
     } catch (error) {
