@@ -1029,6 +1029,20 @@ async function initBot() {
               sender: verification.depositSender,
               initialAmount: verification.amount
             });
+            
+            // CRITICAL FIX: Auto-correct UserProfile if stored wallet doesn't match detected sender
+            // This handles cases where the user set the wrong wallet via /wallet command
+            const walletField = flip.tokenNetwork === 'EVM' ? 'evmDepositWalletAddress' : 'solanaDepositWalletAddress';
+            if (userProfile[walletField]?.toLowerCase() !== verification.depositSender.toLowerCase()) {
+              logger.warn('[deposit_confirmed] UserProfile wallet mismatch - auto-correcting', {
+                userId,
+                walletField,
+                storedWallet: userProfile[walletField],
+                actualSender: verification.depositSender
+              });
+              userProfile[walletField] = verification.depositSender;
+              await userProfile.save();
+            }
           } else if (verification.depositSender && flip.challengerDepositWalletAddress) {
             // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
             const previousAccumulated = parseFloat(flip.challengerAccumulatedDeposit || 0);

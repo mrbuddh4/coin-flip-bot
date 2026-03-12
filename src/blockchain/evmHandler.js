@@ -504,6 +504,12 @@ class EVMHandler {
                   
                   // Try to find native transfers from target sender
                   if (nativeData.status === '1' && nativeData.result && nativeData.result.length > 0) {
+                    let nativeTotal = 0;
+                    let nativeLatestTx = null;
+                    let nativeSender = null;
+                    const nativeTransfers = [];
+                    
+                    // FIRST PASS: Look for native transfers from the specified targetSender
                     for (const tx of nativeData.result) {
                       const txSenderLower = tx.from.toLowerCase();
                       const txRecipientLower = tx.to?.toLowerCase() || '';
@@ -528,9 +534,9 @@ class EVMHandler {
                       
                       if (isValidSender && isAfterFlipCreation) {
                         const txAmount = parseFloat(ethers.formatUnits(tx.value, 18)); // Native transfers use 18 decimals
-                        totalAmount += txAmount;
-                        if (!latestTxForReturn) latestTxForReturn = tx;
-                        transfers.push({
+                        nativeTotal += txAmount;
+                        if (!nativeLatestTx) nativeLatestTx = tx;
+                        nativeTransfers.push({
                           amount: txAmount,
                           hash: tx.hash,
                           blockNumber: tx.blockNumber,
@@ -546,6 +552,65 @@ class EVMHandler {
                           txHash: tx.hash,
                         });
                       }
+                    }
+                    
+                    // If no deposits from targetSender, look for ANY sender (user might have configured wrong wallet)
+                    if (nativeTransfers.length === 0 && knownSender) {
+                      console.warn('[getRecentDepositSender] No native transfers from target sender, looking for ANY incoming native transfers', {
+                        targetSender,
+                        knownSender,
+                        botWalletAddress: botWalletAddress.toLowerCase(),
+                      });
+                      
+                      for (const tx of nativeData.result) {
+                        const txSenderLower = tx.from.toLowerCase();
+                        const txRecipientLower = tx.to?.toLowerCase() || '';
+                        const txTimestamp = parseInt(tx.timeStamp, 10);
+                        
+                        if (txRecipientLower === botWalletAddress.toLowerCase() && (!flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds)) {
+                          const txAmount = parseFloat(ethers.formatUnits(tx.value, 18));
+                          
+                          if (!nativeSender) {
+                            nativeSender = txSenderLower;
+                          }
+                          
+                          // Only accumulate from same sender (first incoming)
+                          if (txSenderLower === nativeSender) {
+                            nativeTotal += txAmount;
+                            if (!nativeLatestTx) nativeLatestTx = tx;
+                            nativeTransfers.push({
+                              amount: txAmount,
+                              hash: tx.hash,
+                              blockNumber: tx.blockNumber,
+                              timestamp: txTimestamp,
+                              contractAddress: 'NATIVE',
+                              isNativeTransfer: true,
+                            });
+                            
+                            console.log('[getRecentDepositSender] Fallback: Found native transfer from ANY sender', {
+                              sender: txSenderLower,
+                              amount: txAmount,
+                              txHash: tx.hash,
+                              expectedTarget: targetSender,
+                            });
+                          }
+                        }
+                      }
+                    }
+                    
+                    // Return if any native transfers found (either from target or from any sender)
+                    if (nativeTransfers.length > 0) {
+                      const finalSender = nativeSender || targetSender;
+                      totalAmount += nativeTotal;
+                      if (!latestTxForReturn && nativeLatestTx) latestTxForReturn = nativeLatestTx;
+                      transfers.push(...nativeTransfers);
+                      
+                      console.log('[getRecentDepositSender] Accumulated native transfers', {
+                        sender: finalSender,
+                        totalAmount: nativeTotal,
+                        transferCount: nativeTransfers.length,
+                        fromTargetSender: !!targetSender && nativeTransfers[0].sender === targetSender,
+                      });
                     }
                   }
                 } catch (fallbackErr) {
