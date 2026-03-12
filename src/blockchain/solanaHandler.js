@@ -232,185 +232,250 @@ class SolanaHandler {
   }
 
   /**
-   * Find the sender of a recent incoming transaction to the bot wallet
+   * Helper function for exponential backoff with jitter
    */
-  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null, knownSender = null) {
-    try {
-      const botPublicKey = new PublicKey(botWalletAddress);
-      // Check recent signatures only (~30 minute window on Solana)
-      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 100 });
+  async withExponentialBackoff(fn, maxRetries = 5) {
+    let lastError;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        
+        // Check if it's a rate limit error
+        const is429 = error.message?.includes('429') || error.message?.includes('Too many requests');
+        
+        if (!is429 || attempt === maxRetries - 1) {
+          throw error;
+        }
+        
+        // Exponential backoff with jitter: 100ms * 2^attempt + random 0-50ms
+        const baseDelay = 100 * Math.pow(2, attempt);
+        const jitter = Math.random() * 50;
+        const delay = baseDelay + jitter;
+        
+        console.warn(`[withExponentialBackoff] Rate limited, retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    throw lastError;
+  }
 
-      // Collect all deposits to find sender info
+  /**
+   * Find the sender of a recent incoming transaction to the bot wallet using Helius API
+   */
+  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null, knownSender = null, flipCreatedAt = null) {
+    try {
+      const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
+
+      console.log('[getRecentDepositSender] Searching for Solana deposits via Helius API', {
+        botWallet: botWalletAddress,
+        tokenMint,
+        expectedAmount,
+        knownSender,
+        flipCreatedAt,
+      });
+
+      // Construct Helius API request
+      const heliusApiKey = config.solana.heliusApiKey;
+      if (!heliusApiKey) {
+        console.error('[getRecentDepositSender] Helius API key not configured');
+        return null;
+      }
+
+      const url = `https://api.helius.xyz/v0/addresses/${botWalletAddress}/transactions?api-key=${heliusApiKey}`;
+      
+      const response = await this.withExponentialBackoff(() => fetch(url));
+      if (!response.ok) {
+        console.error('[getRecentDepositSender] Helius API error:', response.status);
+        return null;
+      }
+
+      const transactions = await response.json();
+      console.log('[getRecentDepositSender] Helius API response', {
+        transactionCount: transactions?.length || 0,
+      });
+
+      if (!transactions || transactions.length === 0) {
+        console.warn('[getRecentDepositSender] No transactions found');
+        return null;
+      }
+
+      // Collect deposits and wrong tokens
       let deposits = [];
       let wrongTokenDeposits = [];
-      
-      for (const sig of signatures) {
+
+      for (const tx of transactions) {
         try {
-          const transaction = await this.connection.getTransaction(sig.signature, {
-            maxSupportedTransactionVersion: 0,
-          });
+          // Skip if transaction is failed
+          if (tx.type === 'FAILED') continue;
 
-          if (!transaction) continue;
+          // Filter by time if flipCreatedAt provided
+          if (flipCreatedAtSeconds && tx.timestamp && tx.timestamp < flipCreatedAtSeconds) {
+            console.log('[getRecentDepositSender] Skipping tx before flip creation', { timestamp: tx.timestamp, flipCreatedAtSeconds });
+            continue;
+          }
 
-          const { meta, transaction: tx } = transaction;
+          // Check for token transfers
+          if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+            for (const transfer of tx.tokenTransfers) {
+              // Look for transfers TO the bot wallet
+              if (transfer.toUserAccount !== botWalletAddress) continue;
 
-          // Look for transfers in the transaction
-          if (tokenMint) {
-            // For SPL tokens, parse token program instructions
-            // Look for token transfer instructions where bot's account receives tokens
-            if (tx.message && tx.message.instructions) {
-              for (const instruction of tx.message.instructions) {
-                try {
-                  // Check if this is a token program instruction
-                  const programId = tx.message.accountKeys[instruction.programIdIndex];
-                  if (!programId) continue;
-                  
-                  const programIdStr = programId.toBase58();
-                  // Solana Token Program ID: TokenkegQfeZyiNwAJsyFbPVwwQQfuls8PsPkkP7gC9j
-                  const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJsyFbPVwwQQfuls8PsPkkP7gC9j';
-                  
-                  if (programIdStr === TOKEN_PROGRAM_ID && instruction.accounts) {
-                    // Instruction account 0 = source, 1 = destination, 2 = authority/owner
-                    const sourceIndex = instruction.accounts[0];
-                    const destIndex = instruction.accounts[1];
-                    
-                    if (destIndex !== undefined && sourceIndex !== undefined) {
-                      const destAccount = tx.message.accountKeys[destIndex];
-                      const sourceAccount = tx.message.accountKeys[sourceIndex];
-                      
-                      // Check if this is any token transfer to the bot
-                      if (destAccount && sourceAccount) {
-                        const destStr = destAccount.toBase58();
-                        
-                        // Parse the token instruction to get token mint
-                        let transferTokenMint = null;
-                        try {
-                          // Token program instruction format: opcode (1) + amount (8) + other data
-                          const buffer = Buffer.from(instruction.data);
-                          if (buffer.length >= 1) {
-                            // Get the mint from the source account's parsed data
-                            const sourceAccountInfo = await this.connection.getParsedAccountInfo(sourceAccount);
-                            if (sourceAccountInfo.value?.data?.parsed?.info?.mint) {
-                              transferTokenMint = sourceAccountInfo.value.data.parsed.info.mint;
-                            }
-                          }
-                        } catch (err) {
-                          console.warn('Could not determine token mint from transfer');
-                        }
-                        
-                        // Get bot's ATA for the token mint to check if this is received by bot
-                        try {
-                          const { getAssociatedTokenAddress } = require('@solana/spl-token');
-                          const botATA = await getAssociatedTokenAddress(
-                            new PublicKey(tokenMint),
-                            botPublicKey
-                          );
-                          const botATAStr = botATA.toBase58();
-                          
-                          if (tx.message.accountKeys.length > 2) {
-                            const authorityIndex = instruction.accounts[2];
-                            if (authorityIndex !== undefined) {
-                              const authority = tx.message.accountKeys[authorityIndex];
-                              const authorityStr = authority.toBase58();
-                              
-                              // Extract amount from instruction data
-                              if (instruction.data && instruction.data.length > 1) {
-                                const buffer = Buffer.from(instruction.data);
-                                if (buffer.length >= 9) {
-                                  const amount = buffer.readBigUInt64LE(1);
-                                  
-                                  // Get token decimals
-                                  let decimals = 6; // Default for most SPL tokens
-                                  try {
-                                    const mintInfo = await this.connection.getParsedAccountInfo(new PublicKey(tokenMint));
-                                    if (mintInfo.value?.data?.parsed?.info?.decimals !== undefined) {
-                                      decimals = mintInfo.value.data.parsed.info.decimals;
-                                    }
-                                  } catch (err) {
-                                    console.warn('Could not get token decimals, using default 6');
-                                  }
-                                  
-                                  const formattedAmount = Number(amount) / Math.pow(10, decimals);
-                                  
-                                  // Check if this is the expected token or wrong token
-                                  if (destStr === botATAStr) {
-                                    // Correct token received
-                                    deposits.push({
-                                      sender: authorityStr,
-                                      amount: formattedAmount,
-                                      signature: sig.signature,
-                                      slot: sig.slot,
-                                      tokenMint,
-                                      wrongToken: null,
-                                    });
-                                  } else if (transferTokenMint && transferTokenMint !== tokenMint) {
-                                    // Wrong token detected
-                                    console.log('[getRecentDepositSender] Wrong token detected', {
-                                      sender: authorityStr,
-                                      expectedMint: tokenMint,
-                                      receivedMint: transferTokenMint,
-                                      amount: formattedAmount,
-                                    });
-                                    wrongTokenDeposits.push({
-                                      sender: authorityStr,
-                                      amount: formattedAmount,
-                                      signature: sig.signature,
-                                      slot: sig.slot,
-                                      tokenMint: transferTokenMint,
-                                      wrongToken: transferTokenMint,
-                                    });
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        } catch (ataErr) {
-                          console.warn('Could not process SPL token transfer:', ataErr.message);
-                        }
-                      }
-                    }
-                  }
-                } catch (instructionErr) {
-                  console.warn('Error parsing instruction:', instructionErr.message);
-                  continue;
+              const transferMint = transfer.mint;
+              const sender = transfer.fromUserAccount;
+              const amount = parseFloat(transfer.tokenAmount);
+              const decimals = transfer.tokenDecimals || 6;
+
+              console.log('[getRecentDepositSender] Found token transfer', {
+                sender,
+                mint: transferMint,
+                amount,
+                signature: tx.signature,
+              });
+
+              // Check if this is the expected token or a wrong token
+              if (tokenMint) {
+                const tokenMintStr = tokenMint.toLowerCase();
+                const transferMintStr = transferMint.toLowerCase();
+
+                if (transferMintStr === tokenMintStr) {
+                  // Correct token
+                  deposits.push({
+                    sender,
+                    amount: amount.toString(),
+                    signature: tx.signature,
+                    slot: tx.slot || 0,
+                    tokenMint,
+                    wrongToken: null,
+                  });
+                } else {
+                  // Wrong token detected
+                  console.log('[getRecentDepositSender] Wrong token detected', {
+                    sender,
+                    expectedMint: tokenMint,
+                    receivedMint: transferMint,
+                    amount,
+                  });
+                  wrongTokenDeposits.push({
+                    sender,
+                    amount: amount.toString(),
+                    signature: tx.signature,
+                    slot: tx.slot || 0,
+                    tokenMint: transferMint,
+                    wrongToken: transferMint,
+                  });
                 }
-              }
-            }
-          } else {
-            // For native SOL transfers
-            for (let i = 0; i < tx.message.accountKeys.length; i++) {
-              const account = tx.message.accountKeys[i];
-              if (account.toBase58() === botWalletAddress) {
-                // Found the bot receive the transaction
-                // The sender is typically the first account (index 0)
-                if (tx.message.accountKeys.length > 0) {
-                  // Get the account that decreased in balance (the sender)
-                  const senderKey = tx.message.accountKeys[0];
-                  const senderStr = senderKey.toBase58();
-                  
-                  if (meta && meta.preBalances && meta.postBalances) {
-                    const balanceChange = meta.postBalances[i] - meta.preBalances[i];
-                    if (balanceChange > 0) {
-                      const transactionAmount = balanceChange / LAMPORTS_PER_SOL;
-                      
-                      deposits.push({
-                        sender: senderStr,
-                        amount: transactionAmount,
-                        signature: sig.signature,
-                        slot: sig.slot,
-                        tokenMint: null,
-                        wrongToken: null,
-                      });
-                    }
-                  }
-                }
+              } else {
+                // No specific token expected (shouldn't happen for token transfers)
+                deposits.push({
+                  sender,
+                  amount: amount.toString(),
+                  signature: tx.signature,
+                  slot: tx.slot || 0,
+                  tokenMint,
+                  wrongToken: null,
+                });
               }
             }
           }
-        } catch (err) {
-          console.warn('Error processing Solana transaction:', err.message);
+
+          // Check for native SOL transfers
+          if (!tokenMint && tx.nativeTransfers && tx.nativeTransfers.length > 0) {
+            for (const transfer of tx.nativeTransfers) {
+              // Look for transfers TO the bot wallet
+              if (transfer.toUserAccount !== botWalletAddress) continue;
+
+              const sender = transfer.fromUserAccount;
+              const amount = transfer.amount / LAMPORTS_PER_SOL;
+
+              console.log('[getRecentDepositSender] Found native SOL transfer', {
+                sender,
+                amount,
+                signature: tx.signature,
+              });
+
+              deposits.push({
+                sender,
+                amount: amount.toString(),
+                signature: tx.signature,
+                slot: tx.slot || 0,
+                tokenMint: null,
+                wrongToken: null,
+              });
+            }
+          }
+        } catch (txErr) {
+          console.warn('[getRecentDepositSender] Error processing transaction:', txErr.message);
           continue;
         }
+      }
+
+      // Process collected deposits
+      const wrongTokensFound = wrongTokenDeposits.filter(d => d.sender === knownSender || !knownSender);
+
+      if (wrongTokensFound.length > 0 && deposits.length === 0) {
+        // Only wrong tokens detected, mark as wrong token
+        console.log('[getRecentDepositSender] Wrong token deposits detected (no correct token found)', {
+          count: wrongTokensFound.length,
+        });
+
+        const mostRecentWrong = wrongTokensFound[0];
+        return {
+          sender: mostRecentWrong.sender,
+          amount: mostRecentWrong.amount,
+          signature: mostRecentWrong.signature,
+          slot: mostRecentWrong.slot,
+          wrongToken: mostRecentWrong.wrongToken,
+        };
+      }
+
+      if (deposits.length === 0) {
+        console.warn('[getRecentDepositSender] No deposits found');
+        return null;
+      }
+
+      if (knownSender) {
+        // If a known sender is provided, accumulate ALL deposits from that sender
+        const fromSender = deposits.filter(d => d.sender === knownSender);
+
+        if (fromSender.length === 0) {
+          console.warn('[getRecentDepositSender] No deposits found from known sender', { knownSender });
+          return null;
+        }
+
+        const totalAmount = fromSender.reduce((sum, d) => parseFloat(d.amount) + sum, 0);
+
+        console.log('[getRecentDepositSender] Accumulated deposits from known sender (Solana)', {
+          sender: knownSender,
+          depositCount: fromSender.length,
+          totalAmount,
+        });
+
+        return {
+          sender: knownSender,
+          amount: totalAmount.toString(),
+          signature: fromSender[0].signature,
+          slot: fromSender[0].slot,
+          wrongToken: null,
+        };
+      } else {
+        // If no known sender, just return the most recent deposit
+        const mostRecent = deposits[0];
+
+        console.log('[getRecentDepositSender] Found recent deposit (Solana)', {
+          sender: mostRecent.sender,
+          amount: mostRecent.amount,
+          signature: mostRecent.signature,
+        });
+
+        return {
+          sender: mostRecent.sender,
+          amount: mostRecent.amount,
+          signature: mostRecent.signature,
+          slot: mostRecent.slot,
+          wrongToken: null,
+        };
       }
     } catch (error) {
       console.error('Error getting recent Solana deposit sender:', error);
@@ -419,168 +484,159 @@ class SolanaHandler {
   }
 
   /**
-   * Refund incorrect tokens on Solana (for wrong token deposits)
+   * Refund incorrect tokens on Solana using Helius API (for wrong token deposits)
    */
   async refundIncorrectTokens(botWalletAddress, expectedTokenMint, senderAddress, flipCreatedAt = null) {
     try {
-      console.log('[refundIncorrectTokens] Starting Solana token refund', {
+      const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
+
+      console.log('[refundIncorrectTokens] Starting Solana token refund via Helius', {
         senderAddress,
         expectedTokenMint,
         botWalletAddress,
+        flipCreatedAt: flipCreatedAtSeconds,
       });
 
-      // Get recent transactions to find wrong token transfers
-      const botPublicKey = new PublicKey(botWalletAddress);
-      const signatures = await this.connection.getSignaturesForAddress(botPublicKey, { limit: 100 });
+      // Construct Helius API request
+      const heliusApiKey = config.solana.heliusApiKey;
+      if (!heliusApiKey) {
+        console.error('[refundIncorrectTokens] Helius API key not configured');
+        return [];
+      }
+
+      const url = `https://api.helius.xyz/v0/addresses/${botWalletAddress}/transactions?api-key=${heliusApiKey}`;
+      
+      const response = await this.withExponentialBackoff(() => fetch(url));
+      if (!response.ok) {
+        console.error('[refundIncorrectTokens] Helius API error:', response.status);
+        return [];
+      }
+
+      const transactions = await response.json();
+      console.log('[refundIncorrectTokens] Helius API response', {
+        transactionCount: transactions?.length || 0,
+      });
+
+      if (!transactions || transactions.length === 0) {
+        console.log('[refundIncorrectTokens] No transactions found');
+        return [];
+      }
 
       let refundSigs = [];
       const expectedMintStr = expectedTokenMint?.toLowerCase() || null;
 
-      for (const sig of signatures) {
+      for (const tx of transactions) {
         try {
-          const transaction = await this.connection.getTransaction(sig.signature, {
-            maxSupportedTransactionVersion: 0,
-          });
+          // Skip if transaction is failed
+          if (tx.type === 'FAILED') continue;
 
-          if (!transaction) continue;
-
-          const { meta, transaction: tx } = transaction;
-
-          // Only look at transactions after the flip was created
-          if (flipCreatedAt && sig.blockTime) {
-            const flipCreatedAtSeconds = Math.floor(flipCreatedAt / 1000);
-            if (sig.blockTime < flipCreatedAtSeconds) {
-              continue;
-            }
+          // Filter by time if flipCreatedAt provided
+          if (flipCreatedAtSeconds && tx.timestamp && tx.timestamp < flipCreatedAtSeconds) {
+            continue;
           }
 
-          // Look for token transfers in this transaction
-          if (tx.message && tx.message.instructions) {
-            for (const instruction of tx.message.instructions) {
-              try {
-                const programId = tx.message.accountKeys[instruction.programIdIndex];
-                if (!programId) continue;
-
-                const programIdStr = programId.toBase58();
-                const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJsyFbPVwwQQfuls8PsPkkP7gC9j';
-
-                if (programIdStr === TOKEN_PROGRAM_ID && instruction.accounts && instruction.accounts.length >= 3) {
-                  const sourceIndex = instruction.accounts[0];
-                  const destIndex = instruction.accounts[1];
-                  const authorityIndex = instruction.accounts[2];
-
-                  if (sourceIndex !== undefined && destIndex !== undefined) {
-                    const sourceAccount = tx.message.accountKeys[sourceIndex];
-                    const destAccount = tx.message.accountKeys[destIndex];
-                    const authority = tx.message.accountKeys[authorityIndex];
-
-                    // Check if sender is the authority
-                    if (authority && authority.toBase58() === senderAddress) {
-                      // Parse the source account to get the token mint
-                      try {
-                        const sourceAccountInfo = await this.connection.getParsedAccountInfo(sourceAccount);
-                        if (sourceAccountInfo.value?.data?.parsed?.info?.mint) {
-                          const transferMint = sourceAccountInfo.value.data.parsed.info.mint;
-                          const transferMintStr = transferMint.toLowerCase();
-
-                          // Check if this is a wrong token transfer (mint doesn't match expected)
-                          if (expectedMintStr && transferMintStr !== expectedMintStr) {
-                            console.log('[refundIncorrectTokens] Found wrong token transfer, initiating refund', {
-                              signature: sig.signature,
-                              wrongMint: transferMint,
-                              expectedMint: expectedTokenMint,
-                              source: sourceAccount.toBase58(),
-                              destination: destAccount.toBase58(),
-                            });
-
-                            // Get token decimals
-                            let decimals = 6;
-                            try {
-                              const mintInfo = await this.connection.getParsedAccountInfo(new PublicKey(transferMint));
-                              if (mintInfo.value?.data?.parsed?.info?.decimals !== undefined) {
-                                decimals = mintInfo.value.data.parsed.info.decimals;
-                              }
-                            } catch (err) {
-                              console.warn('Could not get token decimals for wrong token, using default 6');
-                            }
-
-                            // Get bot's ATA balance for the wrong token to determine refund amount
-                            try {
-                              const botATA = await getAssociatedTokenAddress(
-                                new PublicKey(transferMint),
-                                botPublicKey
-                              );
-
-                              const botATAInfo = await this.connection.getParsedAccountInfo(botATA);
-                              const balance = botATAInfo.value?.data?.parsed?.info?.tokenAmount?.amount;
-
-                              if (balance && Number(balance) > 0) {
-                                const refundAmount = BigInt(balance);
-                                
-                                // Get sender's ATA for the wrong token
-                                const senderPublicKey = new PublicKey(senderAddress);
-                                const senderATA = await getAssociatedTokenAddress(
-                                  new PublicKey(transferMint),
-                                  senderPublicKey
-                                );
-
-                                console.log('[refundIncorrectTokens] Refunding wrong token', {
-                                  amount: refundAmount.toString(),
-                                  decimals,
-                                  formattedAmount: Number(refundAmount) / Math.pow(10, decimals),
-                                });
-
-                                // Create transfer instruction to refund
-                                const transferInstruction = createTransferInstruction(
-                                  botATA,
-                                  senderATA,
-                                  this.wallet.publicKey,
-                                  refundAmount,
-                                  []
-                                );
-
-                                // Create and send transaction
-                                const refundTx = new Transaction().add(transferInstruction);
-                                const refundSignature = await this.connection.sendTransaction(refundTx, [this.wallet], {
-                                  skipPreflight: false,
-                                  preflightCommitment: 'confirmed',
-                                });
-
-                                // Wait for confirmation
-                                await this.connection.confirmTransaction(refundSignature, 'confirmed');
-
-                                console.log('[refundIncorrectTokens] ✅ Refund successful', {
-                                  transactionSignature: refundSignature,
-                                  refundAmount: refundAmount.toString(),
-                                });
-
-                                refundSigs.push({
-                                  txHash: refundSignature,
-                                  amount: Number(refundAmount) / Math.pow(10, decimals),
-                                  token: transferMint,
-                                });
-                              }
-                            } catch (ataErr) {
-                              console.error('[refundIncorrectTokens] Error refunding balance', {
-                                error: ataErr.message,
-                              });
-                            }
-                          }
-                        }
-                      } catch (parseErr) {
-                        console.warn('Could not parse source account mint:', parseErr.message);
-                      }
-                    }
-                  }
-                }
-              } catch (instructionErr) {
-                console.warn('Error processing instruction for refund:', instructionErr.message);
+          // Look for token transfers FROM the sender TO the bot of a wrong token
+          if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+            for (const transfer of tx.tokenTransfers) {
+              // Look for transfers TO the bot FROM the sender
+              if (transfer.toUserAccount !== botWalletAddress || transfer.fromUserAccount !== senderAddress) {
                 continue;
+              }
+
+              const transferMint = transfer.mint;
+              const transferMintStr = transferMint.toLowerCase();
+
+              // Check if this is a wrong token transfer (mint doesn't match expected)
+              if (expectedMintStr && transferMintStr !== expectedMintStr) {
+                console.log('[refundIncorrectTokens] Found wrong token transfer, initiating refund', {
+                  signature: tx.signature,
+                  wrongMint: transferMint,
+                  expectedMint: expectedTokenMint,
+                  sender: senderAddress,
+                  amount: transfer.tokenAmount,
+                });
+
+                try {
+                  // Determine refund amount - bot's current balance of the wrong token
+                  const botPublicKey = new PublicKey(botWalletAddress);
+                  const transferMintPublicKey = new PublicKey(transferMint);
+                  const senderPublicKey = new PublicKey(senderAddress);
+
+                  // Get bot's ATA for the wrong token
+                  const botATA = await getAssociatedTokenAddress(
+                    transferMintPublicKey,
+                    botPublicKey
+                  );
+
+                  // Get the account balance from RPC to determine refund amount
+                  let refundAmount = BigInt(0);
+                  try {
+                    const accountInfo = await this.connection.getParsedAccountInfo(botATA);
+                    const balance = accountInfo.value?.data?.parsed?.info?.tokenAmount?.amount;
+                    if (balance) {
+                      refundAmount = BigInt(balance);
+                    }
+                  } catch (balanceErr) {
+                    console.warn('[refundIncorrectTokens] Could not get bot ATA balance, using transferred amount', { balanceErr: balanceErr.message });
+                    // Fall back to using the transfer amount
+                    refundAmount = BigInt(Math.floor(parseFloat(transfer.tokenAmount) * Math.pow(10, transfer.tokenDecimals || 6)));
+                  }
+
+                  if (refundAmount > 0n) {
+                    // Get sender's ATA for the wrong token
+                    const senderATA = await getAssociatedTokenAddress(
+                      transferMintPublicKey,
+                      senderPublicKey
+                    );
+
+                    const decimals = transfer.tokenDecimals || 6;
+
+                    console.log('[refundIncorrectTokens] Refunding wrong token', {
+                      amount: refundAmount.toString(),
+                      decimals,
+                      formattedAmount: Number(refundAmount) / Math.pow(10, decimals),
+                    });
+
+                    // Create transfer instruction to refund
+                    const transferInstruction = createTransferInstruction(
+                      botATA,
+                      senderATA,
+                      this.wallet.publicKey,
+                      refundAmount,
+                      []
+                    );
+
+                    // Create and send transaction
+                    const refundTx = new Transaction().add(transferInstruction);
+                    const refundSignature = await this.connection.sendTransaction(refundTx, [this.wallet], {
+                      skipPreflight: false,
+                      preflightCommitment: 'confirmed',
+                    });
+
+                    // Wait for confirmation
+                    await this.connection.confirmTransaction(refundSignature, 'confirmed');
+
+                    console.log('[refundIncorrectTokens] ✅ Refund successful', {
+                      transactionSignature: refundSignature,
+                      refundAmount: refundAmount.toString(),
+                    });
+
+                    refundSigs.push({
+                      txHash: refundSignature,
+                      amount: Number(refundAmount) / Math.pow(10, decimals),
+                      token: transferMint,
+                    });
+                  }
+                } catch (refundErr) {
+                  console.error('[refundIncorrectTokens] Error processing refund', {
+                    error: refundErr.message,
+                  });
+                }
               }
             }
           }
-        } catch (err) {
-          console.warn('Error processing Solana transaction for refund:', err.message);
+        } catch (txErr) {
+          console.warn('[refundIncorrectTokens] Error processing transaction:', txErr.message);
           continue;
         }
       }

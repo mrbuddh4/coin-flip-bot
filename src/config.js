@@ -22,6 +22,8 @@ module.exports = {
   },
   solana: {
     rpcUrl: process.env.SOLANA_RPC_URL,
+    heliusUrl: process.env.SOLANA_HELIUS_API_URL || `https://api.helius.xyz/v0/addresses/${process.env.SOL_BOT_WALLET_ADDRESS}/transactions?api-key=${process.env.SOLANA_HELIUS_API_KEY}`,
+    heliusApiKey: process.env.SOLANA_HELIUS_API_KEY,
     privateKey: process.env.SOL_BOT_PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY,
     walletAddress: process.env.SOL_BOT_WALLET_ADDRESS, // Optional: explicit address (derived from private key if not set)
     devWallet: process.env.SOL_DEV_WALLET,
