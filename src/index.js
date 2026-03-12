@@ -909,6 +909,14 @@ async function initBot() {
           flip.createdAt // pass flip creation time to filter old deposits
         );
 
+        logger.info('[deposit_confirmed] Challenger verification result', { 
+          flipId, 
+          received: verification.received,
+          amount: verification.amount,
+          expected: flip.wagerAmount,
+          depositSender: verification.depositSender,
+        });
+
         if (!verification.received) {
           logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
           
@@ -1326,6 +1334,14 @@ async function initBot() {
           knownSender, // pass known sender to accumulate multi-deposits
           flip.createdAt // pass flip creation time to filter old deposits
         );
+
+        logger.info('[creator_deposit_confirmed] Creator verification result', { 
+          flipId, 
+          received: verification.received,
+          amount: verification.amount,
+          expected: flip.wagerAmount,
+          depositSender: verification.depositSender,
+        });
 
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received (insufficient)', { userId, flipId, verificationReceived: verification.received });
