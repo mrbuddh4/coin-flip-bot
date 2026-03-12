@@ -310,6 +310,8 @@ class EVMHandler {
             let totalAmount = 0;
             let latestTxForReturn = null;
             const transfers = [];
+            
+            // Convert flipCreatedAt to seconds for timestamp comparisons (must be BEFORE fallback queries use it)
             const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
             
             for (const tx of data.result) {
