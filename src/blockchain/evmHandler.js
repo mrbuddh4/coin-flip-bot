@@ -811,6 +811,102 @@ class EVMHandler {
         console.error('[refundIncorrectTokens] Paxscan API query failed', { error: paxscanErr.message });
       }
 
+      // Also check for native transfers (PAX) sent when a token was expected
+      try {
+        const senderLower = senderAddress.toLowerCase();
+        const botWalletLower = botWalletAddress.toLowerCase();
+        const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
+
+        console.log('[refundIncorrectTokens] Checking for native (PAX) transfers to refund', {
+          sender: senderAddress,
+          expectedToken: expectedTokenAddress,
+        });
+
+        const nativeUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+        const nativeResponse = await fetch(nativeUrl);
+        const nativeData = await nativeResponse.json();
+
+        console.log('[refundIncorrectTokens] Paxscan native response', {
+          status: nativeData.status,
+          resultCount: nativeData.result?.length || 0,
+        });
+
+        const nativeRefunds = [];
+
+        if (nativeData.status === '1' && nativeData.result && nativeData.result.length > 0) {
+          for (const tx of nativeData.result) {
+            const txSenderLower = tx.from.toLowerCase();
+            const txRecipientLower = tx.to?.toLowerCase() || '';
+            const txTimestamp = parseInt(tx.timeStamp, 10);
+            
+            // Find native transfers TO the bot FROM the user (any native transfer is "wrong" if token was expected)
+            const isFromSender = txSenderLower === senderLower;
+            const isToBotWallet = txRecipientLower === botWalletLower;
+            const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+
+            if (isFromSender && isToBotWallet && isAfterFlipCreation) {
+              nativeRefunds.push({
+                amount: tx.value,
+                txHash: tx.hash,
+                sender: txSenderLower,
+              });
+            }
+          }
+        }
+
+        if (nativeRefunds.length > 0) {
+          console.log('[refundIncorrectTokens] Found native (PAX) transfers to refund', {
+            count: nativeRefunds.length,
+            transfers: nativeRefunds,
+          });
+
+          const refundResults = [];
+          // Refund each native transfer
+          for (const transfer of nativeRefunds) {
+            try {
+              const amountEth = ethers.formatEther(transfer.amount);
+              console.log('[refundIncorrectTokens] Attempting to refund native PAX', {
+                amount: amountEth,
+                recipient: senderAddress,
+              });
+
+              const result = await this.transferNative(
+                config.evm.privateKey,
+                senderAddress,
+                amountEth
+              );
+
+              refundResults.push({
+                tokenAddress: 'NATIVE_PAX',
+                amount: amountEth,
+                refundTxHash: result.txHash,
+                status: 'success',
+              });
+
+              console.log('[refundIncorrectTokens] Successfully refunded native (PAX) transfer', {
+                amount: amountEth,
+                refundTxHash: result.txHash,
+                recipient: senderAddress,
+              });
+            } catch (refundErr) {
+              console.error('[refundIncorrectTokens] Failed to refund native transfer', {
+                error: refundErr.message,
+              });
+
+              refundResults.push({
+                tokenAddress: 'NATIVE_PAX',
+                amount: ethers.formatEther(transfer.amount),
+                status: 'failed',
+                error: refundErr.message,
+              });
+            }
+          }
+          return refundResults;
+        }
+      } catch (nativeErr) {
+        console.error('[refundIncorrectTokens] Native transfer check failed', { error: nativeErr.message });
+      }
+
       return [];
     } catch (error) {
       console.error('[refundIncorrectTokens] Error:', error.message);
