@@ -1037,9 +1037,13 @@ async function initBot() {
           
           // CRITICAL: Save the sender address and accumulated deposit before returning
           // This ensures that on the next verification, we can track deposits from the same sender
-          logger.info('[deposit_confirmed] About to save flip before showing retry button', { flipId,status: flip.status });
-          await flip.save();
-          logger.info('[deposit_confirmed] Flip saved successfully', { flipId });
+          logger.info('[deposit_confirmed] About to save flip before showing retry button', { flipId, status: flip.status });
+          try {
+            await flip.save();
+            logger.info('[deposit_confirmed] Flip saved successfully', { flipId });
+          } catch (saveErr) {
+            logger.error('[deposit_confirmed] ERROR saving flip after insufficient deposit', { flipId, error: saveErr.message, stack: saveErr.stack });
+          }
           
           return;
         }
@@ -1404,14 +1408,23 @@ async function initBot() {
             
             // Record that we just sent a notification
             flip.data = { ...flip.data, lastInsufficientDepositNotification: Date.now() };
-            await flip.save();
+            try {
+              await flip.save();
+            } catch (saveErr) {
+              logger.error('[creator_deposit_confirmed] ERROR saving flip after notification', { flipId, error: saveErr.message });
+            }
           } else {
             logger.info('[creator_deposit_confirmed] Skipping duplicate notification (sent within last 30s)', { flipId });
           }
           
           // CRITICAL: Save the sender address before returning if we just detected it
           if (verification.depositSender && flip.creatorDepositWalletAddress === verification.depositSender) {
-            await flip.save();
+            try {
+              await flip.save();
+              logger.info('[creator_deposit_confirmed] Saved flip after detecting sender', { flipId });
+            } catch (saveErr) {
+              logger.error('[creator_deposit_confirmed] ERROR saving flip after detecting sender', { flipId, error: saveErr.message });
+            }
           }
           
           return;
