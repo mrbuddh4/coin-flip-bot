@@ -17,6 +17,7 @@ const { validateConfig, formatNetworkName, getVideoDuration } = require('./utils
 let bot;
 let sessionStore = {};
 let challengeTimeouts = {}; // Store challenge acceptance timeouts by flipId
+let conflictRetryAttempts = 0; // Prevent infinite retry loop on Telegram 409 conflicts
 
 /**
  * Set a challenge acceptance timeout (3 minutes for challenger to accept)
@@ -2696,23 +2697,32 @@ async function main() {
     process.once('SIGINT', () => bot.stop('SIGINT'));
     process.once('SIGTERM', () => bot.stop('SIGTERM'));
   } catch (error) {
-    // Handle Telegram conflict error (409) gracefully
+    // Handle Telegram conflict error (409) gracefully - but only retry once
     if (error.response?.error_code === 409) {
       logger.warn('Telegram conflict detected (409) - another bot instance may be running', { 
         error: error.response?.description 
       });
-      logger.info('Waiting 5 seconds before retrying...');
       
-      // Wait 5 seconds and retry instead of exiting
-      setTimeout(() => {
-        logger.info('Retrying bot launch after conflict...');
-        main().catch(err => {
-          logger.error('Fatal error on retry', err);
-          process.exit(1);
-        });
-      }, 5000);
-      
-      return;
+      // Only retry once to avoid infinite loops with multiple instances
+      if (conflictRetryAttempts < 1) {
+        conflictRetryAttempts++;
+        logger.info('Waiting 8 seconds before retrying (1 attempt allowed)...');
+        
+        // Wait 8 seconds (longer than before to let old instance shut down)
+        setTimeout(() => {
+          logger.info('Retrying bot launch after conflict (attempt ' + conflictRetryAttempts + ')...');
+          main().catch(err => {
+            logger.error('Fatal error on retry', err);
+            process.exit(1);
+          });
+        }, 8000);
+        
+        return;
+      } else {
+        // Already retried once, don't retry again - exit to avoid duplicate instances
+        logger.error('Telegram conflict persists after retry - exiting to avoid duplicate instance (may indicate multiple instances competing for webhook)');
+        process.exit(1);
+      }
     }
     
     // All other errors: exit
