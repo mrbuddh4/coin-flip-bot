@@ -727,9 +727,8 @@ async function initBot() {
 
         if (receiveWallet && depositWallet) {
           // Both wallets are set - use them and show deposit instructions
-          flip.challengerDepositWalletAddress = depositWallet;
-          await flip.save();
-
+          // DON'T store on flip - UserProfile is source of truth
+          
           logger.info('Using stored wallet addresses for challenger', { flipId, network: flip.tokenNetwork, hasReceive: !!receiveWallet, hasDeposit: !!depositWallet });
 
           session.currentStep = 'AWAITING_DEPOSIT';
@@ -1020,44 +1019,45 @@ async function initBot() {
         if (!verification.received) {
           logger.info('[deposit_confirmed] Deposit not received', { userId, flipId, before_save: flip });
           
-          // Store the detected sender address for refunds (if not already set)
-          if (verification.depositSender && !flip.challengerDepositWalletAddress) {
-            flip.challengerDepositWalletAddress = verification.depositSender;
-            flip.challengerAccumulatedDeposit = parseFloat(verification.amount || 0);
-            logger.info('[deposit_confirmed] Detected challenger deposit sender and initial amount', { 
-              flipId, 
-              sender: verification.depositSender,
-              initialAmount: verification.amount
-            });
-          } else if (verification.depositSender && flip.challengerDepositWalletAddress) {
-            // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
-            const previousAccumulated = parseFloat(flip.challengerAccumulatedDeposit || 0);
-            const currentTotal = parseFloat(verification.amount || 0);
-            flip.challengerAccumulatedDeposit = currentTotal;
-            
-            logger.info('[deposit_confirmed] Updated challenger accumulated deposit', {
-              flipId,
-              previousAccumulated,
-              currentTotal,
-              newDepositsSinceLastCheck: currentTotal - previousAccumulated,
-            });
+          // Store detected amount for refunds
+          if (verification.depositSender) {
+            if (!flip.challengerAccumulatedDeposit) {
+              flip.challengerAccumulatedDeposit = parseFloat(verification.amount || 0);
+              logger.info('[deposit_confirmed] Initial deposit detected', { 
+                flipId, 
+                sender: verification.depositSender,
+                initialAmount: verification.amount
+              });
+            } else {
+              // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
+              const previousAccumulated = parseFloat(flip.challengerAccumulatedDeposit || 0);
+              const currentTotal = parseFloat(verification.amount || 0);
+              flip.challengerAccumulatedDeposit = currentTotal;
+              
+              logger.info('[deposit_confirmed] Updated challenger accumulated deposit', {
+                flipId,
+                previousAccumulated,
+                currentTotal,
+                newDepositsSinceLastCheck: currentTotal - previousAccumulated,
+              });
+            }
           }
           
           // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
-          if (flip.challengerDepositWalletAddress && flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
+          if (verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
             try {
               const blockchainManager = getBlockchainManager();
               logger.info('[deposit_confirmed] Attempting to refund incorrect tokens from challenger', { 
                 flipId, 
                 expectedToken: flip.tokenAddress, 
-                sender: flip.challengerDepositWalletAddress 
+                sender: verification.depositSender 
               });
               
               // Call refund immediately on first detection, don't throttle this
               const refundResults = await blockchainManager.refundIncorrectTokens(
                 flip.tokenNetwork,
                 flip.tokenAddress,
-                flip.challengerDepositWalletAddress,
+                verification.depositSender,
                 flip.createdAt
               );
 
@@ -1511,27 +1511,28 @@ async function initBot() {
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received (insufficient)', { userId, flipId, verificationReceived: verification.received });
           
-          // Store the detected sender address for refunds (if not already set)
-          if (verification.depositSender && !flip.creatorDepositWalletAddress) {
-            flip.creatorDepositWalletAddress = verification.depositSender;
-            flip.creatorAccumulatedDeposit = parseFloat(verification.amount || 0);
-            logger.info('[creator_deposit_confirmed] Detected creator deposit sender and initial amount', { 
-              flipId, 
-              sender: verification.depositSender,
-              initialAmount: verification.amount
-            });
-          } else if (verification.depositSender && flip.creatorDepositWalletAddress) {
-            // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
-            const previousAccumulated = parseFloat(flip.creatorAccumulatedDeposit || 0);
-            const currentTotal = parseFloat(verification.amount || 0);
-            flip.creatorAccumulatedDeposit = currentTotal;
-            
-            logger.info('[creator_deposit_confirmed] Updated creator accumulated deposit', {
-              flipId,
-              previousAccumulated,
-              currentTotal,
-              newDepositsSinceLastCheck: currentTotal - previousAccumulated,
-            });
+          // Store detected amount for refunds  
+          if (verification.depositSender) {
+            if (!flip.creatorAccumulatedDeposit) {
+              flip.creatorAccumulatedDeposit = parseFloat(verification.amount || 0);
+              logger.info('[creator_deposit_confirmed] Initial deposit detected', { 
+                flipId, 
+                sender: verification.depositSender,
+                initialAmount: verification.amount
+              });
+            } else {
+              // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
+              const previousAccumulated = parseFloat(flip.creatorAccumulatedDeposit || 0);
+              const currentTotal = parseFloat(verification.amount || 0);
+              flip.creatorAccumulatedDeposit = currentTotal;
+              
+              logger.info('[creator_deposit_confirmed] Updated creator accumulated deposit', {
+                flipId,
+                previousAccumulated,
+                currentTotal,
+                newDepositsSinceLastCheck: currentTotal - previousAccumulated,
+              });
+            }
           }
           
           // Check if notification already sent for this verification attempt
@@ -1582,20 +1583,20 @@ async function initBot() {
           }
           
           // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
-          if (flip.creatorDepositWalletAddress && flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
+          if (verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
             try {
               const blockchainManager = getBlockchainManager();
               logger.info('[creator_deposit_confirmed] Attempting to refund incorrect tokens from creator', { 
                 flipId, 
                 expectedToken: flip.tokenAddress, 
-                sender: flip.creatorDepositWalletAddress 
+                sender: verification.depositSender 
               });
               
               // Call refund immediately on first detection, don't throttle this
               const refundResults = await blockchainManager.refundIncorrectTokens(
                 flip.tokenNetwork,
                 flip.tokenAddress,
-                flip.creatorDepositWalletAddress,
+                verification.depositSender,
                 flip.createdAt
               );
 
@@ -1629,24 +1630,10 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
 
-        // Store the detected sender address for refunds (if not already set)
-        if (verification.depositSender && !flip.creatorDepositWalletAddress) {
-          flip.creatorDepositWalletAddress = verification.depositSender;
-          flip.creatorAccumulatedDeposit = parseFloat(verification.amount || 0);
-          logger.info('[creator_deposit_confirmed] Detected creator deposit sender with accumulated amount', { 
-            flipId, 
-            sender: verification.depositSender,
-            accumulatedDeposit: verification.amount
-          });
-        }
-
         // Ensure accumulated deposit is set for overpayment check
         // Check numeric value, not truthiness (DB stores as string)
         if (parseFloat(flip.creatorAccumulatedDeposit || 0) < parseFloat(verification.amount || 0)) {
           flip.creatorAccumulatedDeposit = parseFloat(verification.amount);
-          // CRITICAL: Also update wallet address when updating accumulated deposit
-          // This ensures refund goes to the wallet that sent the current verified amount
-          flip.creatorDepositWalletAddress = verification.depositSender;
         }
 
         logger.info('[creator_deposit_confirmed] Starting overpayment check', {

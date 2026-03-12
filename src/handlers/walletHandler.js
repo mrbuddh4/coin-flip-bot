@@ -557,13 +557,7 @@ class WalletHandler {
       const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
       const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
-      // Store wallet address in flip
-      if (flipSession.sessionType === 'INITIATING') {
-        flip.creatorDepositWalletAddress = depositWallet;
-      } else if (flipSession.sessionType === 'CONFIRMING_DEPOSIT') {
-        flip.challengerDepositWalletAddress = depositWallet;
-      }
-      await flip.save();
+      // UserProfile is source of truth for wallet addresses - don't cache on flip
 
       await ctx.reply(
         `💰 <b>Send Your Deposit</b>\n\n` +
