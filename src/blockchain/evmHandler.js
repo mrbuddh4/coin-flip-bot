@@ -361,6 +361,42 @@ class EVMHandler {
                 };
               }
               
+              // CRITICAL: If still no transfers found, search for ANY transfers to bot (including wrong tokens)
+              // This helps refund incorrect tokens even if they don't match the expected token
+              console.log('[getRecentDepositSender] No correct-token transfers found, searching for ANY transfers to bot for refund purposes', {
+                botWalletAddress: botWalletAddress.toLowerCase(),
+                expectedToken: tokenAddress.toLowerCase(),
+              });
+              
+              for (const tx of data.result) {
+                const txRecipientLower = tx.to?.toLowerCase() || '';
+                const txTimestamp = parseInt(tx.timeStamp, 10);
+                const txSenderLower = tx.from.toLowerCase();
+                const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                
+                // Find ANY incoming transfer to bot after flip creation (for refund purposes)
+                if (txRecipientLower === botWalletAddress.toLowerCase() && isAfterFlipCreation) {
+                  const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
+                  const wrongTokenAddress = tx.contractAddress?.toLowerCase() || '';
+                  
+                  console.log('[getRecentDepositSender] Found transfer with WRONG token - returning sender for refund', {
+                    sender: txSenderLower,
+                    amount: txAmount,
+                    wrongToken: wrongTokenAddress,
+                    expectedToken: tokenAddress.toLowerCase(),
+                    txHash: tx.hash,
+                  });
+                  
+                  return {
+                    sender: txSenderLower,
+                    amount: txAmount.toString(),
+                    transactionHash: tx.hash,
+                    blockNumber: tx.blockNumber,
+                    wrongToken: wrongTokenAddress, // Flag this as wrong token for refund handling
+                  };
+                }
+              }
+              
               return null;
             }
             
