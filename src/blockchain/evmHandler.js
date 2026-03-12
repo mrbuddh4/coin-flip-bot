@@ -719,6 +719,9 @@ class EVMHandler {
       const lookbackBlocks = 10000;
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
       const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
+      
+      // Accumulate refund results from both ERC20 and native transfers
+      let allRefundResults = [];
 
       console.log('[refundIncorrectTokens] Searching for incorrect token transfers', {
         botWallet: botWalletAddress,
@@ -826,10 +829,10 @@ class EVMHandler {
               }
             }
 
-            return refundResults;
+            // Return ERC20 refunds (but also check native transfers below)
+            erc20RefundResults = refundResults;
           } else {
-            console.log('[refundIncorrectTokens] No incorrect token transfers found');
-            return [];
+            console.log('[refundIncorrectTokens] No incorrect ERC20 token transfers found, checking for native transfers...');
           }
         }
       } catch (paxscanErr) {
@@ -837,10 +840,10 @@ class EVMHandler {
       }
 
       // Also check for native transfers (PAX) sent when a token was expected
+      // This runs AFTER ERC20 check, allowing both types to be refunded
       try {
         const senderLower = senderAddress.toLowerCase();
         const botWalletLower = botWalletAddress.toLowerCase();
-        const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
 
         console.log('[refundIncorrectTokens] Checking for native (PAX) transfers to refund', {
           sender: senderAddress,
@@ -926,13 +929,15 @@ class EVMHandler {
               });
             }
           }
-          return refundResults;
+          // Accumulate native refunds to results array (don't return early)
+          allRefundResults = allRefundResults.concat(refundResults);
         }
       } catch (nativeErr) {
         console.error('[refundIncorrectTokens] Native transfer check failed', { error: nativeErr.message });
       }
 
-      return [];
+      // Return accumulated refunds from both ERC20 and native transfers
+      return allRefundResults;
     } catch (error) {
       console.error('[refundIncorrectTokens] Error:', error.message);
       return [];
