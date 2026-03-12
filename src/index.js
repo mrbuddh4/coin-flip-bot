@@ -186,9 +186,14 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                   }
                 );
                 // Store expired notice message ID for later deletion
-                flipCheck.data = { ...flipCheck.data, expiredNoticeMessageId: expiredMsg.message_id };
+                flipCheck.data = { ...(flipCheck.data || {}), expiredNoticeMessageId: expiredMsg.message_id };
                 await flipCheck.save();
-                logger.info('[challengeTimeout] Sent expiration message with new flip session', { flipId, sessionId: newFlipSession.id, messageId: expiredMsg.message_id });
+                logger.info('[challengeTimeout] ✅ Stored expiration message for later deletion', { 
+                  flipId, 
+                  sessionId: newFlipSession.id, 
+                  messageId: expiredMsg.message_id,
+                  groupChatId: flipCheck.groupChatId 
+                });
               } catch (msgErr) {
                 logger.error('[challengeTimeout] Failed to send expiration message', { flipId, error: msgErr.message });
               }
@@ -224,18 +229,23 @@ function clearChallengeTimeout(flipId) {
  * Safely delete a message from a group
  */
 async function deleteGroupMessage(telegram, groupId, messageId) {
-  if (!messageId) return false;
+  if (!messageId || !groupId) {
+    logger.debug('[deleteGroupMessage] Skipping - missing IDs', { groupId, messageId });
+    return false;
+  }
   
   try {
+    logger.debug('[deleteGroupMessage] Attempting deletion', { groupId, messageId });
     await telegram.deleteMessage(groupId, messageId);
-    logger.info('[deleteGroupMessage] Message deleted', { groupId, messageId });
+    logger.info('[deleteGroupMessage] ✅ Message deleted successfully', { groupId, messageId });
     return true;
   } catch (err) {
-    if (err.message.includes('message to delete not found') || err.message.includes('MESSAGE_NOT_FOUND')) {
-      logger.info('[deleteGroupMessage] Message already deleted or not found', { groupId, messageId });
+    const errorMsg = err.message.toLowerCase();
+    if (errorMsg.includes('message to delete not found') || errorMsg.includes('message_not_found') || errorMsg.includes('bad request')) {
+      logger.info('[deleteGroupMessage] Message already deleted or expired', { groupId, messageId, error: err.message });
       return true; // Not an error - message is already gone
     }
-    logger.warn('[deleteGroupMessage] Failed to delete message', { groupId, messageId, error: err.message });
+    logger.warn('[deleteGroupMessage] ❌ Failed to delete message', { groupId, messageId, error: err.message, errorCode: err.code });
     return false;
   }
 }
@@ -243,11 +253,21 @@ async function deleteGroupMessage(telegram, groupId, messageId) {
 /**
  * Auto-delete a message after a delay (for interaction confirmations)
  */
-async function autoDeleteMessageAfterDelay(telegram, groupId, messageId, delayMs = 5000) {
-  if (!messageId || !groupId) return;
+function autoDeleteMessageAfterDelay(telegram, groupId, messageId, delayMs = 5000) {
+  if (!messageId || !groupId) {
+    logger.debug('[autoDeleteMessageAfterDelay] Skipping - missing IDs', { groupId, messageId });
+    return;
+  }
+  
+  logger.debug('[autoDeleteMessageAfterDelay] Scheduled deletion', { groupId, messageId, delayMs });
   
   setTimeout(async () => {
-    await deleteGroupMessage(telegram, groupId, messageId).catch(() => {});
+    try {
+      logger.debug('[autoDeleteMessageAfterDelay] Executing deletion', { groupId, messageId });
+      await deleteGroupMessage(telegram, groupId, messageId);
+    } catch (err) {
+      logger.warn('[autoDeleteMessageAfterDelay] Error during auto-delete', { groupId, messageId, error: err.message });
+    }
   }, delayMs);
 }
 
@@ -256,6 +276,11 @@ async function autoDeleteMessageAfterDelay(telegram, groupId, messageId, delayMs
  */
 async function deleteOldFlipMessagesInGroup(telegram, groupId, excludeFlipId) {
   try {
+    if (!groupId || !telegram) {
+      logger.warn('[deleteOldFlipMessagesInGroup] Missing telegram or groupId');
+      return;
+    }
+
     const { models } = getDB();
     const oldFlips = await models.CoinFlip.findAll({
       where: {
@@ -264,15 +289,23 @@ async function deleteOldFlipMessagesInGroup(telegram, groupId, excludeFlipId) {
         status: { [Op.in]: ['COMPLETED', 'CANCELLED', 'WAITING_CHALLENGER'] },
       },
       order: [['createdAt', 'DESC']],
-      limit: 5, // Delete up to 5 old messages
+      limit: 5,
     });
 
+    logger.debug('[deleteOldFlipMessagesInGroup] Found old flips to clean up', { groupId, count: oldFlips.length });
+
     for (const flip of oldFlips) {
-      if (flip.data?.groupMessageId) {
-        await deleteGroupMessage(telegram, groupId, flip.data.groupMessageId);
-      }
-      if (flip.data?.expiredNoticeMessageId) {
-        await deleteGroupMessage(telegram, groupId, flip.data.expiredNoticeMessageId);
+      // Handle both old and new storage formats
+      const msgIds = [
+        flip.data?.groupMessageId,
+        flip.groupMessageId,
+        flip.data?.expiredNoticeMessageId
+      ].filter(Boolean);
+
+      logger.debug('[deleteOldFlipMessagesInGroup] Cleaning up flip', { flipId: flip.id, messageIds: msgIds });
+
+      for (const msgId of msgIds) {
+        await deleteGroupMessage(telegram, groupId, msgId);
       }
     }
   } catch (err) {
@@ -689,7 +722,7 @@ async function initBot() {
       }
 
       try {
-        logger.info('Accept flip action triggered', { flipId, userId });
+        logger.info('[accept_flip] Action triggered', { flipId, userId, hasGroupChatId: !!flip.groupChatId });
         
         // Clear the challenge acceptance timeout since someone accepted
         clearChallengeTimeout(flipId);
@@ -701,33 +734,58 @@ async function initBot() {
         await FlipHandler.acceptFlip(ctx, flipId);
         
         // Delete the flip's original challenge message and any expired notice
-        if (flip.groupChatId) {
-          if (flip.data?.groupMessageId) {
-            await deleteGroupMessage(ctx.telegram, flip.groupChatId, flip.data.groupMessageId);
+        if (flip.groupChatId && ctx.telegram) {
+          // Check both old and new storage formats
+          const groupMsgId = flip.data?.groupMessageId || flip.groupMessageId;
+          const expiredMsgId = flip.data?.expiredNoticeMessageId;
+          
+          logger.info('[accept_flip] Attempting to delete messages', { 
+            flipId, 
+            groupChatId: flip.groupChatId,
+            groupMsgId,
+            expiredMsgId
+          });
+          
+          if (groupMsgId) {
+            await deleteGroupMessage(ctx.telegram, flip.groupChatId, groupMsgId);
           }
-          if (flip.data?.expiredNoticeMessageId) {
-            await deleteGroupMessage(ctx.telegram, flip.groupChatId, flip.data.expiredNoticeMessageId);
+          if (expiredMsgId) {
+            await deleteGroupMessage(ctx.telegram, flip.groupChatId, expiredMsgId);
           }
         }
         
         // Delete the current button message
-        await ctx.deleteMessage().catch(() => {});
+        try {
+          await ctx.deleteMessage();
+        } catch (delErr) {
+          logger.debug('[accept_flip] Could not delete button message', { error: delErr.message });
+        }
         
         // Send a confirmation message that will auto-delete after 5 seconds
         const challengerName = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
-        const confirmMsg = await ctx.reply(
-          `✅ ${challengerName} has accepted and is reviewing the flip.`,
-          { parse_mode: 'HTML' }
-        ).catch(() => {});
-        
-        // Auto-delete confirmation after 5 seconds
-        if (confirmMsg) {
-          autoDeleteMessageAfterDelay(ctx.telegram, flip.groupChatId, confirmMsg.message_id, 5000);
+        let confirmMsg;
+        try {
+          confirmMsg = await ctx.reply(
+            `✅ ${challengerName} has accepted and is reviewing the flip.`,
+            { parse_mode: 'HTML' }
+          );
+          logger.debug('[accept_flip] Sent confirmation message', { messageId: confirmMsg?.message_id });
+          
+          // Auto-delete confirmation after 5 seconds
+          if (confirmMsg && flip.groupChatId) {
+            logger.debug('[accept_flip] Scheduling auto-delete for confirmation', { 
+              groupChatId: flip.groupChatId,
+              messageId: confirmMsg.message_id 
+            });
+            autoDeleteMessageAfterDelay(ctx.telegram, flip.groupChatId, confirmMsg.message_id, 5000);
+          }
+        } catch (replyErr) {
+          logger.warn('[accept_flip] Could not send confirmation message', { error: replyErr.message });
         }
         
-        logger.info('Accept flip completed', { flipId, userId });
+        logger.info('[accept_flip] Completed successfully', { flipId, userId });
       } catch (error) {
-        logger.error('Error accepting flip', { error: error.message, flipId, userId });
+        logger.error('[accept_flip] Error', { error: error.message, stack: error.stack, flipId, userId });
         await ctx.answerCbQuery('❌ Error accepting challenge').catch(() => {});
       }
     });
@@ -2010,11 +2068,14 @@ async function initBot() {
 
         // Save message ID to flip (both old and new format for compatibility)
         flip.groupMessageId = groupMessage.message_id;
-        flip.data = { ...flip.data, groupMessageId: groupMessage.message_id };
+        flip.data = { ...(flip.data || {}), groupMessageId: groupMessage.message_id };
         await flip.save();
-        logger.info('[creator_deposit_confirmed] Stored challenge message for deletion', { 
+        logger.info('[creator_deposit_confirmed] ✅ Stored challenge message for deletion', { 
           flipId: flip.id, 
-          messageId: groupMessage.message_id, 
+          messageId: groupMessage.message_id,
+          groupChatId: flip.groupChatId,
+          dataField: flip.data?.groupMessageId
+        });
           groupId: flip.groupChatId 
         });
 
