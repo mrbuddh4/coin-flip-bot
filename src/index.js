@@ -693,8 +693,13 @@ async function initBot() {
           await ctx.reply(
             `❌ <b>Wallet Address Required</b>\n\n` +
             `We need your ${flip.tokenNetwork} wallet address to send you your winnings!\n\n` +
-            `Use /wallet to add your receiving addresses, then come back here to continue.`,
-            { parse_mode: 'HTML' }
+            `Set up your wallet now to continue:`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('💳 Add Wallet Address', 'open_wallet_menu')],
+              ]).reply_markup,
+            }
           );
 
           await ctx.answerCbQuery('✅ Challenge confirmed! Please set up your wallet.');
@@ -1940,8 +1945,13 @@ const handlers = {
             await ctx.reply(
               `❌ <b>Wallet Address Required</b>\n\n` +
               `We need your ${flip.tokenNetwork} wallet address to send you your winnings!\n\n` +
-              `Use /wallet to add your receiving addresses, then come back here to continue.`,
-              { parse_mode: 'HTML' }
+              `Set up your wallet now to continue:`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.callback('💳 Add Wallet Address', 'open_wallet_menu')],
+                ]).reply_markup,
+              }
             );
           }
           return;
@@ -2019,8 +2029,13 @@ const handlers = {
               await ctx.reply(
                 `❌ <b>Wallet Address Required</b>\n\n` +
                 `We need your ${flip.tokenNetwork} wallet address to send you your winnings!\n\n` +
-                `Use /wallet to add your receiving addresses, then come back here to continue.`,
-                { parse_mode: 'HTML' }
+                `Set up your wallet now to continue:`,
+                {
+                  parse_mode: 'HTML',
+                  reply_markup: Markup.inlineKeyboard([
+                    [Markup.button.callback('💳 Add Wallet Address', 'open_wallet_menu')],
+                  ]).reply_markup,
+                }
               );
             }
             return;
