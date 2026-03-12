@@ -310,12 +310,6 @@ class SolanaHandler {
           // Skip if transaction is failed
           if (tx.type === 'FAILED') continue;
 
-          // Filter by time if flipCreatedAt provided
-          if (flipCreatedAtSeconds && tx.timestamp && tx.timestamp < flipCreatedAtSeconds) {
-            console.log('[getRecentDepositSender] Skipping tx before flip creation', { timestamp: tx.timestamp, flipCreatedAtSeconds });
-            continue;
-          }
-
           // Check for token transfers
           if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
             for (const transfer of tx.tokenTransfers) {
@@ -529,11 +523,6 @@ class SolanaHandler {
         try {
           // Skip if transaction is failed
           if (tx.type === 'FAILED') continue;
-
-          // Filter by time if flipCreatedAt provided
-          if (flipCreatedAtSeconds && tx.timestamp && tx.timestamp < flipCreatedAtSeconds) {
-            continue;
-          }
 
           // Look for token transfers FROM the sender TO the bot of a wrong token
           if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
