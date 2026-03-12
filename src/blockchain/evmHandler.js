@@ -228,7 +228,8 @@ class EVMHandler {
             });
             
             // If no ERC20 transfers found, query ALL tokens to find wrong ERC20 transfers
-            if ((!data.result || data.result.length === 0) && data.status === '1') {
+            // Note: Paxscan returns status '0' when no results, not just on errors, so check both '0' and '1'
+            if (!data.result || data.result.length === 0) {
               console.log('[getRecentDepositSender] No transfers of expected token found, querying for ALL token transfers to detect wrong tokens', {
                 expectedToken: tokenAddress.toLowerCase(),
               });
