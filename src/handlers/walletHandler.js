@@ -57,9 +57,9 @@ class WalletHandler {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
             [Markup.button.callback('✏️ Update Paxeer Receive Wallet', 'update_evm_wallet')],
-            [Markup.button.callback('✏️ Update Paxeer Deposit Wallet', 'update_evm_deposit_wallet')],
+            [Markup.button.callback('✏️ Update Paxeer Sending Wallet', 'update_evm_deposit_wallet')],
             [Markup.button.callback('✏️ Update Solana Receive Wallet', 'update_solana_wallet')],
-            [Markup.button.callback('✏️ Update Solana Deposit Wallet', 'update_solana_deposit_wallet')],
+            [Markup.button.callback('✏️ Update Solana Sending Wallet', 'update_solana_deposit_wallet')],
             [Markup.button.callback('❌ Remove All', 'remove_all_wallets')],
           ]).reply_markup,
         }
@@ -150,8 +150,8 @@ class WalletHandler {
       });
 
       await ctx.editMessageText(
-        `<b>Set your Paxeer deposit wallet:</b>\n\n` +
-        `This is the wallet address you'll send deposits FROM.\n\n` +
+        `<b>Set your Paxeer sending wallet:</b>\n\n` +
+        `This is the wallet address you'll send payments FROM.\n\n` +
         `Send me your Paxeer wallet address (e.g., 0x1234...)`,
         {
           parse_mode: 'HTML',
@@ -160,7 +160,7 @@ class WalletHandler {
       );
     } catch (error) {
       logger.error('Error in handleUpdateEVMDeposit:', error);
-      await ctx.answerCbQuery('Error updating deposit wallet', true);
+      await ctx.answerCbQuery('Error updating sending wallet', true);
     }
   }
 
@@ -182,8 +182,8 @@ class WalletHandler {
       });
 
       await ctx.editMessageText(
-        `<b>Set your Solana deposit wallet:</b>\n\n` +
-        `This is the wallet address you'll send deposits FROM.\n\n` +
+        `<b>Set your Solana sending wallet:</b>\n\n` +
+        `This is the wallet address you'll send payments FROM.\n\n` +
         `Send me your Solana wallet address (e.g., ABC123def...)`,
         {
           parse_mode: 'HTML',
@@ -192,7 +192,7 @@ class WalletHandler {
       );
     } catch (error) {
       logger.error('Error in handleUpdateSolanaDeposit:', error);
-      await ctx.answerCbQuery('Error updating deposit wallet', true);
+      await ctx.answerCbQuery('Error updating sending wallet', true);
     }
   }
 
@@ -355,7 +355,7 @@ class WalletHandler {
         }
 
         await ctx.reply(
-          `✅ Paxeer deposit wallet set!\n\n` +
+          `✅ Paxeer sending wallet set!\n\n` +
           `<code>${message}</code>\n\n` +
           `You'll send coin flip deposits FROM this wallet.`,
           {
@@ -395,7 +395,7 @@ class WalletHandler {
         }
 
         await ctx.reply(
-          `✅ Solana deposit wallet set!\n\n` +
+          `✅ Solana sending wallet set!\n\n` +
           `<code>${message}</code>\n\n` +
           `You'll send coin flip deposits FROM this wallet.`,
           {
@@ -536,7 +536,7 @@ class WalletHandler {
           `❌ <b>Setup Complete Wallet Configuration</b>\n\n` +
           `Before you can play, you need to set up both:\n` +
           `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
-          `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+          `${depositWallet ? '✅' : '❌'} <b>Sending Wallet:</b> Where you send payments from\n\n` +
           `Please set up your wallets:`,
           {
             parse_mode: 'HTML',

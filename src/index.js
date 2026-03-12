@@ -766,7 +766,7 @@ async function initBot() {
             `❌ <b>Setup Complete Wallet Configuration</b>\n\n` +
             `Before you can play, you need to set up both:\n` +
             `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
-            `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+            `${depositWallet ? '✅' : '❌'} <b>Sending Wallet:</b> Where you send payments from\n\n` +
             `Configure your wallets to continue:`,
             {
               parse_mode: 'HTML',
@@ -970,7 +970,7 @@ async function initBot() {
             await ctx.editMessageText(
               `❌ <b>Wallet Configuration Required</b>\n\n` +
               `${receiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where your winnings go\n` +
-              `${depositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+              `${depositWallet ? '✅' : '❌'} <b>Sending Wallet:</b> Where you send payments from\n\n` +
               `Use /wallet to complete your setup.`,
               { parse_mode: 'HTML' }
             );
