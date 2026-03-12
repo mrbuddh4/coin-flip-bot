@@ -248,13 +248,16 @@ class EVMHandler {
               const txSenderLower = tx.from.toLowerCase();
               const txRecipientLower = tx.to?.toLowerCase() || '';
               const txTimestamp = parseInt(tx.timeStamp, 10);
+              const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
               
               // Only process if this is an INCOMING transfer to the bot wallet
               // AND sender matches our target AND tx happened after flip was created
+              // AND it's from the correct token contract
               const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
               const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+              const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
               
-              if (isValidSender && isAfterFlipCreation) {
+              if (isValidSender && isAfterFlipCreation && isCorrectToken) {
                 const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                 totalAmount += txAmount;
                 if (!latestTxForReturn) latestTxForReturn = tx;
@@ -263,6 +266,7 @@ class EVMHandler {
                   hash: tx.hash,
                   blockNumber: tx.blockNumber,
                   timestamp: txTimestamp,
+                  contractAddress: txContractAddressLower,
                 });
                 
                 console.log('[getRecentDepositSender] Matched incoming transaction', {
@@ -272,6 +276,8 @@ class EVMHandler {
                   txHash: tx.hash,
                   timestamp: txTimestamp,
                   isAfterFlipCreation,
+                  contractAddress: txContractAddressLower,
+                  expectedToken: tokenAddress.toLowerCase(),
                 });
               }
             }
@@ -294,9 +300,13 @@ class EVMHandler {
               for (const tx of data.result) {
                 const txRecipientLower = tx.to?.toLowerCase() || '';
                 const txTimestamp = parseInt(tx.timeStamp, 10);
+                const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
                 const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
                 
-                if (txRecipientLower === botWalletAddress.toLowerCase() && isAfterFlipCreation) {
+                // CRITICAL: Verify the transfer is from the expected token contract
+                const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
+                
+                if (txRecipientLower === botWalletAddress.toLowerCase() && isAfterFlipCreation && isCorrectToken) {
                   const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
                   const txSenderLower = tx.from.toLowerCase();
                   
@@ -314,6 +324,7 @@ class EVMHandler {
                       amount: txAmount,
                       hash: tx.hash,
                       timestamp: txTimestamp,
+                      contractAddress: txContractAddressLower,
                     });
                   }
                 }
@@ -324,6 +335,7 @@ class EVMHandler {
                   sender: fallbackSender,
                   totalAmount: fallbackTotal,
                   transferCount: fallbackTransfers.length,
+                  expectedToken: tokenAddress.toLowerCase(),
                   transfers: fallbackTransfers,
                 });
                 
