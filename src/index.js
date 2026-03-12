@@ -527,6 +527,26 @@ async function initBot() {
       }
     });
 
+    bot.action('update_evm_deposit_wallet', async (ctx) => {
+      try {
+        ctx.state.models = getDB().models;
+        await WalletHandler.handleUpdateEVMDeposit(ctx);
+      } catch (error) {
+        logger.error('Error updating Paxeer deposit wallet', error);
+        await ctx.answerCbQuery('Error', true);
+      }
+    });
+
+    bot.action('update_solana_deposit_wallet', async (ctx) => {
+      try {
+        ctx.state.models = getDB().models;
+        await WalletHandler.handleUpdateSolanaDeposit(ctx);
+      } catch (error) {
+        logger.error('Error updating Solana deposit wallet', error);
+        await ctx.answerCbQuery('Error', true);
+      }
+    });
+
     // Leaderboard callbacks
     bot.action('refresh_leaderboard', async (ctx) => {
       try {
@@ -931,6 +951,27 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Verifying challenger deposit', { flipId, userId });
         
+        // GET USER'S DEPOSIT WALLET - Required for verification
+        const userProfile = await models.UserProfile.findByPk(userId);
+        const depositWallet = flip.tokenNetwork === 'EVM' 
+          ? userProfile?.evmDepositWalletAddress 
+          : userProfile?.solanaDepositWalletAddress;
+        
+        // Require user to set deposit wallet first
+        if (!depositWallet) {
+          try {
+            await ctx.editMessageText(
+              `❌ <b>Deposit Wallet Not Set</b>\n\n` +
+              `Before you can play, you need to set your deposit wallet.\n\n` +
+              `Use /wallet and select "<b>Update ${flip.tokenNetwork === 'EVM' ? 'Paxeer' : 'Solana'} Deposit Wallet</b>"`,
+              { parse_mode: 'HTML' }
+            );
+          } catch (err) {
+            logger.warn('[deposit_confirmed] Failed to edit message', err.message);
+          }
+          return;
+        }
+        
         // Edit the button message to show processing
         const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
         try {
@@ -945,12 +986,9 @@ async function initBot() {
         }
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
-        // CRITICAL: Don't pass the stored wallet on first detection - user may be using a different wallet
-        // Once we detect their wallet, it gets stored and will be used for subsequent calls
+        // Use the user's configured deposit wallet as the knownSender
         const blockchainManager = getBlockchainManager();
         
-        // Don't use knownSender - let the system detect any sender
-        // This allows users to send from any wallet in their current session
         const verification = await blockchainManager.verifyDepositWithRetry(
           flip.tokenNetwork,
           flip.tokenAddress,
@@ -958,7 +996,7 @@ async function initBot() {
           flip.tokenDecimals,
           4, // maxRetries
           2000, // retryDelayMs
-          null, // Don't constrain to old wallet - detect ANY sender
+          depositWallet, // Use user's configured deposit wallet
           flip.createdAt // pass flip creation time to filter old deposits
         );
 
@@ -1400,6 +1438,27 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Verifying creator deposit', { flipId, userId });
         
+        // GET USER'S DEPOSIT WALLET - Required for verification
+        const userProfile = await models.UserProfile.findByPk(userId);
+        const depositWallet = flip.tokenNetwork === 'EVM' 
+          ? userProfile?.evmDepositWalletAddress 
+          : userProfile?.solanaDepositWalletAddress;
+        
+        // Require user to set deposit wallet first
+        if (!depositWallet) {
+          try {
+            await ctx.editMessageText(
+              `❌ <b>Deposit Wallet Not Set</b>\n\n` +
+              `Before you can play, you need to set your deposit wallet.\n\n` +
+              `Use /wallet and select "<b>Update ${flip.tokenNetwork === 'EVM' ? 'Paxeer' : 'Solana'} Deposit Wallet</b>"`,
+              { parse_mode: 'HTML' }
+            );
+          } catch (err) {
+            logger.warn('[creator_deposit_confirmed] Failed to edit message', err.message);
+          }
+          return;
+        }
+        
         // Edit the button message to show processing
         const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
         try {
@@ -1414,12 +1473,9 @@ async function initBot() {
         }
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
-        // CRITICAL: Don't pass the stored wallet on first detection - user may be using a different wallet
-        // Once we detect their wallet, it gets stored and will be used for subsequent calls
+        // Use the user's configured deposit wallet as the knownSender
         const blockchainManager = getBlockchainManager();
         
-        // Don't use knownSender - let the system detect any sender
-        // This allows users to send from any wallet in their current session
         const verification = await blockchainManager.verifyDepositWithRetry(
           flip.tokenNetwork,
           flip.tokenAddress,
@@ -1427,7 +1483,7 @@ async function initBot() {
           flip.tokenDecimals,
           4, // maxRetries
           2000, // retryDelayMs
-          null, // Don't constrain to old wallet - detect ANY sender
+          depositWallet, // Use user's configured deposit wallet
           flip.createdAt // pass flip creation time to filter old deposits
         );
 

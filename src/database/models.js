@@ -141,7 +141,7 @@ const defineModels = (sequelize) => {
     updatedAt: DataTypes.DATE,
   });
 
-  // UserProfile Model - stores wallet addresses for receiving winnings
+  // UserProfile Model - stores wallet addresses for receiving winnings and making deposits
   const UserProfile = sequelize.define('UserProfile', {
     userId: {
       type: DataTypes.BIGINT,
@@ -150,6 +150,8 @@ const defineModels = (sequelize) => {
     },
     evmWalletAddress: DataTypes.STRING,
     solanaWalletAddress: DataTypes.STRING,
+    evmDepositWalletAddress: DataTypes.STRING, // User's wallet for sending deposits
+    solanaDepositWalletAddress: DataTypes.STRING, // User's wallet for sending Solana deposits
     createdAt: DataTypes.DATE,
     updatedAt: DataTypes.DATE,
   });
