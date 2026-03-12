@@ -205,6 +205,8 @@ class WalletHandler {
       if (profile) {
         profile.evmWalletAddress = null;
         profile.solanaWalletAddress = null;
+        profile.evmDepositWalletAddress = null;
+        profile.solanaDepositWalletAddress = null;
         await profile.save();
       }
 
@@ -216,7 +218,9 @@ class WalletHandler {
         }
       );
 
-      await ctx.editMessageReplyMarkup(undefined);
+      await ctx.editMessageReplyMarkup(undefined).catch(err => {
+        logger.debug('editMessageReplyMarkup error (expected)', err.message);
+      });
     } catch (error) {
       logger.error('Error in handleRemoveAll:', error);
       await ctx.answerCbQuery('Error removing wallets', true);
