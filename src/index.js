@@ -909,15 +909,6 @@ async function initBot() {
           flip.createdAt // pass flip creation time to filter old deposits
         );
 
-        logger.info('[deposit_confirmed] Verification result from blockchain', { 
-          flipId, 
-          received: verification.received,
-          amount: verification.amount,
-          depositSender: verification.depositSender,
-          botWallet: verification.botWallet,
-          allFields: JSON.stringify(verification)
-        });
-
         if (!verification.received) {
           logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
           
@@ -1050,9 +1041,6 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Challenger deposit verified', { flipId, userId, amount: verification.amount });
 
-        logger.info('[deposit_confirmed] Verification has sender?', { hasSender: !!verification.depositSender });
-        logger.info('[deposit_confirmed] Verification sender value', { sender: verification.depositSender });
-
         // Store the detected sender address for refunds (if not already set)
         if (verification.depositSender && !flip.challengerDepositWalletAddress) {
           flip.challengerDepositWalletAddress = verification.depositSender;
@@ -1062,20 +1050,10 @@ async function initBot() {
         // Ensure accumulated deposit is set for overpayment check
         // Check numeric value, not truthiness (DB stores as string)
         if (parseFloat(flip.challengerAccumulatedDeposit || 0) < parseFloat(verification.amount || 0)) {
-          logger.info('[deposit_confirmed] Setting accumulated deposit from verification', {
-            flipId,
-            before: flip.challengerAccumulatedDeposit,
-            verificationAmount: verification.amount,
-          });
           flip.challengerAccumulatedDeposit = parseFloat(verification.amount);
           // CRITICAL: Also update wallet address when updating accumulated deposit
           // This ensures refund goes to the wallet that sent the current verified amount
           flip.challengerDepositWalletAddress = verification.depositSender;
-          logger.info('[deposit_confirmed] Accumulated deposit now set to', {
-            flipId,
-            after: flip.challengerAccumulatedDeposit,
-            walletUpdatedTo: verification.depositSender,
-          });
         }
 
         logger.info('[deposit_confirmed] Starting overpayment check', {
@@ -1349,15 +1327,6 @@ async function initBot() {
           flip.createdAt // pass flip creation time to filter old deposits
         );
 
-        logger.info('[creator_deposit_confirmed] Verification result from blockchain', { 
-          flipId, 
-          received: verification.received,
-          amount: verification.amount,
-          depositSender: verification.depositSender,
-          botWallet: verification.botWallet,
-          allFields: JSON.stringify(verification)
-        });
-
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received (insufficient)', { userId, flipId, verificationReceived: verification.received });
           
@@ -1437,9 +1406,6 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
 
-        logger.info('[creator_deposit_confirmed] Verification has sender?', { hasSender: !!verification.depositSender });
-        logger.info('[creator_deposit_confirmed] Verification sender value', { sender: verification.depositSender });
-
         // Store the detected sender address for refunds (if not already set)
         if (verification.depositSender && !flip.creatorDepositWalletAddress) {
           flip.creatorDepositWalletAddress = verification.depositSender;
@@ -1454,20 +1420,10 @@ async function initBot() {
         // Ensure accumulated deposit is set for overpayment check
         // Check numeric value, not truthiness (DB stores as string)
         if (parseFloat(flip.creatorAccumulatedDeposit || 0) < parseFloat(verification.amount || 0)) {
-          logger.info('[creator_deposit_confirmed] Setting accumulated deposit from verification', {
-            flipId,
-            before: flip.creatorAccumulatedDeposit,
-            verificationAmount: verification.amount,
-          });
           flip.creatorAccumulatedDeposit = parseFloat(verification.amount);
           // CRITICAL: Also update wallet address when updating accumulated deposit
           // This ensures refund goes to the wallet that sent the current verified amount
           flip.creatorDepositWalletAddress = verification.depositSender;
-          logger.info('[creator_deposit_confirmed] Accumulated deposit now set to', {
-            flipId,
-            after: flip.creatorAccumulatedDeposit,
-            walletUpdatedTo: verification.depositSender,
-          });
         }
 
         logger.info('[creator_deposit_confirmed] Starting overpayment check', {
