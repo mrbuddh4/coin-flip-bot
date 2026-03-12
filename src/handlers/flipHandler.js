@@ -271,13 +271,26 @@ class FlipHandler {
           const receivedAmount = parseFloat(verification.amount || '0');
           const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
           
-          await ctx.reply(
-            `❌ <b>Insufficient Deposit</b>\n\n` +
-            `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-            `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-            `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
-            `You have <b>3 minutes</b> to send the remaining amount to the same address, otherwise your deposit will be refunded and the challenge cancelled.`
-          );
+          // Check if wrong token was detected
+          let messageText;
+          if (verification.isWrongToken) {
+            const wrongTokenName = verification.wrongToken === 'NATIVE' ? 'PAX (native)' : verification.wrongToken;
+            messageText = 
+              `⚠️ <b>Wrong Token Detected</b>\n\n` +
+              `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+              `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${wrongTokenName}\n\n` +
+              `<b>Status: Automatically refunding your ${wrongTokenName}...</b>\n\n` +
+              `Please send the correct token: <b>${flip.tokenSymbol}</b>`;
+          } else {
+            messageText = 
+              `❌ <b>Insufficient Deposit</b>\n\n` +
+              `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+              `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+              `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
+              `You have <b>3 minutes</b> to send the remaining amount to the same address, otherwise your deposit will be refunded and the challenge cancelled.`;
+          }
+          
+          await ctx.reply(messageText);
           
           // Record that we just sent a notification
           if (!flip.data) flip.data = {};

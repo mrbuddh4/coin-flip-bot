@@ -1100,8 +1100,18 @@ async function initBot() {
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
-            try {
-              await ctx.editMessageText(
+            // Check if wrong token was detected
+            let messageText;
+            if (verification.isWrongToken) {
+              const wrongTokenName = verification.wrongToken === 'NATIVE' ? 'PAX (native)' : verification.wrongToken;
+              messageText = 
+                `⚠️ <b>Wrong Token Detected</b>\n\n` +
+                `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+                `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${wrongTokenName}\n\n` +
+                `<b>Status: Automatically refunding your ${wrongTokenName}...</b>\n\n` +
+                `Please send the correct token: <b>${flip.tokenSymbol}</b>`;
+            } else {
+              messageText = 
                 `❌ <b>Insufficient Deposit</b>\n\n` +
                 `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
                 `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
@@ -1111,7 +1121,12 @@ async function initBot() {
                 `• Check amount matches exactly (${formattedExpected})\n` +
                 `• Wait 30 seconds for blockchain confirmation\n` +
                 `• Then try confirming again\n\n` +
-                `You have <b>3 minutes</b> to send the remaining amount, otherwise your deposit will be refunded and the challenge cancelled.`,
+                `You have <b>3 minutes</b> to send the remaining amount, otherwise your deposit will be refunded and the challenge cancelled.`;
+            }
+            
+            try {
+              await ctx.editMessageText(
+                messageText,
                 {
                   parse_mode: 'HTML',
                   reply_markup: {
@@ -1572,8 +1587,18 @@ async function initBot() {
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
-            try {
-              await ctx.editMessageText(
+            // Check if wrong token was detected
+            let messageText;
+            if (verification.isWrongToken) {
+              const wrongTokenName = verification.wrongToken === 'NATIVE' ? 'PAX (native)' : verification.wrongToken;
+              messageText = 
+                `⚠️ <b>Wrong Token Detected</b>\n\n` +
+                `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
+                `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${wrongTokenName}\n\n` +
+                `<b>Status: Automatically refunding your ${wrongTokenName}...</b>\n\n` +
+                `Please send the correct token: <b>${flip.tokenSymbol}</b>`;
+            } else {
+              messageText = 
                 `⏳ <b>Insufficient Deposit</b>\n\n` +
                 `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
                 `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
@@ -1583,7 +1608,12 @@ async function initBot() {
                 `• Check amount matches exactly (${formattedExpected})\n` +
                 `• Wait 30 seconds for blockchain confirmation\n` +
                 `• Then try confirming again\n\n` +
-                `If not sent within 3 minutes, the challenge will auto-cancel.`,
+                `If not sent within 3 minutes, the challenge will auto-cancel.`;
+            }
+            
+            try {
+              await ctx.editMessageText(
+                messageText,
                 {
                   parse_mode: 'HTML',
                   reply_markup: {

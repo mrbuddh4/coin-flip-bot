@@ -128,6 +128,8 @@ class BlockchainManager {
             depositTransaction: depositInfo.transactionHash || depositInfo.signature || null,
             blockNumber: depositInfo.blockNumber || depositInfo.slot || null,
             verified: 'blockchain',
+            wrongToken: depositInfo.wrongToken,  // Include info about wrong token (e.g., 'NATIVE' or token address)
+            isWrongToken: true,  // Flag indicating this is a wrong token scenario
             error: 'Wrong token sent - will refund automatically',
           };
         }
