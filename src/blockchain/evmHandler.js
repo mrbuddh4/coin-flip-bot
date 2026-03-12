@@ -363,7 +363,8 @@ class EVMHandler {
                   timestamp: txTimestamp,
                   contractAddress: txContractAddressLower || 'NATIVE',
                   isNativeTransfer,
-                  wrongToken: (!isCorrectToken && !isNativeTransfer) ? txContractAddressLower : null,
+                  // Mark as wrong token if not the expected token (regardless of native vs ERC20)
+                  wrongToken: (!isCorrectToken) ? (txContractAddressLower || 'NATIVE') : null,
                 });
                 
                 console.log('[getRecentDepositSender] Matched incoming transaction', {
