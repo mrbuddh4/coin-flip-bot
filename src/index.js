@@ -96,6 +96,7 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
               // Mark as cancelled
               flipCheck.status = 'CANCELLED';
               flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenge expired (no acceptances within 4 minutes)' };
+              flipCheck.changed('data', true); // Explicitly mark JSON field as changed for Sequelize
               await flipCheck.save();
 
               // Refund creator's deposit
@@ -187,12 +188,18 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                 );
                 // Store expired notice message ID for later deletion
                 flipCheck.data = { ...(flipCheck.data || {}), expiredNoticeMessageId: expiredMsg.message_id };
+                flipCheck.changed('data', true); // Explicitly mark JSON field as changed for Sequelize
                 await flipCheck.save();
+                
+                // Verify it was saved
+                const savedFlip = await models.CoinFlip.findByPk(flipId);
                 logger.info('[challengeTimeout] ✅ Stored expiration message for later deletion', { 
                   flipId, 
                   sessionId: newFlipSession.id, 
                   messageId: expiredMsg.message_id,
-                  groupChatId: flipCheck.groupChatId 
+                  groupChatId: flipCheck.groupChatId,
+                  stored: savedFlip?.data?.expiredNoticeMessageId,
+                  verified: savedFlip?.data?.expiredNoticeMessageId === expiredMsg.message_id
                 });
               } catch (msgErr) {
                 logger.error('[challengeTimeout] Failed to send expiration message', { flipId, error: msgErr.message });
@@ -277,9 +284,11 @@ function autoDeleteMessageAfterDelay(telegram, groupId, messageId, delayMs = 500
 async function deleteOldFlipMessagesInGroup(telegram, groupId, excludeFlipId) {
   try {
     if (!groupId || !telegram) {
-      logger.warn('[deleteOldFlipMessagesInGroup] Missing telegram or groupId');
+      logger.warn('[deleteOldFlipMessagesInGroup] ❌ Missing telegram or groupId', { groupId, excludeFlipId });
       return;
     }
+
+    logger.info('[deleteOldFlipMessagesInGroup] 🔍 Starting cleanup', { groupId, excludeFlipId });
 
     const { models } = getDB();
     const oldFlips = await models.CoinFlip.findAll({
@@ -290,26 +299,49 @@ async function deleteOldFlipMessagesInGroup(telegram, groupId, excludeFlipId) {
       },
       order: [['createdAt', 'DESC']],
       limit: 5,
+      raw: false,
     });
 
-    logger.debug('[deleteOldFlipMessagesInGroup] Found old flips to clean up', { groupId, count: oldFlips.length });
+    logger.info('[deleteOldFlipMessagesInGroup] 📋 Found old flips', { 
+      groupId, 
+      count: oldFlips.length,
+      flipIds: oldFlips.map(f => ({ id: f.id, status: f.status, hasData: !!f.data })),
+    });
 
     for (const flip of oldFlips) {
-      // Handle both old and new storage formats
-      const msgIds = [
-        flip.data?.groupMessageId,
-        flip.groupMessageId,
-        flip.data?.expiredNoticeMessageId
-      ].filter(Boolean);
+      try {
+        // Handle both old and new storage formats
+        const groupMsgId = flip.data?.groupMessageId || flip.groupMessageId;
+        const expiredMsgId = flip.data?.expiredNoticeMessageId;
+        
+        logger.info('[deleteOldFlipMessagesInGroup] 🗑️ Cleaning flip', { 
+          flipId: flip.id,
+          flipStatus: flip.status,
+          hasGroupMsgId: !!groupMsgId,
+          groupMsgId,
+          hasExpiredMsgId: !!expiredMsgId,
+          expiredMsgId,
+          flipData: flip.data,
+        });
 
-      logger.debug('[deleteOldFlipMessagesInGroup] Cleaning up flip', { flipId: flip.id, messageIds: msgIds });
-
-      for (const msgId of msgIds) {
-        await deleteGroupMessage(telegram, groupId, msgId);
+        if (groupMsgId) {
+          logger.info('[deleteOldFlipMessagesInGroup] Deleting group message', { groupId, msgId: groupMsgId });
+          const deleted = await deleteGroupMessage(telegram, groupId, groupMsgId);
+          logger.info('[deleteOldFlipMessagesInGroup] Group message deletion result', { msgId: groupMsgId, deleted });
+        }
+        if (expiredMsgId) {
+          logger.info('[deleteOldFlipMessagesInGroup] Deleting expired notice', { groupId, msgId: expiredMsgId });
+          const deleted = await deleteGroupMessage(telegram, groupId, expiredMsgId);
+          logger.info('[deleteOldFlipMessagesInGroup] Expired notice deletion result', { msgId: expiredMsgId, deleted });
+        }
+      } catch (flipErr) {
+        logger.error('[deleteOldFlipMessagesInGroup] Error cleaning individual flip', { flipId: flip.id, error: flipErr.message });
       }
     }
+
+    logger.info('[deleteOldFlipMessagesInGroup] ✅ Cleanup complete', { groupId, flipsProcessed: oldFlips.length });
   } catch (err) {
-    logger.warn('[deleteOldFlipMessagesInGroup] Error deleting old messages', { groupId, error: err.message });
+    logger.error('[deleteOldFlipMessagesInGroup] ❌ Error during cleanup', { groupId, error: err.message, stack: err.stack });
   }
 }
 
@@ -1985,6 +2017,10 @@ async function initBot() {
         }
 
         // Delete old flip messages from the group before posting the new challenge
+        logger.info('[creator_deposit_confirmed] 🧹 About to clean up old messages', { 
+          flipId: flip.id,
+          groupChatId: flip.groupChatId
+        });
         await deleteOldFlipMessagesInGroup(ctx.telegram, flip.groupChatId, flip.id);
 
         // Delete the old "Start a Coin Flip!" message from the group before posting the challenge
@@ -2069,12 +2105,17 @@ async function initBot() {
         // Save message ID to flip (both old and new format for compatibility)
         flip.groupMessageId = groupMessage.message_id;
         flip.data = { ...(flip.data || {}), groupMessageId: groupMessage.message_id };
+        flip.changed('data', true); // Explicitly mark JSON field as changed for Sequelize
         await flip.save();
+        
+        // Verify it was saved
+        const savedFlipAfterMsg = await models.CoinFlip.findByPk(flip.id);
         logger.info('[creator_deposit_confirmed] ✅ Stored challenge message for deletion', { 
           flipId: flip.id, 
           messageId: groupMessage.message_id,
           groupChatId: flip.groupChatId,
-          dataField: flip.data?.groupMessageId
+          dataField: flip.data?.groupMessageId,
+          verified: savedFlipAfterMsg?.data?.groupMessageId === groupMessage.message_id
         });
           groupId: flip.groupChatId 
         });
