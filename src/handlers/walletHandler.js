@@ -273,14 +273,20 @@ class WalletHandler {
           where: { id: session.id },
         });
 
+        // Check if there's a pending flip to continue
+        const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
+        
+        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
+        if (pendingFlip) {
+          buttons.push([Markup.button.callback('🎮 Continue Flip', 'continue_flip_after_wallet')]);
+        }
+
         await ctx.reply(
           `✅ Paxeer wallet address updated!\n\n` +
           `<code>${message}</code>`,
           {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')],
-            ]).reply_markup,
+            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
           }
         );
 
@@ -306,14 +312,20 @@ class WalletHandler {
           where: { id: session.id },
         });
 
+        // Check if there's a pending flip to continue
+        const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
+        
+        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
+        if (pendingFlip) {
+          buttons.push([Markup.button.callback('🎮 Continue Flip', 'continue_flip_after_wallet')]);
+        }
+
         await ctx.reply(
           `✅ Solana wallet address updated!\n\n` +
           `<code>${message}</code>`,
           {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')],
-            ]).reply_markup,
+            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
           }
         );
 
@@ -339,17 +351,26 @@ class WalletHandler {
           where: { id: session.id },
         });
 
+        // Check if there's a pending flip to continue
+        const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
+        
+        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
+        if (pendingFlip) {
+          buttons.push([Markup.button.callback('🎮 Continue Flip', 'continue_flip_after_wallet')]);
+        }
+
         await ctx.reply(
           `✅ Paxeer deposit wallet set!\n\n` +
           `<code>${message}</code>\n\n` +
           `You'll send coin flip deposits FROM this wallet.`,
           {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')],
-            ]).reply_markup,
+            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
           }
         );
+
+        // Find and continue any pending flip
+        await this.continueFlipAfterWallet(ctx, userId, models, 'EVM');
 
         return true;
       } else if (session.currentStep === 'AWAITING_SOLANA_DEPOSIT_ADDRESS') {
@@ -370,17 +391,26 @@ class WalletHandler {
           where: { id: session.id },
         });
 
+        // Check if there's a pending flip to continue
+        const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
+        
+        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
+        if (pendingFlip) {
+          buttons.push([Markup.button.callback('🎮 Continue Flip', 'continue_flip_after_wallet')]);
+        }
+
         await ctx.reply(
           `✅ Solana deposit wallet set!\n\n` +
           `<code>${message}</code>\n\n` +
           `You'll send coin flip deposits FROM this wallet.`,
           {
             parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              [Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')],
-            ]).reply_markup,
+            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
           }
         );
+
+        // Find and continue any pending flip
+        await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');
 
         return true;
       }
@@ -393,7 +423,58 @@ class WalletHandler {
     }
   }
 
-  static async continueFlipAfterWallet(ctx, userId, models, network) {
+  static async checkAndContinueFlip(ctx, userId, models) {
+    try {
+      // Find an active flip session
+      const flipSession = await models.BotSession.findOne({
+        where: {
+          userId,
+          sessionType: { [Op.in]: ['INITIATING', 'CONFIRMING_DEPOSIT'] },
+        },
+      });
+
+      if (!flipSession) {
+        logger.info('[checkAndContinueFlip] No active flip session', { userId });
+        return null;
+      }
+
+      const flip = await models.CoinFlip.findByPk(flipSession.data?.flipId || flipSession.coinFlipId);
+      if (!flip) {
+        logger.warn('[checkAndContinueFlip] Flip not found', { flipSessionId: flipSession.id });
+        return null;
+      }
+
+      // Check if user has BOTH wallets for this network
+      const userProfile = await models.UserProfile.findByPk(userId);
+      const receiveWallet = flip.tokenNetwork === 'EVM' 
+        ? userProfile?.evmWalletAddress 
+        : userProfile?.solanaWalletAddress;
+      const depositWallet = flip.tokenNetwork === 'EVM' 
+        ? userProfile?.evmDepositWalletAddress 
+        : userProfile?.solanaDepositWalletAddress;
+
+      if (!receiveWallet || !depositWallet) {
+        logger.info('[checkAndContinueFlip] Missing wallets', { 
+          flipId: flip.id, 
+          hasReceive: !!receiveWallet,
+          hasDeposit: !!depositWallet 
+        });
+        return null; // Still missing wallets
+      }
+
+      // Both wallets are set and there's a pending flip - show continue button
+      return {
+        flipId: flip.id,
+        sessionType: flipSession.sessionType,
+        tokenNetwork: flip.tokenNetwork,
+        wagerAmount: flip.wagerAmount,
+        tokenSymbol: flip.tokenSymbol,
+      };
+    } catch (error) {
+      logger.error('[checkAndContinueFlip] Error checking flip', error);
+      return null;
+    }
+  }
     try {
       // Find an active flip session
       const flipSession = await models.BotSession.findOne({

@@ -1973,6 +1973,42 @@ async function initBot() {
       }
     });
 
+    // Handle continue flip after wallet setup
+    bot.action('continue_flip_after_wallet', async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+
+        // Find the pending flip session
+        const flipSession = await models.BotSession.findOne({
+          where: {
+            userId,
+            sessionType: { [Op.in]: ['INITIATING', 'CONFIRMING_DEPOSIT'] },
+          },
+        });
+
+        if (!flipSession) {
+          await ctx.answerCbQuery('❌ No active flip found');
+          return;
+        }
+
+        const flip = await models.CoinFlip.findByPk(flipSession.data?.flipId || flipSession.coinFlipId);
+        if (!flip) {
+          await ctx.answerCbQuery('❌ Flip not found');
+          return;
+        }
+
+        // Continue the flip based on the network
+        const network = flip.tokenNetwork;
+        logger.info('[continue_flip_after_wallet] Continuing flip after wallet setup', { flipId: flip.id, userId, network });
+        await WalletHandler.continueFlipAfterWallet(ctx, userId, models, network);
+        await ctx.answerCbQuery('✅ Continuing your flip...');
+      } catch (error) {
+        logger.error('Error continuing flip after wallet setup', { error: error.message });
+        await ctx.answerCbQuery('❌ Error continuing flip');
+      }
+    });
+
     logger.info('Bot initialized successfully');
     console.log('✅ Bot ready!');
   } catch (error) {
