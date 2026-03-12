@@ -858,9 +858,12 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Button clicked', { flipId, userId });
 
+        logger.info('[deposit_confirmed] Attempting to find flip in database', { flipId });
         const flip = await models.CoinFlip.findByPk(flipId);
+        logger.info('[deposit_confirmed] Database lookup result', { flipId, found: !!flip });
+        
         if (!flip) {
-          logger.warn('[deposit_confirmed] Flip not found', { flipId });
+          logger.warn('[deposit_confirmed] Flip not found in database', { flipId });
           await ctx.answerCbQuery('❌ Session expired');
           return;
         }
@@ -910,7 +913,7 @@ async function initBot() {
         });
 
         if (!verification.received) {
-          logger.warn('[deposit_confirmed] Deposit not received', { userId, flipId });
+          logger.info('[deposit_confirmed] Deposit not received', { userId, flipId, before_save: flip });
           
           // Store the detected sender address for refunds (if not already set)
           if (verification.depositSender && !flip.challengerDepositWalletAddress) {
@@ -1034,7 +1037,9 @@ async function initBot() {
           
           // CRITICAL: Save the sender address and accumulated deposit before returning
           // This ensures that on the next verification, we can track deposits from the same sender
+          logger.info('[deposit_confirmed] About to save flip before showing retry button', { flipId,status: flip.status });
           await flip.save();
+          logger.info('[deposit_confirmed] Flip saved successfully', { flipId });
           
           return;
         }
