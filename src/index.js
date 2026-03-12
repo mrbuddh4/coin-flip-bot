@@ -976,7 +976,11 @@ async function initBot() {
             
             // Record that we just sent a notification
             flip.data = { ...flip.data, lastInsufficientDepositNotification: Date.now() };
-            await flip.save();
+            try {
+              await flip.save();
+            } catch (saveErr) {
+              logger.error('[deposit_confirmed] ERROR saving flip after notification', { flipId, error: saveErr.message });
+            }
           } else {
             logger.info('[deposit_confirmed] Skipping duplicate notification (sent within last 30s)', { flipId });
           }
