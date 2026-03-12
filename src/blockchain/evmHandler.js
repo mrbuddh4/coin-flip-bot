@@ -540,6 +540,26 @@ class EVMHandler {
                 }
               }
               
+              // CRITICAL: If we found native transfers (PAX sent when token was expected), return immediately
+              // Don't continue to search for other transfers - we already found what we need
+              if (transfers.length > 0) {
+                console.log('[getRecentDepositSender] Returning after finding native/other transfers', {
+                  transferCount: transfers.length,
+                  totalAmount,
+                  hasWrongTokens: transfers.some(t => t.wrongToken),
+                  transfers,
+                });
+
+                return {
+                  sender: targetSender,
+                  amount: totalAmount.toString(),
+                  transactionHash: latestTxForReturn ? latestTxForReturn.hash : null,
+                  blockNumber: latestTxForReturn ? latestTxForReturn.blockNumber : null,
+                  transferCount: transfers.length,
+                  hasWrongTokens: transfers.some(t => t.wrongToken),
+                };
+              }
+              
               // If knownSender and still no transfers found, log but DON'T reject yet
               // The user might be using a different wallet in THIS session
               // Fall through to the final fallback below which accepts ANY sender
