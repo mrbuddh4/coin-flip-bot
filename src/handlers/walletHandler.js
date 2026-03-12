@@ -276,7 +276,12 @@ class WalletHandler {
         await ctx.reply(
           `✅ Paxeer wallet address updated!\n\n` +
           `<code>${message}</code>`,
-          { parse_mode: 'HTML' }
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')],
+            ]).reply_markup,
+          }
         );
 
         // Find and continue any pending flip
@@ -304,7 +309,12 @@ class WalletHandler {
         await ctx.reply(
           `✅ Solana wallet address updated!\n\n` +
           `<code>${message}</code>`,
-          { parse_mode: 'HTML' }
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')],
+            ]).reply_markup,
+          }
         );
 
         // Find and continue any pending flip
@@ -333,7 +343,12 @@ class WalletHandler {
           `✅ Paxeer deposit wallet set!\n\n` +
           `<code>${message}</code>\n\n` +
           `You'll send coin flip deposits FROM this wallet.`,
-          { parse_mode: 'HTML' }
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')],
+            ]).reply_markup,
+          }
         );
 
         return true;
@@ -359,7 +374,12 @@ class WalletHandler {
           `✅ Solana deposit wallet set!\n\n` +
           `<code>${message}</code>\n\n` +
           `You'll send coin flip deposits FROM this wallet.`,
-          { parse_mode: 'HTML' }
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')],
+            ]).reply_markup,
+          }
         );
 
         return true;

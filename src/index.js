@@ -1948,6 +1948,18 @@ async function initBot() {
       }
     });
 
+    // Handle back to wallets button after setting a wallet
+    bot.action('back_to_wallets', async (ctx) => {
+      try {
+        ctx.state.models = getDB().models;
+        await WalletHandler.handleWalletCommand(ctx);
+        await ctx.answerCbQuery();
+      } catch (error) {
+        logger.error('Error going back to wallets', { error: error.message });
+        await ctx.answerCbQuery('❌ Error loading wallets');
+      }
+    });
+
     logger.info('Bot initialized successfully');
     console.log('✅ Bot ready!');
   } catch (error) {
