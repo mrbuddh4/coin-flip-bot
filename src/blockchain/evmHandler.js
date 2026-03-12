@@ -559,6 +559,7 @@ class EVMHandler {
                   blockNumber: latestTxForReturn ? latestTxForReturn.blockNumber : null,
                   transferCount: transfers.length,
                   hasWrongTokens: transfers.some(t => t.wrongToken),
+                  wrongToken: transfers.find(t => t.wrongToken)?.wrongToken || null,
                 };
               }
               
