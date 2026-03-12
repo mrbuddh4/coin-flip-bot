@@ -289,8 +289,21 @@ class EVMHandler {
                 transactionsChecked: data.result.length,
               });
               
+              // CRITICAL FIX: If we have a knownSender (e.g., challenger's known wallet), 
+              // do NOT fall back to using other senders - fail the deposit verification instead
+              // This prevents accepting deposits from the wrong user (e.g., creator's deposit as challenger)
+              if (knownSender) {
+                console.warn('[getRecentDepositSender] Known sender was specified but no deposits found from them - rejecting to prevent fraud', {
+                  knownSender,
+                  botWalletAddress,
+                  expectedToken: tokenAddress.toLowerCase(),
+                });
+                return null;
+              }
+              
               // Fallback: accumulate ALL recent incoming transfers to bot wallet that are after flip creation
               // This handles multi-deposit scenarios where user sends from same wallet in succession
+              // ONLY used when knownSender is NOT specified (i.e., we don't know who should deposit)
               let fallbackTotal = 0;
               let fallbackLatestTx = null;
               let fallbackSender = null;
