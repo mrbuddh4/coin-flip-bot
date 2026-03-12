@@ -12,7 +12,10 @@ class WalletHandler {
       try {
         await models.sequelize.query(`
           ALTER TABLE "UserProfiles" 
-          ADD COLUMN IF NOT EXISTS "evmDepositWalletAddress" VARCHAR(255),
+          ADD COLUMN IF NOT EXISTS "evmDepositWalletAddress" VARCHAR(255)
+        `);
+        await models.sequelize.query(`
+          ALTER TABLE "UserProfiles" 
           ADD COLUMN IF NOT EXISTS "solanaDepositWalletAddress" VARCHAR(255)
         `);
       } catch (migrationErr) {
