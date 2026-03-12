@@ -232,19 +232,42 @@ class WalletHandler {
     const message = ctx.message.text;
 
     try {
+      logger.info('[processWalletAddressInput] Starting wallet address input processing', {
+        userId,
+        messageLength: message.length,
+        messagePrefix: message.substring(0, 10),
+      });
+
       // Check for active wallet update session
       const session = await models.BotSession.findOne({
         where: { userId, sessionType: 'UPDATING_WALLET' },
       });
 
       if (!session) {
+        logger.info('[processWalletAddressInput] No active wallet update session found', { userId });
         return false;
       }
+
+      logger.info('[processWalletAddressInput] Found wallet update session', {
+        userId,
+        sessionId: session.id,
+        currentStep: session.currentStep,
+      });
 
       // Get or create profile
       let profile = await models.UserProfile.findByPk(userId);
       if (!profile) {
+        logger.info('[processWalletAddressInput] Profile not found, creating new one', { userId });
         profile = await models.UserProfile.create({ userId });
+      } else {
+        logger.info('[processWalletAddressInput] Profile found in database', {
+          userId,
+          profileId: profile.id,
+          evmWallet: profile.evmWalletAddress,
+          evmDepositWallet: profile.evmDepositWalletAddress,
+          solanaWallet: profile.solanaWalletAddress,
+          solanaDepositWallet: profile.solanaDepositWalletAddress,
+        });
       }
 
       const { getBlockchainManager } = require('../blockchain/manager');
@@ -327,8 +350,24 @@ class WalletHandler {
           return true;
         }
 
+        logger.info('[processWalletAddressInput] Updating evmDepositWalletAddress', {
+          userId,
+          oldValue: profile.evmDepositWalletAddress,
+          newValue: message,
+          profileId: profile.id,
+        });
+        
         profile.evmDepositWalletAddress = message;
         await profile.save();
+
+        // Verify it was saved by re-fetching
+        const reloadedProfile = await models.UserProfile.findByPk(userId);
+        logger.info('[processWalletAddressInput] Verified wallet save', {
+          userId,
+          savedValue: reloadedProfile?.evmDepositWalletAddress,
+          expectedValue: message,
+          wasSuccessful: reloadedProfile?.evmDepositWalletAddress === message,
+        });
 
         await models.BotSession.destroy({
           where: { id: session.id },
@@ -361,8 +400,24 @@ class WalletHandler {
           return true;
         }
 
+        logger.info('[processWalletAddressInput] Updating solanaDepositWalletAddress', {
+          userId,
+          oldValue: profile.solanaDepositWalletAddress,
+          newValue: message,
+          profileId: profile.id,
+        });
+        
         profile.solanaDepositWalletAddress = message;
         await profile.save();
+
+        // Verify it was saved by re-fetching
+        const reloadedProfile = await models.UserProfile.findByPk(userId);
+        logger.info('[processWalletAddressInput] Verified wallet save', {
+          userId,
+          savedValue: reloadedProfile?.solanaDepositWalletAddress,
+          expectedValue: message,
+          wasSuccessful: reloadedProfile?.solanaDepositWalletAddress === message,
+        });
 
         await models.BotSession.destroy({
           where: { id: session.id },
