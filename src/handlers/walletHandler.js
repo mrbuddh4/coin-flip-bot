@@ -474,6 +474,8 @@ class WalletHandler {
       return null;
     }
   }
+
+  static async continueFlipAfterWallet(ctx, userId, models, network) {
     try {
       // Find the MOST RECENT active flip session (not expired, highest createdAt)
       const flipSession = await models.BotSession.findOne({
