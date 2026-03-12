@@ -313,27 +313,33 @@ class SolanaHandler {
           // Check for token transfers
           if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
             for (const transfer of tx.tokenTransfers) {
-              // For SPL tokens, transfers go to an Associated Token Account (ATA), not the wallet directly
-              // Accept if:
-              // 1. Transfer is to the bot's main wallet (direct SOL transfer)
-              // 2. Transfer is to an ATA (computed based on mint and bot wallet)
+              // Validation depends on transfer type:
+              // - SPL tokens (when searching for specific tokenMint): MUST go to ATA only
+              // - Native SOL (no tokenMint specified): goes to main wallet
               
               let isTransferToBot = false;
-              const transferMintPublicKey = new PublicKey(transfer.mint);
-              const botPublicKey = new PublicKey(botWalletAddress);
               
-              try {
-                const expectedBotATA = await getAssociatedTokenAddress(
-                  transferMintPublicKey,
-                  botPublicKey
-                );
-                const expectedBotATAStr = expectedBotATA.toBase58();
+              if (tokenMint) {
+                // Looking for a specific SPL token: ONLY accept transfers to the bot's ATA for that token
+                const transferMintPublicKey = new PublicKey(transfer.mint);
+                const botPublicKey = new PublicKey(botWalletAddress);
                 
-                if (transfer.toUserAccount === botWalletAddress || transfer.toUserAccount === expectedBotATAStr) {
-                  isTransferToBot = true;
+                try {
+                  const expectedBotATA = await getAssociatedTokenAddress(
+                    transferMintPublicKey,
+                    botPublicKey
+                  );
+                  const expectedBotATAStr = expectedBotATA.toBase58();
+                  
+                  // For SPL tokens: ONLY accept ATA, not main wallet
+                  if (transfer.toUserAccount === expectedBotATAStr) {
+                    isTransferToBot = true;
+                  }
+                } catch (ataErr) {
+                  console.warn('[getRecentDepositSender] Could not calculate ATA:', ataErr.message);
                 }
-              } catch (ataErr) {
-                // If ATA calculation fails, just check direct wallet
+              } else {
+                // Looking for native SOL: accept transfers to main wallet
                 if (transfer.toUserAccount === botWalletAddress) {
                   isTransferToBot = true;
                 }
@@ -566,6 +572,7 @@ class SolanaHandler {
               }
               
               // For SPL tokens, check if transfer went to bot's ATA for that mint
+              // We only need to check ATA since SPL tokens never go to main wallet
               let isTransferToBot = false;
               const transferMintPublicKey = new PublicKey(transfer.mint);
               const botPublicKey = new PublicKey(botWalletAddress);
@@ -577,13 +584,12 @@ class SolanaHandler {
                 );
                 const expectedBotATAStr = expectedBotATA.toBase58();
                 
-                if (transfer.toUserAccount === botWalletAddress || transfer.toUserAccount === expectedBotATAStr) {
+                // For SPL tokens (wrong token refunds): ONLY accept ATA
+                if (transfer.toUserAccount === expectedBotATAStr) {
                   isTransferToBot = true;
                 }
               } catch (ataErr) {
-                if (transfer.toUserAccount === botWalletAddress) {
-                  isTransferToBot = true;
-                }
+                console.warn('[refundIncorrectTokens] Could not calculate ATA:', ataErr.message);
               }
               
               if (!isTransferToBot) {
