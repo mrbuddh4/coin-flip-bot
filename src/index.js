@@ -1057,7 +1057,9 @@ async function initBot() {
           }
           
           // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
-          if (verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
+          // But only attempt ONCE per flip to prevent duplicate transactions
+          const hasAttemptedRefund = flip.data?.refundAttempted === true;
+          if (verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE' && !hasAttemptedRefund) {
             try {
               const blockchainManager = getBlockchainManager();
               logger.info('[deposit_confirmed] Attempting to refund incorrect tokens from challenger', { 
@@ -1065,6 +1067,10 @@ async function initBot() {
                 expectedToken: flip.tokenAddress, 
                 sender: verification.depositSender 
               });
+              
+              // Mark that we've attempted refund to prevent duplicate calls
+              flip.data = { ...flip.data, refundAttempted: true };
+              await flip.save();
               
               // Call refund immediately on first detection, don't throttle this
               const refundResults = await blockchainManager.refundIncorrectTokens(
@@ -1639,7 +1645,9 @@ async function initBot() {
           }
           
           // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
-          if (verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
+          // But only attempt ONCE per flip to prevent duplicate transactions
+          const hasAttemptedRefund = flip.data?.refundAttempted === true;
+          if (verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE' && !hasAttemptedRefund) {
             try {
               const blockchainManager = getBlockchainManager();
               logger.info('[creator_deposit_confirmed] Attempting to refund incorrect tokens from creator', { 
@@ -1647,6 +1655,10 @@ async function initBot() {
                 expectedToken: flip.tokenAddress, 
                 sender: verification.depositSender 
               });
+              
+              // Mark that we've attempted refund to prevent duplicate calls
+              flip.data = { ...flip.data, refundAttempted: true };
+              await flip.save();
               
               // Call refund immediately on first detection, don't throttle this
               const refundResults = await blockchainManager.refundIncorrectTokens(
