@@ -964,6 +964,19 @@ async function initBot() {
           ? userProfile?.evmDepositWalletAddress 
           : userProfile?.solanaDepositWalletAddress;
         
+        logger.info('[deposit_confirmed] Wallets loaded from UserProfile', {
+          userId,
+          network: flip.tokenNetwork,
+          receiveWallet,
+          depositWallet,
+          allProfileData: {
+            evmWalletAddress: userProfile?.evmWalletAddress,
+            evmDepositWalletAddress: userProfile?.evmDepositWalletAddress,
+            solanaWalletAddress: userProfile?.solanaWalletAddress,
+            solanaDepositWalletAddress: userProfile?.solanaDepositWalletAddress,
+          },
+        });
+        
         // Require user to set both wallets first
         if (!receiveWallet || !depositWallet) {
           try {
@@ -1455,6 +1468,19 @@ async function initBot() {
         const depositWallet = flip.tokenNetwork === 'EVM' 
           ? userProfile?.evmDepositWalletAddress 
           : userProfile?.solanaDepositWalletAddress;
+        
+        logger.info('[creator_deposit_confirmed] Wallets loaded from UserProfile', {
+          userId,
+          network: flip.tokenNetwork,
+          receiveWallet,
+          depositWallet,
+          allProfileData: {
+            evmWalletAddress: userProfile?.evmWalletAddress,
+            evmDepositWalletAddress: userProfile?.evmDepositWalletAddress,
+            solanaWalletAddress: userProfile?.solanaWalletAddress,
+            solanaDepositWalletAddress: userProfile?.solanaDepositWalletAddress,
+          },
+        });
         
         // Require user to set both wallets first
         if (!receiveWallet || !depositWallet) {

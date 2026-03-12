@@ -333,11 +333,8 @@ class WalletHandler {
         await models.BotSession.destroy({
           where: { id: session.id },
         });
-
-        // Check if there's a pending flip to continue
-        const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
         
-        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
+        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];  
 
         await ctx.reply(
           `✅ Paxeer sending wallet set!\n\n` +
@@ -370,11 +367,8 @@ class WalletHandler {
         await models.BotSession.destroy({
           where: { id: session.id },
         });
-
-        // Check if there's a pending flip to continue
-        const pendingFlip = await this.checkAndContinueFlip(ctx, userId, models);
         
-        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
+        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];  
 
         await ctx.reply(
           `✅ Solana sending wallet set!\n\n` +
