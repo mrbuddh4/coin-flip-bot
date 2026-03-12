@@ -1174,9 +1174,6 @@ async function initBot() {
           }
         }
 
-        // Delete session  
-        await session.destroy();
-
         // Check if both deposits are confirmed
         if (flip.creatorDepositConfirmed && flip.challengerDepositConfirmed) {
           logger.info('[deposit_confirmed] Both deposits confirmed, executing flip', { flipId });
