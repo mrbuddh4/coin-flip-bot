@@ -1226,17 +1226,23 @@ async function initBot() {
           // Store detected amount for refunds
           if (verification.depositSender) {
             if (!flip.challengerAccumulatedDeposit) {
-              flip.challengerAccumulatedDeposit = parseFloat(verification.amount || 0);
+              // CRITICAL: Store in DISPLAY units, not raw units
+              const tokenDecimals = flip.tokenDecimals || 18;
+              const receivedDisplay = parseFloat(verification.amount || 0) / Math.pow(10, tokenDecimals);
+              flip.challengerAccumulatedDeposit = receivedDisplay.toString();
               logger.info('[deposit_confirmed] Initial deposit detected', { 
                 flipId, 
                 sender: verification.depositSender,
                 initialAmount: verification.amount
               });
             } else {
-              // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
+              // On retry, update accumulated amount (query returns cumulative from that sender)
               const previousAccumulated = parseFloat(flip.challengerAccumulatedDeposit || 0);
-              const currentTotal = parseFloat(verification.amount || 0);
-              flip.challengerAccumulatedDeposit = currentTotal;
+              // CRITICAL: Convert current total from raw to display units
+              const tokenDecimals = flip.tokenDecimals || 18;
+              const currentTotalRaw = parseFloat(verification.amount || 0);
+              const currentTotal = currentTotalRaw / Math.pow(10, tokenDecimals);
+              flip.challengerAccumulatedDeposit = currentTotal.toString();
               
               logger.info('[deposit_confirmed] Updated challenger accumulated deposit', {
                 flipId,
@@ -1762,17 +1768,23 @@ async function initBot() {
           // Store detected amount for refunds  
           if (verification.depositSender) {
             if (!flip.creatorAccumulatedDeposit) {
-              flip.creatorAccumulatedDeposit = parseFloat(verification.amount || 0);
+              // CRITICAL: Store in DISPLAY units, not raw units
+              const tokenDecimals = flip.tokenDecimals || 18;
+              const receivedDisplay = parseFloat(verification.amount || 0) / Math.pow(10, tokenDecimals);
+              flip.creatorAccumulatedDeposit = receivedDisplay.toString();
               logger.info('[creator_deposit_confirmed] Initial deposit detected', { 
                 flipId, 
                 sender: verification.depositSender,
                 initialAmount: verification.amount
               });
             } else {
-              // On retry, update accumulated amount (Paxscan query returns cumulative from that sender)
+              // On retry, update accumulated amount (query returns cumulative from that sender)
               const previousAccumulated = parseFloat(flip.creatorAccumulatedDeposit || 0);
-              const currentTotal = parseFloat(verification.amount || 0);
-              flip.creatorAccumulatedDeposit = currentTotal;
+              // CRITICAL: Convert current total from raw to display units
+              const tokenDecimals = flip.tokenDecimals || 18;
+              const currentTotalRaw = parseFloat(verification.amount || 0);
+              const currentTotal = currentTotalRaw / Math.pow(10, tokenDecimals);
+              flip.creatorAccumulatedDeposit = currentTotal.toString();
               
               logger.info('[creator_deposit_confirmed] Updated creator accumulated deposit', {
                 flipId,
