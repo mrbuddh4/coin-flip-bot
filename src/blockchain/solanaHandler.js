@@ -262,13 +262,13 @@ class SolanaHandler {
   }
 
   /**
-   * Find the sender of a recent incoming transaction to the bot wallet using Helius API
+   * Find the sender of a recent incoming transaction to the bot wallet using Solscan API
    */
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null, knownSender = null, flipCreatedAt = null) {
     try {
       const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
 
-      console.log('[getRecentDepositSender] Searching for Solana deposits via Helius API', {
+      console.log('[getRecentDepositSender] Searching for Solana deposits via Solscan API', {
         botWallet: botWalletAddress,
         tokenMint,
         expectedAmount,
@@ -276,28 +276,24 @@ class SolanaHandler {
         flipCreatedAt,
       });
 
-      // Construct Helius API request
-      const heliusApiKey = config.solana.heliusApiKey;
-      if (!heliusApiKey) {
-        console.error('[getRecentDepositSender] Helius API key not configured');
-        return null;
-      }
-
-      const url = `https://api.helius.xyz/v0/addresses/${botWalletAddress}/transactions?api-key=${heliusApiKey}`;
+      // Use Solscan API to get transactions (better indexing than Helius)
+      const url = `https://api.solscan.io/v1/account/transactions?account=${botWalletAddress}&limit=50`;
       
       const response = await this.withExponentialBackoff(() => fetch(url));
       if (!response.ok) {
-        console.error('[getRecentDepositSender] Helius API error:', response.status);
+        console.error('[getRecentDepositSender] Solscan API error:', response.status);
         return null;
       }
 
-      const transactions = await response.json();
-      console.log('[getRecentDepositSender] Helius API response', {
+      const data = await response.json();
+      const transactions = data.data || [];
+
+      console.log('[getRecentDepositSender] Solscan API response', {
         transactionCount: transactions?.length || 0,
       });
 
       if (!transactions || transactions.length === 0) {
-        console.warn('[getRecentDepositSender] No transactions found');
+        console.log('[getRecentDepositSender] No transactions found');
         return null;
       }
 
@@ -307,85 +303,43 @@ class SolanaHandler {
 
       for (const tx of transactions) {
         try {
-          // Skip if transaction is failed
-          if (tx.type === 'FAILED') continue;
+          // Skip if transaction failed
+          if (tx.status !== 'Success') continue;
 
-          // Check for token transfers
-          if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
-            for (const transfer of tx.tokenTransfers) {
-              let isTransferToBot = false;
-              
-              if (tokenMint) {
-                // Looking for a specific SPL token: accept transfers to EITHER the main wallet OR the ATA
-                // (user might send to main wallet, or it might route to ATA)
-                const expectedBotATAStr = config.solana.sidTokenATA;
-                
-                if (transfer.toUserAccount === expectedBotATAStr || transfer.toUserAccount === botWalletAddress) {
-                  isTransferToBot = true;
-                }
-              } else {
-                // Looking for native SOL: accept transfers to main wallet
-                if (transfer.toUserAccount === botWalletAddress) {
-                  isTransferToBot = true;
-                }
-              }
-              
-              if (!isTransferToBot) {
-                console.log('[getRecentDepositSender] Skipping transfer to non-bot account', {
-                  toAccount: transfer.toUserAccount,
-                  botWallet: botWalletAddress,
-                  mint: transfer.mint,
-                });
-                continue;
-              }
+          // Solscan API provides token transfer info directly
+          const tokenTransfers = tx.token_transfers || [];
 
-              const transferMint = transfer.mint;
-              const sender = transfer.fromUserAccount;
-              const amount = parseFloat(transfer.tokenAmount);
-              const decimals = transfer.tokenDecimals || 6;
+          for (const transfer of tokenTransfers) {
+            // Check if transfer is to the bot's main wallet or ATA
+            const toAccount = transfer.destination;
+            const expectedBotATAStr = config.solana.sidTokenATA;
+            
+            let isTransferToBot = false;
+            if (toAccount === botWalletAddress || toAccount === expectedBotATAStr) {
+              isTransferToBot = true;
+            }
 
-              console.log('[getRecentDepositSender] Found token transfer TO BOT', {
-                sender,
-                recipient: transfer.toUserAccount,
-                mint: transferMint,
-                amount,
-                signature: tx.signature,
-              });
+            if (!isTransferToBot) continue;
 
-              // Check if this is the expected token or a wrong token
-              if (tokenMint) {
-                const tokenMintStr = tokenMint.toLowerCase();
-                const transferMintStr = transferMint.toLowerCase();
+            const sender = transfer.source;
+            const tokenMint = transfer.mint;
+            const amount = transfer.token_amount;
 
-                if (transferMintStr === tokenMintStr) {
-                  // Correct token
-                  deposits.push({
-                    sender,
-                    amount: amount.toString(),
-                    signature: tx.signature,
-                    slot: tx.slot || 0,
-                    tokenMint,
-                    wrongToken: null,
-                  });
-                } else {
-                  // Wrong token detected
-                  console.log('[getRecentDepositSender] Wrong token detected', {
-                    sender,
-                    expectedMint: tokenMint,
-                    receivedMint: transferMint,
-                    amount,
-                  });
-                  wrongTokenDeposits.push({
-                    sender,
-                    amount: amount.toString(),
-                    signature: tx.signature,
-                    slot: tx.slot || 0,
-                    tokenMint: transferMint,
-                    wrongToken: transferMint,
-                  });
-                }
-              } else {
-                // No specific token expected (shouldn't happen for token transfers)
+            console.log('[getRecentDepositSender] Found token transfer TO BOT', {
+              sender,
+              recipient: toAccount,
+              mint: tokenMint,
+              amount,
+              signature: tx.signature,
+            });
+
+            // Check if this is the expected token or wrong token
+            if (tokenMint) {
+              const tokenMintStr = tokenMint.toLowerCase();
+              const expectedMintStr = (expectedAmount_local || tokenMint).toLowerCase();
+
+              if (tokenMintStr === expectedMintStr || tokenMintStr === (tokenMint || '').toLowerCase()) {
+                // Correct token
                 deposits.push({
                   sender,
                   amount: amount.toString(),
@@ -394,11 +348,36 @@ class SolanaHandler {
                   tokenMint,
                   wrongToken: null,
                 });
+              } else {
+                // Wrong token detected
+                console.log('[getRecentDepositSender] Wrong token detected', {
+                  sender,
+                  expectedMint: tokenMint,
+                  receivedMint: tokenMint,
+                  amount,
+                });
+                wrongTokenDeposits.push({
+                  sender,
+                  amount: amount.toString(),
+                  signature: tx.signature,
+                  slot: tx.slot || 0,
+                  tokenMint,
+                  wrongToken: tokenMint,
+                });
               }
+            } else {
+              deposits.push({
+                sender,
+                amount: amount.toString(),
+                signature: tx.signature,
+                slot: tx.slot || 0,
+                tokenMint,
+                wrongToken: null,
+              });
             }
           }
         } catch (txErr) {
-          console.warn('[getRecentDepositSender] Error processing transaction:', txErr.message);
+          console.warn('[getRecentDepositSender] Error processing transaction:', tx.signature, txErr.message);
           continue;
         }
       }
@@ -482,30 +461,26 @@ class SolanaHandler {
     try {
       const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
 
-      console.log('[refundIncorrectTokens] Starting Solana token refund via Helius', {
+      console.log('[refundIncorrectTokens] Starting Solana token refund via Solscan API', {
         senderAddress,
         expectedTokenMint,
         botWalletAddress,
         flipCreatedAt: flipCreatedAtSeconds,
       });
 
-      // Construct Helius API request
-      const heliusApiKey = config.solana.heliusApiKey;
-      if (!heliusApiKey) {
-        console.error('[refundIncorrectTokens] Helius API key not configured');
-        return [];
-      }
-
-      const url = `https://api.helius.xyz/v0/addresses/${botWalletAddress}/transactions?api-key=${heliusApiKey}`;
+      // Use Solscan API to get transactions
+      const url = `https://api.solscan.io/v1/account/transactions?account=${botWalletAddress}&limit=50`;
       
       const response = await this.withExponentialBackoff(() => fetch(url));
       if (!response.ok) {
-        console.error('[refundIncorrectTokens] Helius API error:', response.status);
+        console.error('[refundIncorrectTokens] Solscan API error:', response.status);
         return [];
       }
 
-      const transactions = await response.json();
-      console.log('[refundIncorrectTokens] Helius API response', {
+      const data = await response.json();
+      const transactions = data.data || [];
+
+      console.log('[refundIncorrectTokens] Solscan API response', {
         transactionCount: transactions?.length || 0,
       });
 
@@ -522,27 +497,28 @@ class SolanaHandler {
           // Skip if transaction is failed
           if (tx.type === 'FAILED') continue;
 
+          // Skip if transaction failed
+          if (tx.status !== 'Success') continue;
+
           // Look for token transfers FROM the sender TO the bot of a wrong token
-          if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
-            for (const transfer of tx.tokenTransfers) {
-              // Check if sender matches
-              if (transfer.fromUserAccount !== senderAddress) {
-                continue;
-              }
-              
-              // For SPL tokens, check if transfer went to bot's ATA for that mint
-              // We only need to check ATA since SPL tokens never go to main wallet
-              let isTransferToBot = false;
-              
-              // Use pre-computed ATA from config (deterministic derivation of token mint + bot wallet)
-              const expectedBotATAStr = config.solana.sidTokenATA;
-              
-              // For SPL tokens (wrong token refunds): accept transfers to EITHER main wallet OR ATA
-              if (transfer.toUserAccount === expectedBotATAStr || transfer.toUserAccount === botWalletAddress) {
-                isTransferToBot = true;
-              }
-              
-              if (!isTransferToBot) {
+          const tokenTransfers = tx.token_transfers || [];
+          
+          for (const transfer of tokenTransfers) {
+            // Check if sender matches
+            if (transfer.source !== senderAddress) {
+              continue;
+            }
+            
+            // For SPL tokens, check if transfer went to bot's ATA or main wallet
+            let isTransferToBot = false;
+            const expectedBotATAStr = config.solana.sidTokenATA;
+            
+            // Accept transfers to EITHER main wallet OR ATA
+            if (transfer.destination === expectedBotATAStr || transfer.destination === botWalletAddress) {
+              isTransferToBot = true;
+            }
+            
+            if (!isTransferToBot) {
                 continue;
               }
 
@@ -556,7 +532,7 @@ class SolanaHandler {
                   wrongMint: transferMint,
                   expectedMint: expectedTokenMint,
                   sender: senderAddress,
-                  amount: transfer.tokenAmount,
+                  amount: transfer.token_amount,
                 });
 
                 try {

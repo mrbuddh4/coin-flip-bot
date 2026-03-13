@@ -1207,7 +1207,7 @@ async function initBot() {
           flip.wagerAmount,
           flip.tokenDecimals,
           4, // maxRetries
-          2000, // retryDelayMs
+          5000, // retryDelayMs - 5 second delay to account for Helius indexing lag
           depositWallet, // Use user's configured deposit wallet
           flip.createdAt // pass flip creation time to filter old deposits
         );
@@ -1733,7 +1733,7 @@ async function initBot() {
           flip.wagerAmount,
           flip.tokenDecimals,
           4, // maxRetries
-          2000, // retryDelayMs
+          5000, // retryDelayMs - 5 second delay to account for Helius indexing lag
           depositWallet, // Use user's configured deposit wallet
           flip.createdAt // pass flip creation time to filter old deposits
         );
