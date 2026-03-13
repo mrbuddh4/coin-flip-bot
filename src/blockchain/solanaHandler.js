@@ -455,174 +455,19 @@ class SolanaHandler {
   }
 
   /**
-   * Refund incorrect tokens on Solana using Helius API (for wrong token deposits)
+   * Refund incorrect tokens on Solana  
    */
   async refundIncorrectTokens(botWalletAddress, expectedTokenMint, senderAddress, flipCreatedAt = null) {
     try {
-      const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
-
-      console.log('[refundIncorrectTokens] Starting Solana token refund via Solscan API', {
+      console.log('[refundIncorrectTokens] Refund function temporarily disabled', {
         senderAddress,
         expectedTokenMint,
         botWalletAddress,
-        flipCreatedAt: flipCreatedAtSeconds,
       });
-
-      // Use Solscan API to get transactions
-      const url = `https://api.solscan.io/v1/account/transactions?account=${botWalletAddress}&limit=50`;
-      
-      const response = await this.withExponentialBackoff(() => fetch(url));
-      if (!response.ok) {
-        console.error('[refundIncorrectTokens] Solscan API error:', response.status);
-        return [];
-      }
-
-      const data = await response.json();
-      const transactions = data.data || [];
-
-      console.log('[refundIncorrectTokens] Solscan API response', {
-        transactionCount: transactions?.length || 0,
-      });
-
-      if (!transactions || transactions.length === 0) {
-        console.log('[refundIncorrectTokens] No transactions found');
-        return [];
-      }
-
-      let refundSigs = [];
-      const expectedMintStr = expectedTokenMint?.toLowerCase() || null;
-
-      for (const tx of transactions) {
-        try {
-          // Skip if transaction is failed
-          if (tx.type === 'FAILED') continue;
-
-          // Skip if transaction failed
-          if (tx.status !== 'Success') continue;
-
-          // Look for token transfers FROM the sender TO the bot of a wrong token
-          const tokenTransfers = tx.token_transfers || [];
-          
-          for (const transfer of tokenTransfers) {
-            // Check if sender matches
-            if (transfer.source !== senderAddress) {
-              continue;
-            }
-            
-            // For SPL tokens, check if transfer went to bot's ATA or main wallet
-            let isTransferToBot = false;
-            const expectedBotATAStr = config.solana.sidTokenATA;
-            
-            // Accept transfers to EITHER main wallet OR ATA
-            if (transfer.destination === expectedBotATAStr || transfer.destination === botWalletAddress) {
-              isTransferToBot = true;
-            }
-            
-            if (!isTransferToBot) {
-                continue;
-              }
-
-              const transferMint = transfer.mint;
-              const transferMintStr = transferMint.toLowerCase();
-
-              // Check if this is a wrong token transfer (mint doesn't match expected)
-              if (expectedMintStr && transferMintStr !== expectedMintStr) {
-                console.log('[refundIncorrectTokens] Found wrong token transfer, initiating refund', {
-                  signature: tx.signature,
-                  wrongMint: transferMint,
-                  expectedMint: expectedTokenMint,
-                  sender: senderAddress,
-                  amount: transfer.token_amount,
-                });
-
-                try {
-                  // Determine refund amount - bot's current balance of the wrong token
-                  const botPublicKey = new PublicKey(botWalletAddress);
-                  const transferMintPublicKey = new PublicKey(transferMint);
-                  const senderPublicKey = new PublicKey(senderAddress);
-
-                  // Get bot's ATA for the wrong token
-                  const botATA = await getAssociatedTokenAddress(
-                    transferMintPublicKey,
-                    botPublicKey
-                  );
-
-                  // Get the account balance from RPC to determine refund amount
-                  let refundAmount = BigInt(0);
-                  try {
-                    const accountInfo = await this.connection.getParsedAccountInfo(botATA);
-                    const balance = accountInfo.value?.data?.parsed?.info?.tokenAmount?.amount;
-                    if (balance) {
-                      refundAmount = BigInt(balance);
-                    }
-                  } catch (balanceErr) {
-                    console.warn('[refundIncorrectTokens] Could not get bot ATA balance, using transferred amount', { balanceErr: balanceErr.message });
-                    // Fall back to using the transfer amount
-                    refundAmount = BigInt(Math.floor(parseFloat(transfer.tokenAmount) * Math.pow(10, transfer.tokenDecimals || 6)));
-                  }
-
-                  if (refundAmount > 0n) {
-                    // Get sender's ATA for the wrong token
-                    const senderATA = await getAssociatedTokenAddress(
-                      transferMintPublicKey,
-                      senderPublicKey
-                    );
-
-                    const decimals = transfer.tokenDecimals || 6;
-
-                    console.log('[refundIncorrectTokens] Refunding wrong token', {
-                      amount: refundAmount.toString(),
-                      decimals,
-                      formattedAmount: Number(refundAmount) / Math.pow(10, decimals),
-                    });
-
-                    // Create transfer instruction to refund
-                    const transferInstruction = createTransferInstruction(
-                      botATA,
-                      senderATA,
-                      this.wallet.publicKey,
-                      refundAmount,
-                      []
-                    );
-
-                    // Create and send transaction
-                    const refundTx = new Transaction().add(transferInstruction);
-                    const refundSignature = await this.connection.sendTransaction(refundTx, [this.wallet], {
-                      skipPreflight: false,
-                      preflightCommitment: 'confirmed',
-                    });
-
-                    // Wait for confirmation
-                    await this.connection.confirmTransaction(refundSignature, 'confirmed');
-
-                    console.log('[refundIncorrectTokens] ✅ Refund successful', {
-                      transactionSignature: refundSignature,
-                      refundAmount: refundAmount.toString(),
-                    });
-
-                    refundSigs.push({
-                      txHash: refundSignature,
-                      amount: Number(refundAmount) / Math.pow(10, decimals),
-                      token: transferMint,
-                    });
-                  }
-                } catch (refundErr) {
-                  console.error('[refundIncorrectTokens] Error processing refund', {
-                    error: refundErr.message,
-                  });
-                }
-              }
-            }
-          }
-        } catch (txErr) {
-          console.warn('[refundIncorrectTokens] Error processing transaction:', txErr.message);
-          continue;
-        }
-      }
-
-      return refundSigs;
+      // TODO: Implement refunds via Solscan API
+      return [];
     } catch (error) {
-      console.error('[refundIncorrectTokens] Error refunding incorrect tokens on Solana:', error);
+      console.error('[refundIncorrectTokens] Error:', error);
       return [];
     }
   }
