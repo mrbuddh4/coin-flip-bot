@@ -109,21 +109,38 @@ class SolanaHandler {
       const mintAccount = await this.connection.getAccountInfo(mint);
       if (mintAccount && mintAccount.owner.equals(TOKEN_2022_PROGRAM_ID)) {
         tokenProgram = TOKEN_2022_PROGRAM_ID;
-        console.error('[transferToken] Detected Token-2022 mint:', tokenAddress);
+        console.error('[transferToken] ✅ Detected Token-2022 mint:', tokenAddress);
       } else {
-        console.error('[transferToken] Detected standard Token Program mint:', tokenAddress);
+        console.error('[transferToken] ✅ Detected standard Token Program mint:', tokenAddress);
       }
     } catch (error) {
-      console.error('[transferToken] Could not detect token program, defaulting to standard:', error.message);
+      console.error('[transferToken] ⚠️ Could not detect token program, defaulting to standard:', error.message);
     }
 
     try {
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, tokenProgram);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, tokenProgram);
 
-      console.error('[transferToken] From ATA:', fromATA.toBase58(), 'To ATA:', toATA.toBase58());
+      console.error('[transferToken] From ATA:', fromATA.toBase58());
+      console.error('[transferToken] To ATA:', toATA.toBase58());
 
       const transaction = new Transaction();
+
+      // Check if destination ATA exists, create if needed
+      try {
+        const toATAInfo = await getAccount(this.connection, toATA);
+        console.error('[transferToken] Destination ATA exists at:', toATA.toBase58());
+      } catch (error) {
+        console.error('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
+        const createATAInstruction = createAssociatedTokenAccountInstruction(
+          fromPublicKey,  // Payer
+          toATA,          // ATA to create
+          toPublicKey,    // Owner of ATA
+          mint,           // Token mint
+          tokenProgram    // Token program (Token-2022 or standard)
+        );
+        transaction.add(createATAInstruction);
+      }
 
       // Create transfer instruction
       const instruction = createTransferInstruction(
@@ -156,7 +173,7 @@ class SolanaHandler {
         status: 'success',
       };
     } catch (error) {
-      console.error('[transferToken] Transfer failed:', error.message);
+      console.error('[transferToken] ❌ Transfer failed:', error.message);
       throw error;
     }
   }
