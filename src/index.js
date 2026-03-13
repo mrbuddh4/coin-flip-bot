@@ -1423,10 +1423,14 @@ async function initBot() {
           logger.info('[deposit_confirmed] Detected challenger deposit sender', { flipId, sender: verification.depositSender });
         }
 
-        // Ensure accumulated deposit is set for overpayment check
-        // Check numeric value, not truthiness (DB stores as string)
-        if (parseFloat(flip.challengerAccumulatedDeposit || 0) < parseFloat(verification.amount || 0)) {
-          flip.challengerAccumulatedDeposit = parseFloat(verification.amount);
+        // Convert received amount from raw units to display units for comparison
+        const tokenDecimals = flip.tokenDecimals || 18;
+        const receivedAmountDisplay = parseFloat(verification.amount) / Math.pow(10, tokenDecimals);
+        const wagerAmountDisplay = parseFloat(flip.wagerAmount);
+
+        // Ensure accumulated deposit is set for overpayment check (store in display units for consistency)
+        if (parseFloat(flip.challengerAccumulatedDeposit || 0) < receivedAmountDisplay) {
+          flip.challengerAccumulatedDeposit = receivedAmountDisplay.toString();
           // CRITICAL: Also update wallet address when updating accumulated deposit
           // This ensures refund goes to the wallet that sent the current verified amount
           flip.challengerDepositWalletAddress = verification.depositSender;
@@ -1434,14 +1438,15 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Starting overpayment check', {
           flipId,
-          challengerAccumulatedDeposit: flip.challengerAccumulatedDeposit,
-          wagerAmount: flip.wagerAmount,
-          accumulatedVsWager: `${flip.challengerAccumulatedDeposit} vs ${flip.wagerAmount}`,
+          receivedRawAmount: verification.amount,
+          receivedDisplayAmount: receivedAmountDisplay,
+          wagerAmount: wagerAmountDisplay,
+          tokenDecimals,
         });
 
-        // If they sent more than the wager, refund the excess
-        const receivedAmount = parseFloat(flip.challengerAccumulatedDeposit || flip.wagerAmount);
-        const wagerAmount = parseFloat(flip.wagerAmount);
+        // If they sent more than the wager, refund the excess (both in display units)
+        const receivedAmount = parseFloat(flip.challengerAccumulatedDeposit || wagerAmountDisplay);
+        const wagerAmount = wagerAmountDisplay;
         let overpaymentDetected = false;
         
         if (receivedAmount > wagerAmount) {
@@ -1481,32 +1486,34 @@ async function initBot() {
               const blockchainManager = getBlockchainManager();
               const supportedTokens = config.supportedTokens;
               let tokenAddress = 'NATIVE';
-              let tokenDecimals = 18;
+              let refundDecimals = 18;
               
               for (const key in supportedTokens) {
                 if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
                   tokenAddress = supportedTokens[key].address || 'NATIVE';
-                  tokenDecimals = supportedTokens[key].decimals || 18;
+                  refundDecimals = supportedTokens[key].decimals || 18;
                   break;
                 }
               }
 
-              const excessStr = excessAmount.toFixed(tokenDecimals);
+              // Convert excess from display units to raw units for blockchain transaction
+              const excessRaw = (excessAmount * Math.pow(10, refundDecimals)).toFixed(0);
               logger.info('[deposit_confirmed] Sending refund', {
                 flipId,
                 network: flip.tokenNetwork,
                 tokenAddress,
                 recipient: flip.challengerDepositWalletAddress,
-                amount: excessStr,
-                decimals: tokenDecimals,
+                excessDisplay: excessAmount.toString(),
+                excessRaw,
+                decimals: refundDecimals,
               });
               
               await blockchainManager.sendWinnings(
                 flip.tokenNetwork,
                 tokenAddress,
                 flip.challengerDepositWalletAddress,
-                excessStr,
-                tokenDecimals
+                excessRaw,
+                refundDecimals
               );
               
               logger.info('[deposit_confirmed] Refunded excess deposit', { 
@@ -1889,22 +1896,27 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
 
-        // Ensure accumulated deposit is set for overpayment check
-        // Check numeric value, not truthiness (DB stores as string)
-        if (parseFloat(flip.creatorAccumulatedDeposit || 0) < parseFloat(verification.amount || 0)) {
-          flip.creatorAccumulatedDeposit = parseFloat(verification.amount);
+        // Convert received amount from raw units to display units for comparison
+        const creatorTokenDecimals = flip.tokenDecimals || 18;
+        const creatorReceivedAmountDisplay = parseFloat(verification.amount) / Math.pow(10, creatorTokenDecimals);
+        const creatorWagerAmountDisplay = parseFloat(flip.wagerAmount);
+
+        // Ensure accumulated deposit is set for overpayment check (store in display units for consistency)
+        if (parseFloat(flip.creatorAccumulatedDeposit || 0) < creatorReceivedAmountDisplay) {
+          flip.creatorAccumulatedDeposit = creatorReceivedAmountDisplay.toString();
         }
 
         logger.info('[creator_deposit_confirmed] Starting overpayment check', {
           flipId,
-          creatorAccumulatedDeposit: flip.creatorAccumulatedDeposit,
-          wagerAmount: flip.wagerAmount,
-          accumulatedVsWager: `${flip.creatorAccumulatedDeposit} vs ${flip.wagerAmount}`,
+          receivedRawAmount: verification.amount,
+          receivedDisplayAmount: creatorReceivedAmountDisplay,
+          wagerAmount: creatorWagerAmountDisplay,
+          tokenDecimals: creatorTokenDecimals,
         });
 
-        // Check if creator sent more than the wager (overpayment)
-        const creatorReceivedAmount = parseFloat(flip.creatorAccumulatedDeposit || flip.wagerAmount);
-        const creatorWagerAmount = parseFloat(flip.wagerAmount);
+        // Check if creator sent more than the wager (overpayment) - both in display units
+        const creatorReceivedAmount = parseFloat(flip.creatorAccumulatedDeposit || creatorWagerAmountDisplay);
+        const creatorWagerAmount = creatorWagerAmountDisplay;
         let creatorOverpaymentDetected = false;
         
         if (creatorReceivedAmount > creatorWagerAmount) {
@@ -1944,37 +1956,40 @@ async function initBot() {
               const blockchainManager = getBlockchainManager();
               const supportedTokens = config.supportedTokens;
               let tokenAddress = 'NATIVE';
-              let tokenDecimals = 18;
+              let refundDecimals = 18;
               
               for (const key in supportedTokens) {
                 if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
                   tokenAddress = supportedTokens[key].address || 'NATIVE';
-                  tokenDecimals = supportedTokens[key].decimals || 18;
+                  refundDecimals = supportedTokens[key].decimals || 18;
                   break;
                 }
               }
 
-              const excessStr = creatorExcessAmount.toFixed(tokenDecimals);
+              // Convert excess from display units to raw units for blockchain transaction
+              const excessRaw = (creatorExcessAmount * Math.pow(10, refundDecimals)).toFixed(0);
               logger.info('[creator_deposit_confirmed] Sending refund', {
                 flipId,
                 network: flip.tokenNetwork,
                 tokenAddress,
                 recipient: flip.creatorDepositWalletAddress,
-                amount: excessStr,
-                decimals: tokenDecimals,
+                excessDisplay: creatorExcessAmount.toString(),
+                excessRaw,
+                decimals: refundDecimals,
               });
               
               await blockchainManager.sendWinnings(
                 flip.tokenNetwork,
                 tokenAddress,
                 flip.creatorDepositWalletAddress,
-                excessStr,
-                tokenDecimals
+                excessRaw,
+                refundDecimals
               );
               
               logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
                 flipId, 
-                excess: excessStr,
+                excessDisplay: creatorExcessAmount.toString(),
+                excessRaw,
                 recipient: flip.creatorDepositWalletAddress
               });
             }
