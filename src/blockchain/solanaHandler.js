@@ -107,12 +107,16 @@ class SolanaHandler {
         const mintAccountInfo = await this.connection.getAccountInfo(mint);
         if (mintAccountInfo && mintAccountInfo.owner) {
           const ownerStr = mintAccountInfo.owner.toBase58();
-          console.log('[transferToken] Mint owner:', ownerStr);
+          console.log('[transferToken] Mint owner detected:', ownerStr);
           
           if (ownerStr === 'TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A') {
             tokenProgramId = TOKEN_2022_PROGRAM_ID;
-            console.log('[transferToken] ✅ Detected Token-2022 token');
+            console.log('[transferToken] ✅ Detected Token-2022 token, using program:', tokenProgramId.toBase58());
+          } else {
+            console.log('[transferToken] Using standard Token Program');
           }
+        } else {
+          console.log('[transferToken] Could not get mint account info');
         }
       } catch (err) {
         console.warn('[transferToken] Could not fetch mint account info:', err.message);
