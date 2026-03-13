@@ -98,84 +98,123 @@ class SolanaHandler {
       const mint = new PublicKey(tokenAddress);
       const toPublicKey = new PublicKey(toAddress);
 
-      // Token-2022 program ID
+      // Try Token-2022 first, fall back to standard Token Program if it fails
       const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
-      
-      // Detect token program by fetching mint owner
-      let tokenProgramId = TOKEN_PROGRAM_ID;
-      console.error('[transferToken] STARTING TOKEN DETECTION for mint:', tokenAddress);
+      let tokenProgramId = TOKEN_2022_PROGRAM_ID;
+      console.error('[transferToken] Attempting Token-2022 transfer for mint:', tokenAddress);
+
       try {
-        const mintInfo = await this.connection.getAccountInfo(mint);
-        console.error('[transferToken] mintInfo retrieved, owner:', mintInfo?.owner?.toBase58());
-        if (mintInfo) {
-          const owner = mintInfo.owner.toBase58();
-          console.error('[transferToken] Mint owner is:', owner);
-          if (owner === 'TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A') {
-            tokenProgramId = TOKEN_2022_PROGRAM_ID;
-            console.error('[transferToken] ✅ Token-2022 DETECTED, using:', TOKEN_2022_PROGRAM_ID.toBase58());
-          } else {
-            console.error('[transferToken] ✅ Standard Token Program detected, using:', TOKEN_PROGRAM_ID.toBase58());
-          }
-        } else {
-          console.error('[transferToken] mintInfo is null!');
+        const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_2022_PROGRAM_ID);
+        const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_2022_PROGRAM_ID);
+
+        const transaction = new Transaction();
+
+        // Check if destination ATA exists - CREATE IT if needed
+        try {
+          await getAccount(this.connection, toATA, 'confirmed', TOKEN_2022_PROGRAM_ID);
+        } catch (error) {
+          // ATA doesn't exist - create it first
+          console.error('[transferToken] Creating Token-2022 ATA:', toATA.toBase58());
+          const createATAInstruction = createAssociatedTokenAccountInstruction(
+            fromPublicKey,  // Payer
+            toATA,          // ATA to create
+            toPublicKey,    // Owner of ATA
+            mint,           // Token mint
+            TOKEN_2022_PROGRAM_ID  // Token-2022 program
+          );
+          transaction.add(createATAInstruction);
         }
-      } catch (err) {
-        console.error('[transferToken] ERROR during detection:', err.message, err.stack);
-      }
-      console.error('[transferToken] USING tokenProgramId:', tokenProgramId.toBase58());
 
-      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, tokenProgramId);
-      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, tokenProgramId);
+        // Ensure amount is a number
+        const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
+        const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
 
-      const transaction = new Transaction();
-
-      // Check if destination ATA exists - CREATE IT if needed
-      try {
-        await getAccount(this.connection, toATA, 'confirmed', tokenProgramId);
-      } catch (error) {
-        // ATA doesn't exist - create it first
-        console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,  // Payer (bot will pay for ATA creation)
-          toATA,          // ATA to create
-          toPublicKey,    // Owner of ATA
-          mint,           // Token mint
-          tokenProgramId  // Token program (standard or Token-2022)
+        const instruction = createTransferInstruction(
+          fromATA,
+          toATA,
+          fromPublicKey,
+          amountInTokens,
+          [],
+          TOKEN_2022_PROGRAM_ID
         );
-        transaction.add(createATAInstruction);
+
+        transaction.add(instruction);
+
+        const { blockhash } = await this.connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = fromPublicKey;
+
+        transaction.sign(fromKeypair);
+
+        const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
+        await this.connection.confirmTransaction(signature, 'confirmed');
+
+        console.error('[transferToken] ✅ Token-2022 transfer succeeded');
+
+        return {
+          txHash: signature,
+          from: fromPublicKey.toBase58(),
+          to: toAddress,
+          status: 'success',
+        };
+      } catch (token2022Error) {
+        console.error('[transferToken] Token-2022 failed, trying standard Token Program:', token2022Error.message);
+        
+        // Fall back to standard Token Program
+        const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
+        const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
+
+        const transaction = new Transaction();
+
+        // Check if destination ATA exists - CREATE IT if needed
+        try {
+          await getAccount(this.connection, toATA, 'confirmed', TOKEN_PROGRAM_ID);
+        } catch (error) {
+          // ATA doesn't exist - create it first
+          console.error('[transferToken] Creating standard Token Program ATA:', toATA.toBase58());
+          const createATAInstruction = createAssociatedTokenAccountInstruction(
+            fromPublicKey,  // Payer
+            toATA,          // ATA to create
+            toPublicKey,    // Owner of ATA
+            mint,           // Token mint
+            TOKEN_PROGRAM_ID  // Standard Token Program
+          );
+          transaction.add(createATAInstruction);
+        }
+
+        // Ensure amount is a number
+        const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
+        const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
+
+        const instruction = createTransferInstruction(
+          fromATA,
+          toATA,
+          fromPublicKey,
+          amountInTokens,
+          [],
+          TOKEN_PROGRAM_ID
+        );
+
+        transaction.add(instruction);
+
+        const { blockhash } = await this.connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = fromPublicKey;
+
+        transaction.sign(fromKeypair);
+
+        const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
+        await this.connection.confirmTransaction(signature, 'confirmed');
+
+        console.error('[transferToken] ✅ Standard Token Program transfer succeeded');
+
+        return {
+          txHash: signature,
+          from: fromPublicKey.toBase58(),
+          to: toAddress,
+          status: 'success',
+        };
       }
-
-      // Ensure amount is a number
-      const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
-      const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
-
-      const instruction = createTransferInstruction(
-        fromATA,
-        toATA,
-        fromPublicKey,
-        amountInTokens,
-        [],
-        tokenProgramId
-      );
-
-      transaction.add(instruction);
-
-      const { blockhash } = await this.connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = fromPublicKey;
-
-      transaction.sign(fromKeypair);
-
-      const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
-      await this.connection.confirmTransaction(signature, 'confirmed');
-
-      return {
-        txHash: signature,
-        from: fromPublicKey.toBase58(),
-        to: toAddress,
-        status: 'success',
-      };
-    } catch (error) {
       console.error('Error transferring Solana token:', error);
       throw error;
     }
