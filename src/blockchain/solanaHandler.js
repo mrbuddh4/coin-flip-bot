@@ -291,6 +291,11 @@ class SolanaHandler {
       // Use RPC to get recent signatures from the SENDER (not bot) - fetch up to 2 to reduce rate limiting.
       // Limit to 2 to aggressively avoid hitting RPC rate limits on high-volume verification
       const senderPublicKey = new PublicKey(knownSender);
+      
+      // Add 3s delay BEFORE attempting RPC calls to avoid immediate rate limits
+      console.log('[getRecentDepositSender] Waiting 3s before querying sender signatures...');
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
       const signatures = await this.withExponentialBackoff(() =>
         this.connection.getSignaturesForAddress(senderPublicKey, { limit: 2 })
       );
@@ -311,11 +316,11 @@ class SolanaHandler {
         try {
           // Add aggressive delay BEFORE each fetch to avoid rate limiting
           if (i === 0) {
-            console.log(`[getRecentDepositSender] Waiting 2s before fetching tx ${i + 1}/${signatures.length}...`);
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Initial 2s delay
-          } else {
             console.log(`[getRecentDepositSender] Waiting 3s before fetching tx ${i + 1}/${signatures.length}...`);
-            await new Promise(resolve => setTimeout(resolve, 3000)); // 3s between subsequent calls
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Initial 3s delay
+          } else {
+            console.log(`[getRecentDepositSender] Waiting 5s before fetching tx ${i + 1}/${signatures.length}...`);
+            await new Promise(resolve => setTimeout(resolve, 5000)); // 5s between subsequent calls
           }
 
           console.log(`[getRecentDepositSender] Fetching tx ${i + 1}/${signatures.length}: ${signatures[i].signature.substring(0, 20)}...`);
@@ -401,7 +406,8 @@ class SolanaHandler {
             if (!isToBot) {
               // For ATA accounts, accept any valid Solana base58 address that isn't the sender
               // This allows us to receive SPL tokens (correct or incorrect) to bot ATAs
-              const isValidSolanaAddress = accountStr.match(/^[1-9A-HJ-NP-Z]{43,44}$/); // Solana base58 format
+              // Solana base58 uses: [1-9A-HJ-NP-Za-km-z] (excludes 0, O, I, l to avoid confusion)
+              const isValidSolanaAddress = accountStr.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/); // Solana base58 format with lowercase
               const isSenderAccount = accountStr === knownSender || accountStr === botWalletAddress;
               
               if (!isValidSolanaAddress || isSenderAccount) {
