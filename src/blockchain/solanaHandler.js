@@ -103,17 +103,22 @@ class SolanaHandler {
         feePayer: fromPublicKey,
       });
 
-      // The idempotent instruction handles ATA creation safely - it's a no-op if ATA already exists
-      console.log('[transferToken] Ensuring destination ATA exists:', toATA.toBase58());
-      const createATAInstruction = createAssociatedTokenAccountIdempotentInstruction(
-        fromPublicKey,              // Payer
-        toATA,                      // Associated token account address
-        toPublicKey,                // Owner of the associated token account
-        mint,                       // Mint of the token
-        TOKEN_PROGRAM_ID,           // Token Program ID
-        ASSOCIATED_TOKEN_PROGRAM_ID // Associated Token Program ID
-      );
-      transaction.add(createATAInstruction);
+      // Check if destination ATA exists - CREATE IT if needed (same pattern as working refundIncorrectTokens)
+      try {
+        await getAccount(this.connection, toATA);
+      } catch (error) {
+        // ATA doesn't exist - create it first
+        console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
+        const createATAInstruction = createAssociatedTokenAccountInstruction(
+          fromPublicKey,              // Payer (sender pays for ATA creation)
+          toATA,                      // Associated token account address
+          toPublicKey,                // Owner of the associated token account
+          mint,                       // Mint of the token
+          TOKEN_PROGRAM_ID,           // Token Program ID
+          ASSOCIATED_TOKEN_PROGRAM_ID // Associated Token Program ID
+        );
+        transaction.add(createATAInstruction);
+      }
 
       const amountInTokens = Math.floor(amount * Math.pow(10, decimals));
 
