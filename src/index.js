@@ -1546,22 +1546,29 @@ async function initBot() {
               }
 
               // Validate token address before attempting refund
+              // Only refund if we have a recognized token with known on-chain validity
+              const isRecognizedToken = tokenAddress === 'NATIVE' || (tokenAddress && tokenAddress in KNOWN_TOKENS);
               if (!isValidMintAddress(tokenAddress)) {
-                logger.warn('[deposit_confirmed] Skipping excess refund - invalid token address', { 
+                logger.warn('[deposit_confirmed] Skipping excess refund - invalid token address format', { 
                   flipId, 
                   tokenAddress,
                   excess: excessAmount.toString()
                 });
+              } else if (!isRecognizedToken) {
+                logger.warn('[deposit_confirmed] Skipping excess refund - unrecognized token (may be invalid on-chain)', { 
+                  flipId, 
+                  tokenAddress,
+                  tokenSymbol: flip.tokenSymbol,
+                  excess: excessAmount.toString()
+                });
               } else {
-                // Convert excess from display units to raw units for blockchain transaction
-                const excessRaw = (excessAmount * Math.pow(10, refundDecimals)).toFixed(0);
+                // Pass display units - transferToken will convert to raw units
                 logger.info('[deposit_confirmed] Sending refund', {
                   flipId,
                   network: flip.tokenNetwork,
                   tokenAddress,
                   recipient: flip.challengerDepositWalletAddress,
                   excessDisplay: excessAmount.toString(),
-                  excessRaw,
                   decimals: refundDecimals,
                 });
                 
@@ -1569,7 +1576,7 @@ async function initBot() {
                   flip.tokenNetwork,
                   tokenAddress,
                   flip.challengerDepositWalletAddress,
-                  excessRaw,
+                  excessAmount,
                   refundDecimals
                 );
                 
@@ -2048,10 +2055,19 @@ async function initBot() {
               }
 
               // Validate token address before attempting refund
+              // Only refund if we have a recognized token with known on-chain validity
+              const isRecognizedToken = tokenAddress === 'NATIVE' || (tokenAddress && tokenAddress in KNOWN_TOKENS);
               if (!isValidMintAddress(tokenAddress)) {
-                logger.warn('[creator_deposit_confirmed] Skipping excess refund - invalid token address', { 
+                logger.warn('[creator_deposit_confirmed] Skipping excess refund - invalid token address format', { 
                   flipId, 
                   tokenAddress,
+                  excessDisplay: creatorExcessAmount.toString()
+                });
+              } else if (!isRecognizedToken) {
+                logger.warn('[creator_deposit_confirmed] Skipping excess refund - unrecognized token (may be invalid on-chain)', { 
+                  flipId, 
+                  tokenAddress,
+                  tokenSymbol: flip.tokenSymbol,
                   excessDisplay: creatorExcessAmount.toString()
                 });
               } else {
