@@ -99,11 +99,8 @@ class SolanaHandler {
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey);
 
-      const { blockhash } = await this.connection.getLatestBlockhash();
-      const transaction = new Transaction({
-        recentBlockhash: blockhash,
-        feePayer: fromPublicKey,
-      });
+      // Create empty transaction FIRST (like working refundIncorrectTokens)
+      const transaction = new Transaction();
 
       // Check if destination ATA exists - CREATE IT if needed (same pattern as working refundIncorrectTokens)
       console.log('[transferToken] Checking if destination ATA exists:', toATA.toBase58());
@@ -140,6 +137,10 @@ class SolanaHandler {
       );
 
       transaction.add(instruction);
+
+      // Set feePayer and recentBlockhash AFTER adding instructions (like working refundIncorrectTokens)
+      transaction.feePayer = fromPublicKey;
+      transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
 
       transaction.sign(fromKeypair);
 
