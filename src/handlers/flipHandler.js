@@ -778,7 +778,13 @@ class FlipHandler {
 
       // Get bot wallet for deposit
       const blockchainManager = getBlockchainManager();
-      const botWalletAddress = blockchainManager.getBotWalletAddress(token.network);
+      let botWalletAddress = blockchainManager.getBotWalletAddress(token.network);
+      
+      // For Solana SPL tokens (SID), use the pre-computed ATA instead of main wallet
+      if (token.network === 'Solana' && token.address) {
+        const config = require('../config');
+        botWalletAddress = config.solana.sidTokenATA;
+      }
 
       // Send deposit instructions in DM
       await ctx.reply(
@@ -786,7 +792,7 @@ class FlipHandler {
         `<b>Deposit Instructions:</b>\n` +
         `Send <b>${wagerAmount} ${token.symbol}</b> to:\n` +
         `<code>${botWalletAddress}</code>\n\n` +
-        `Once sent, reply with "confirmed"`,
+        `The bot will automatically verify your deposit.`,
         { parse_mode: 'HTML' }
       );
 

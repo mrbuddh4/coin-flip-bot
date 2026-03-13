@@ -2717,11 +2717,10 @@ const handlers = {
       `1. Start a flip with /start in a group\n` +
       `2. Specify your wager in DM\n` +
       `3. Send tokens to the provided address\n` +
-      `4. Respond with "confirmed"\n` +
-      `5. Wait for a challenger\n` +
-      `6. Challenger follows same process\n` +
-      `7. Bot flips a coin\n` +
-      `8. Winner claims their prizes\n\n` +
+      `4. Wait for a challenger\n` +
+      `5. Challenger follows same process\n` +
+      `6. Bot flips a coin\n` +
+      `7. Winner claims their prizes\n\n` +
       `<b>Rules:</b>\n` +
       `⏱️ 3 minutes to confirm each step\n` +
       `🚫 Only one active flip per group\n` +
@@ -2793,12 +2792,8 @@ const handlers = {
           logger.info('Processing wager amount for INITIATING session');
           await FlipHandler.processWagerAmount(ctx);
         } else if (activeSession.currentStep === 'AWAITING_DEPOSIT') {
-          if (message === 'confirmed') {
-            logger.info('Confirming creator deposit for INITIATING session');
-            await FlipHandler.confirmCreatorDeposit(ctx);
-          } else {
-            await ctx.reply('Please reply with "confirmed" when you\'ve sent the tokens.');
-          }
+          logger.warn('INITIATING session AWAITING_DEPOSIT: user should click button, not send text message');
+          await ctx.reply('⬆️ Please click the button above when you\'ve sent the tokens.');
         } else {
           logger.warn('INITIATING session but unexpected currentStep', { currentStep: activeSession.currentStep });
         }
@@ -2808,12 +2803,8 @@ const handlers = {
           await FlipHandler.processDMWagerAmount(ctx, activeSession);
         }
       } else if (activeSession.sessionType === 'CONFIRMING_DEPOSIT') {
-        if (message === 'confirmed') {
-          logger.info('Confirming challenger deposit');
-          await handleChallengerDepositConfirm(ctx);
-        } else {
-          await ctx.reply('Please reply with "confirmed" when you\'ve sent the tokens.');
-        }
+        logger.warn('CONFIRMING_DEPOSIT session: user should click button, not send text message');
+        await ctx.reply('⬆️ Please click the button above when you\'ve sent the tokens.');
       } else if (activeSession.sessionType === 'CLAIMING_WINNINGS') {
         logger.info('Processing payout address');
         await ExecutionHandler.processPayoutAddress(ctx);
