@@ -126,23 +126,7 @@ class SolanaHandler {
 
       const transaction = new Transaction();
 
-      // Check if destination ATA exists, create if needed
-      try {
-        const toATAInfo = await getAccount(this.connection, toATA);
-        console.error('[transferToken] Destination ATA exists at:', toATA.toBase58());
-      } catch (error) {
-        console.error('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,  // Payer
-          toATA,          // ATA to create
-          toPublicKey,    // Owner of ATA
-          mint,           // Token mint
-          tokenProgram    // Token program (Token-2022 or standard)
-        );
-        transaction.add(createATAInstruction);
-      }
-
-      // Create transfer instruction
+      // Create transfer instruction directly (let it fail with specific error if ATA doesn't exist)
       const instruction = createTransferInstruction(
         fromATA,
         toATA,
