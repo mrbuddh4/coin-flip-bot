@@ -119,9 +119,7 @@ class SolanaHandler {
           fromPublicKey,              // Payer (sender pays for ATA creation)
           toATA,                      // Associated token account address
           toPublicKey,                // Owner of the associated token account
-          mint,                       // Mint of the token
-          TOKEN_PROGRAM_ID,           // Token Program ID
-          ASSOCIATED_TOKEN_PROGRAM_ID // Associated Token Program ID
+          mint                        // Mint of the token
         );
         transaction.add(createATAInstruction);
       }
