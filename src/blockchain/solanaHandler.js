@@ -300,10 +300,10 @@ class SolanaHandler {
       const transactions = [];
       for (let i = 0; i < signatures.length; i++) {
         try {
-          // Add long delay before each fetch to avoid rate limiting
+          // Add small delay before each fetch to avoid rate limiting
           if (i > 0) {
-            console.log(`[getRecentDepositSender] Waiting 5s before fetching tx ${i + 1}/${signatures.length}...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            console.log(`[getRecentDepositSender] Waiting 1s before fetching tx ${i + 1}/${signatures.length}...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
           }
 
           console.log(`[getRecentDepositSender] Fetching tx ${i + 1}/${signatures.length}: ${signatures[i].signature.substring(0, 20)}...`);
