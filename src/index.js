@@ -1557,15 +1557,13 @@ async function initBot() {
                 }
               }
 
-              // Convert excess from display units to raw units for blockchain transaction
-              const excessRaw = (excessAmount * Math.pow(10, refundDecimals)).toFixed(0);
+              // Use display units directly (like timeout refund does) - NOT raw units
               logger.info('[deposit_confirmed] Sending refund', {
                 flipId,
                 network: flip.tokenNetwork,
                 tokenAddress,
                 recipient: flip.challengerDepositWalletAddress,
                 excessDisplay: excessAmount.toString(),
-                excessRaw,
                 decimals: refundDecimals,
               });
               
@@ -1573,7 +1571,7 @@ async function initBot() {
                 flip.tokenNetwork,
                 tokenAddress,
                 flip.challengerDepositWalletAddress,
-                excessRaw,
+                excessAmount,
                 refundDecimals
               );
               
@@ -2057,35 +2055,41 @@ async function initBot() {
                 }
               }
 
-              // Convert excess from display units to raw units for blockchain transaction
-              const excessRaw = (creatorExcessAmount * Math.pow(10, refundDecimals)).toFixed(0);
+              // Use display units directly (like timeout refund does) - NOT raw units
               logger.info('[creator_deposit_confirmed] Sending refund', {
                 flipId,
                 network: flip.tokenNetwork,
                 tokenAddress,
                 recipient: flip.creatorDepositWalletAddress,
                 excessDisplay: creatorExcessAmount.toString(),
-                excessRaw,
                 decimals: refundDecimals,
               });
               
-              await blockchainManager.sendWinnings(
-                flip.tokenNetwork,
-                tokenAddress,
-                flip.creatorDepositWalletAddress,
-                excessRaw,
-                refundDecimals
-              );
-              
-              logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
-                flipId, 
-                excessDisplay: creatorExcessAmount.toString(),
-                excessRaw,
-                recipient: flip.creatorDepositWalletAddress
-              });
+              try {
+                await blockchainManager.sendWinnings(
+                  flip.tokenNetwork,
+                  tokenAddress,
+                  flip.creatorDepositWalletAddress,
+                  creatorExcessAmount,
+                  refundDecimals
+                );
+                
+                logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
+                  flipId, 
+                  excessDisplay: creatorExcessAmount.toString(),
+                  recipient: flip.creatorDepositWalletAddress
+                });
+              } catch (refundErr) {
+                logger.error('[creator_deposit_confirmed] Refund transaction failed', {
+                  flipId,
+                  error: refundErr.message,
+                  stack: refundErr.stack
+                });
+                // Continue - don't fail the deposit confirmation if refund fails
+              }
             }
           } catch (excessErr) {
-            logger.error('[creator_deposit_confirmed] Failed to refund excess deposit', { flipId, error: excessErr.message });
+            logger.error('[creator_deposit_confirmed] Failed to refund excess deposit', { flipId, error: excessErr.message, stack: excessErr.stack });
           }
         }
 
