@@ -262,39 +262,45 @@ class SolanaHandler {
   }
 
   /**
-   * Find the sender of a recent incoming transaction to the bot wallet using Solscan API
+   * Find the sender of a recent incoming transaction to the bot wallet using RPC
    */
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null, knownSender = null, flipCreatedAt = null) {
     try {
-      const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
-
-      console.log('[getRecentDepositSender] Searching for Solana deposits via Solscan API', {
+      console.log('[getRecentDepositSender] Searching for Solana deposits via RPC', {
         botWallet: botWalletAddress,
         tokenMint,
         expectedAmount,
         knownSender,
-        flipCreatedAt,
       });
 
-      // Use Solscan API to get transactions (better indexing than Helius)
-      const url = `https://api.solscan.io/v1/account/transactions?account=${botWalletAddress}&limit=50`;
-      
-      const response = await this.withExponentialBackoff(() => fetch(url));
-      if (!response.ok) {
-        console.error('[getRecentDepositSender] Solscan API error:', response.status);
+      // Use RPC to get recent signatures
+      const botPublicKey = new PublicKey(botWalletAddress);
+      const signatures = await this.withExponentialBackoff(() =>
+        this.connection.getSignaturesForAddress(botPublicKey, { limit: 50 })
+      );
+
+      console.log('[getRecentDepositSender] RPC response', {
+        transactionCount: signatures?.length || 0,
+      });
+
+      if (!signatures || signatures.length === 0) {
+        console.log('[getRecentDepositSender] No transactions found');
         return null;
       }
 
-      const data = await response.json();
-      const transactions = data.data || [];
-
-      console.log('[getRecentDepositSender] Solscan API response', {
-        transactionCount: transactions?.length || 0,
-      });
-
-      if (!transactions || transactions.length === 0) {
-        console.log('[getRecentDepositSender] No transactions found');
-        return null;
+      // Fetch full transaction details
+      const transactions = [];
+      for (const sig of signatures) {
+        try {
+          const tx = await this.withExponentialBackoff(() =>
+            this.connection.getTransaction(sig.signature, { maxSupportedTransactionVersion: 0 })
+          );
+          if (tx && !tx.meta?.err) {
+            transactions.push({ ...tx, signature: sig.signature, slot: sig.slot });
+          }
+        } catch (err) {
+          // Skip transactions that can't be fetched
+        }
       }
 
       // Collect deposits and wrong tokens
@@ -303,72 +309,65 @@ class SolanaHandler {
 
       for (const tx of transactions) {
         try {
-          // Skip if transaction failed
-          if (tx.status !== 'Success') continue;
+          // Parse token transfers from metadata
+          const postBalances = tx.meta?.postTokenBalances || [];
+          const preBalances = tx.meta?.preTokenBalances || [];
 
-          // Solscan API provides token transfer info directly
-          const tokenTransfers = tx.token_transfers || [];
+          for (const post of postBalances) {
+            const pre = preBalances.find(p => p.accountIndex === post.accountIndex);
+            if (!pre) continue;
 
-          for (const transfer of tokenTransfers) {
-            // Check if transfer is to the bot's main wallet or ATA
-            const toAccount = transfer.destination;
+            const postAmount = parseFloat(post.uiTokenAmount?.amount || 0);
+            const preAmount = parseFloat(pre.uiTokenAmount?.amount || 0);
+            const tokenReceived = postAmount - preAmount;
+
+            // Skip if no tokens received
+            if (tokenReceived <= 0) continue;
+
+            // Check if this is to bot's wallet or ATA
+            const accountKey = tx.transaction.message.staticAccountKeys[post.accountIndex];
+            if (!accountKey) continue;
+
+            const accountStr = accountKey.toBase58();
             const expectedBotATAStr = config.solana.sidTokenATA;
             
-            let isTransferToBot = false;
-            if (toAccount === botWalletAddress || toAccount === expectedBotATAStr) {
-              isTransferToBot = true;
-            }
+            const isToBot = (accountStr === botWalletAddress || accountStr === expectedBotATAStr);
+            if (!isToBot) continue;
 
-            if (!isTransferToBot) continue;
-
-            const sender = transfer.source;
-            const tokenMint = transfer.mint;
-            const amount = transfer.token_amount;
+            const transferMint = post.mint;
 
             console.log('[getRecentDepositSender] Found token transfer TO BOT', {
-              sender,
-              recipient: toAccount,
-              mint: tokenMint,
-              amount,
+              recipient: accountStr,
+              mint: transferMint,
+              amount: tokenReceived,
               signature: tx.signature,
             });
 
-            // Check if this is the expected token or wrong token
+            // Check if expected token
             if (tokenMint) {
-              const tokenMintStr = tokenMint.toLowerCase();
-              const expectedMintStr = (expectedAmount_local || tokenMint).toLowerCase();
-
-              if (tokenMintStr === expectedMintStr || tokenMintStr === (tokenMint || '').toLowerCase()) {
-                // Correct token
+              if (transferMint.toLowerCase() === tokenMint.toLowerCase()) {
                 deposits.push({
-                  sender,
-                  amount: amount.toString(),
+                  sender: knownSender || 'unknown',
+                  amount: tokenReceived.toString(),
                   signature: tx.signature,
                   slot: tx.slot || 0,
                   tokenMint,
                   wrongToken: null,
                 });
               } else {
-                // Wrong token detected
-                console.log('[getRecentDepositSender] Wrong token detected', {
-                  sender,
-                  expectedMint: tokenMint,
-                  receivedMint: tokenMint,
-                  amount,
-                });
                 wrongTokenDeposits.push({
-                  sender,
-                  amount: amount.toString(),
+                  sender: knownSender || 'unknown',
+                  amount: tokenReceived.toString(),
                   signature: tx.signature,
                   slot: tx.slot || 0,
-                  tokenMint,
-                  wrongToken: tokenMint,
+                  tokenMint: transferMint,
+                  wrongToken: transferMint,
                 });
               }
             } else {
               deposits.push({
-                sender,
-                amount: amount.toString(),
+                sender: knownSender || 'unknown',
+                amount: tokenReceived.toString(),
                 signature: tx.signature,
                 slot: tx.slot || 0,
                 tokenMint,
@@ -377,80 +376,28 @@ class SolanaHandler {
             }
           }
         } catch (txErr) {
-          console.warn('[getRecentDepositSender] Error processing transaction:', tx.signature, txErr.message);
+          console.warn('[getRecentDepositSender] Error processing transaction:', txErr.message);
           continue;
         }
       }
 
-      // Process collected deposits
-      const wrongTokensFound = wrongTokenDeposits.filter(d => d.sender === knownSender || !knownSender);
-
-      if (wrongTokensFound.length > 0 && deposits.length === 0) {
-        // Only wrong tokens detected, mark as wrong token
-        console.log('[getRecentDepositSender] Wrong token deposits detected (no correct token found)', {
-          count: wrongTokensFound.length,
-        });
-
-        const mostRecentWrong = wrongTokensFound[0];
-        return {
-          sender: mostRecentWrong.sender,
-          amount: mostRecentWrong.amount,
-          signature: mostRecentWrong.signature,
-          slot: mostRecentWrong.slot,
-          wrongToken: mostRecentWrong.wrongToken,
-        };
+      if (deposits.length > 0) {
+        console.log('[getRecentDepositSender] Found matching deposits:', deposits.length);
+        return deposits[0];
       }
 
-      if (deposits.length === 0) {
-        console.warn('[getRecentDepositSender] No deposits found');
-        return null;
+      if (wrongTokenDeposits.length > 0) {
+        console.log('[getRecentDepositSender] Found wrong token deposits:', wrongTokenDeposits.length);
+        // Store wrong token deposits for refund
+        this.wrongTokenDeposits = wrongTokenDeposits;
+        throw new Error(`Wrong token received. Deposit in ${wrongTokenDeposits[0].wrongToken} instead of ${tokenMint}`);
       }
 
-      if (knownSender) {
-        // If a known sender is provided, accumulate ALL deposits from that sender
-        const fromSender = deposits.filter(d => d.sender === knownSender);
-
-        if (fromSender.length === 0) {
-          console.warn('[getRecentDepositSender] No deposits found from known sender', { knownSender });
-          return null;
-        }
-
-        const totalAmount = fromSender.reduce((sum, d) => parseFloat(d.amount) + sum, 0);
-
-        console.log('[getRecentDepositSender] Accumulated deposits from known sender (Solana)', {
-          sender: knownSender,
-          depositCount: fromSender.length,
-          totalAmount,
-        });
-
-        return {
-          sender: knownSender,
-          amount: totalAmount.toString(),
-          signature: fromSender[0].signature,
-          slot: fromSender[0].slot,
-          wrongToken: null,
-        };
-      } else {
-        // If no known sender, just return the most recent deposit
-        const mostRecent = deposits[0];
-
-        console.log('[getRecentDepositSender] Found recent deposit (Solana)', {
-          sender: mostRecent.sender,
-          amount: mostRecent.amount,
-          signature: mostRecent.signature,
-        });
-
-        return {
-          sender: mostRecent.sender,
-          amount: mostRecent.amount,
-          signature: mostRecent.signature,
-          slot: mostRecent.slot,
-          wrongToken: null,
-        };
-      }
-    } catch (error) {
-      console.error('Error getting recent Solana deposit sender:', error);
+      console.log('[getRecentDepositSender] No deposits found');
       return null;
+    } catch (error) {
+      console.error('[getRecentDepositSender] Error:', error);
+      throw error;
     }
   }
 
