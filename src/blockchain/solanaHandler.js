@@ -395,10 +395,22 @@ class SolanaHandler {
             
             console.log(`[getRecentDepositSender] Token balance change: account=${accountStr}, pre=${preAmount}, post=${postAmount}, change=${tokenReceived}, mint=${post.mint}`);
 
+            // Check if transfer is to bot (main wallet or any token ATA owned by bot)
             const isToBot = (accountStr === botWalletAddress || accountStr === expectedBotATAStr || accountStr === correctBotATA);
+            
             if (!isToBot) {
-              console.log(`[getRecentDepositSender] Transfer NOT to bot. Bot wallet=${botWalletAddress}, Bot ATA=${expectedBotATAStr}, Correct ATA=${correctBotATA}`);
-              continue;
+              // For ATA accounts, we can't reliably check ownership from transaction data alone
+              // So we'll accept transfers to ATAs we haven't explicitly recognized
+              // This allows us to receive other SPL tokens as "wrong token"
+              const isLikelyBotATA = accountStr.length === expectedBotATAStr.length && 
+                                     accountStr.match(/^[1-9A-HJ-NP-Z]{43,44}$/); // Solana base58 address format
+              
+              if (!isLikelyBotATA) {
+                console.log(`[getRecentDepositSender] Transfer NOT to bot. Bot wallet=${botWalletAddress}, Expected ATA=${expectedBotATAStr}, Correct ATA=${correctBotATA}`);
+                continue;
+              }
+              
+              console.log(`[getRecentDepositSender] Transfer to unknown bot ATA: ${accountStr} (mint: ${post.mint})`);
             }
 
             const transferMint = post.mint;
