@@ -6,10 +6,11 @@ const {
   SystemProgram,
   LAMPORTS_PER_SOL,
   TransactionInstruction,
+  sendAndConfirmTransaction,
 } = require('@solana/web3.js');
 const {
   getAssociatedTokenAddress,
-  transferChecked,
+  createTransferCheckedInstruction,
   TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
@@ -117,14 +118,27 @@ class SolanaHandler {
       
       console.error('TRANSFERTOKEN_BEFORE_DESTINATION_ATA_CHECK');
       
-      // For Token-2022, ensure destination ATA exists with correct program
+      // For Token-2022, query the destination user's token accounts to find their SID account
       let toATA;
       if (isToken2022) {
-        console.error('TRANSFERTOKEN_DERIVING_DESTINATION_ATA_TOKEN2022');
-        // For Token-2022, derive ATA with Token-2022 program context
-        // transferChecked will create the account if it doesn't exist
-        toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_2022_PROGRAM_ID);
-        console.error('TRANSFERTOKEN_DESTINATION_ATA_DERIVED:', toATA.toBase58());
+        console.error('TRANSFERTOKEN_QUERYING_DESTINATION_ACCOUNTS_TOKEN2022');
+        try {
+          // Get all token accounts for the destination user
+          const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(toPublicKey, {
+            mint: mint
+          });
+          
+          if (tokenAccounts.value.length === 0) {
+            throw new Error(`Destination wallet has no token account for SID token`);
+          }
+          
+          // Use the first (and typically only) token account for this mint
+          toATA = tokenAccounts.value[0].pubkey;
+          console.error('TRANSFERTOKEN_DESTINATION_ATA_FOUND:', toATA.toBase58());
+        } catch (queryError) {
+          console.error('TRANSFERTOKEN_ACCOUNT_QUERY_ERROR:', queryError?.message);
+          throw queryError;
+        }
       } else {
         toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
       }
