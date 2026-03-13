@@ -12,6 +12,7 @@ const {
   getAccount,
   transferChecked,
   TOKEN_PROGRAM_ID,
+  getOrCreateAssociatedTokenAccount,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const config = require('../config');
@@ -115,7 +116,29 @@ class SolanaHandler {
       
       // For destination ATA, derive with Token-2022 program for SID
       const ataProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, ataProgram);
+      
+      console.error('TRANSFERTOKEN_BEFORE_DESTINATION_ATA_CHECK');
+      
+      // For Token-2022, ensure destination ATA exists with correct program
+      let toATA;
+      if (isToken2022) {
+        console.error('TRANSFERTOKEN_CREATING_DESTINATION_ATA_TOKEN2022');
+        // Use getOrCreateAssociatedTokenAccount for Token-2022 with explicit program
+        const destinationAccount = await getOrCreateAssociatedTokenAccount(
+          this.connection,
+          fromKeypair,              // payer
+          mint,                     // mint
+          toPublicKey,              // owner of token account
+          false,                    // allowOwnerOffCurve
+          'processed',              // commitment
+          {},                       // confirmOptions
+          TOKEN_2022_PROGRAM_ID     // token program ID
+        );
+        toATA = destinationAccount.address;
+        console.error('TRANSFERTOKEN_DESTINATION_ATA_CREATED_OR_EXISTS:', toATA.toBase58());
+      } else {
+        toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
+      }
 
       console.error('TRANSFER_DETAILS:', {
         mint: mint.toBase58(),
@@ -128,19 +151,6 @@ class SolanaHandler {
         amountDisplay: amountNum
       });
 
-      // Use the built-in transferChecked helper - it handles all program complexity
-      console.error('TRANSFERTOKEN_BEFORE_DESTINATION_ATA_CHECK');
-      
-      // Check if destination ATA exists - create if missing
-      try {
-        await getAccount(this.connection, toATA);
-        console.error('TRANSFERTOKEN_DESTINATION_ATA_EXISTS');
-      } catch (e) {
-        if (e.message?.includes('TokenAccountNotFoundError') || e.toString().includes('not found')) {
-          console.error('TRANSFERTOKEN_DESTINATION_ATA_NOT_FOUND');
-        }
-      }
-      
       console.error('TRANSFERTOKEN_CALLING_TRANSFERCHECKED');
       const signature = await transferChecked(
         this.connection,           // connection
@@ -151,7 +161,9 @@ class SolanaHandler {
         fromKeypair,               // owner of source account
         amountInTokens,            // amount in smallest units
         decimals,                  // decimals
-        []                         // additional signers (empty, fromKeypair already signing)
+        [],                        // additional signers
+        undefined,                 // confirmOptions
+        isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID  // token program ID
       );
 
       console.error('TRANSFERTOKEN_SUCCESS');
