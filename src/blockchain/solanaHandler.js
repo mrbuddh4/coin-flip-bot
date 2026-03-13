@@ -280,10 +280,10 @@ class SolanaHandler {
         return null;
       }
 
-      // Use RPC to get recent signatures from the SENDER (not bot) - fetch ONLY 1 to minimize calls
+      // Use RPC to get recent signatures from the SENDER (not bot) - fetch up to 5, but skip failures
       const senderPublicKey = new PublicKey(knownSender);
       const signatures = await this.withExponentialBackoff(() =>
-        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 1 })
+        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 5 })
       );
 
       console.log('[getRecentDepositSender] RPC response from sender', {
@@ -296,20 +296,31 @@ class SolanaHandler {
         return null;
       }
 
-      // Fetch only the single most recent transaction - no delays needed
+      // Fetch transactions - skip failures and continue to next one
       const transactions = [];
-      try {
-        console.log(`[getRecentDepositSender] Fetching most recent transaction: ${signatures[0].signature}`);
-        const tx = await this.connection.getTransaction(signatures[0].signature, {
-          maxSupportedTransactionVersion: 0
-        });
-        
-        if (tx && !tx.meta?.err) {
-          transactions.push({ ...tx, signature: signatures[0].signature, slot: signatures[0].slot });
-          console.log('[getRecentDepositSender] Successfully fetched transaction');
+      for (let i = 0; i < signatures.length; i++) {
+        try {
+          // Add long delay before each fetch to avoid rate limiting
+          if (i > 0) {
+            console.log(`[getRecentDepositSender] Waiting 5s before fetching tx ${i + 1}/${signatures.length}...`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          }
+
+          console.log(`[getRecentDepositSender] Fetching tx ${i + 1}/${signatures.length}: ${signatures[i].signature.substring(0, 20)}...`);
+          const tx = await this.connection.getTransaction(signatures[i].signature, {
+            maxSupportedTransactionVersion: 0
+          });
+          
+          if (tx && !tx.meta?.err) {
+            transactions.push({ ...tx, signature: signatures[i].signature, slot: signatures[i].slot });
+            console.log(`[getRecentDepositSender] Successfully fetched tx ${i + 1}/${signatures.length}`);
+          } else {
+            console.log(`[getRecentDepositSender] Transaction ${i + 1}/${signatures.length} failed or has error, skipping`);
+          }
+        } catch (err) {
+          console.warn(`[getRecentDepositSender] Error fetching tx ${i + 1}/${signatures.length}:`, err.message);
+          // Continue to next transaction on failure
         }
-      } catch (err) {
-        console.warn('[getRecentDepositSender] Failed to fetch transaction:', signatures[0].signature, err.message);
       }
 
       console.log('[getRecentDepositSender] Fetched transactions from sender', { count: transactions.length });
@@ -324,6 +335,8 @@ class SolanaHandler {
           const postBalances = tx.meta?.postTokenBalances || [];
           const preBalances = tx.meta?.preTokenBalances || [];
 
+          console.log(`[getRecentDepositSender] Analyzing tx ${tx.signature.substring(0, 20)}... - Token balance changes: ${postBalances.length}`);
+
           for (const post of postBalances) {
             const pre = preBalances.find(p => p.accountIndex === post.accountIndex);
             if (!pre) continue;
@@ -337,13 +350,21 @@ class SolanaHandler {
 
             // Check if this is to bot's wallet or ATA
             const accountKey = tx.transaction.message.staticAccountKeys[post.accountIndex];
-            if (!accountKey) continue;
+            if (!accountKey) {
+              console.log(`[getRecentDepositSender] Account key not found for index ${post.accountIndex}`);
+              continue;
+            }
 
             const accountStr = accountKey.toBase58();
             const expectedBotATAStr = config.solana.sidTokenATA;
             
+            console.log(`[getRecentDepositSender] Token balance change: account=${accountStr.substring(0, 20)}..., pre=${preAmount}, post=${postAmount}, change=${tokenReceived}`);
+
             const isToBot = (accountStr === botWalletAddress || accountStr === expectedBotATAStr);
-            if (!isToBot) continue;
+            if (!isToBot) {
+              console.log(`[getRecentDepositSender] Transfer not to bot (checking against ${botWalletAddress} or ${expectedBotATAStr})`);
+              continue;
+            }
 
             const transferMint = post.mint;
 
