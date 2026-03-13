@@ -201,14 +201,29 @@ class BlockchainManager {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt);
       
+      // CRITICAL: Only return on success
       if (result.received) {
         console.log(`Deposit verified on attempt ${attempt}/${maxRetries}`);
         return result;
       }
+      
+      // CRITICAL: If we FOUND a deposit but it's underpaid/wrong-token, return immediately
+      // Don't retry - we found the transaction, it's just not enough or wrong token
+      if (result.depositSender) {
+        console.log(`Deposit transaction found but validation failed (underpayment or wrong token), returning without retry`, {
+          attempt,
+          depositSender: result.depositSender,
+          received: result.received,
+          isWrongToken: result.isWrongToken,
+          amount: result.amount,
+          expected: result.expected,
+        });
+        return result;
+      }
 
-      // If not last attempt, wait before retrying
+      // ONLY retry if we found NO transaction at all (null depositSender)
       if (attempt < maxRetries) {
-        console.log(`Deposit not found on attempt ${attempt}/${maxRetries}, retrying in ${retryDelayMs}ms...`);
+        console.log(`No deposit transaction found on attempt ${attempt}/${maxRetries}, retrying in ${retryDelayMs}ms...`);
         await new Promise(resolve => setTimeout(resolve, retryDelayMs));
       }
     }
