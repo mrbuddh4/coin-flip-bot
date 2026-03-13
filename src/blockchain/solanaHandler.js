@@ -12,6 +12,8 @@ const {
   transfer,
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const config = require('../config');
@@ -103,10 +105,11 @@ class SolanaHandler {
         // ATA doesn't exist - create it first
         console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
         const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,  // Payer (bot will pay for ATA creation)
-          toATA,          // ATA to create
-          toPublicKey,    // Owner of ATA
-          mint            // Token mint
+          fromPublicKey,              // Payer
+          toATA,                      // Associated token account address
+          toPublicKey,                // Owner of the associated token account
+          mint                        // Mint of the token
+          // TOKEN_PROGRAM_ID and ASSOCIATED_TOKEN_PROGRAM_ID are inferred automatically
         );
         transaction.add(createATAInstruction);
       }
