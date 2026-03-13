@@ -11,6 +11,9 @@ const {
 const {
   getAssociatedTokenAddress,
   TOKEN_PROGRAM_ID,
+  getAccount,
+  createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { Buffer } = require('buffer');
