@@ -101,24 +101,38 @@ class SolanaHandler {
     const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
     const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
 
-    // Try Token-2022 first
+    // Detect token program by checking mint account owner
     const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
-    console.error('[transferToken] Attempting Token-2022 transfer for mint:', tokenAddress);
+    let tokenProgram = TOKEN_PROGRAM_ID; // Default to standard
 
     try {
-      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_2022_PROGRAM_ID);
-      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_2022_PROGRAM_ID);
+      const mintAccount = await this.connection.getAccountInfo(mint);
+      if (mintAccount && mintAccount.owner.equals(TOKEN_2022_PROGRAM_ID)) {
+        tokenProgram = TOKEN_2022_PROGRAM_ID;
+        console.error('[transferToken] Detected Token-2022 mint:', tokenAddress);
+      } else {
+        console.error('[transferToken] Detected standard Token Program mint:', tokenAddress);
+      }
+    } catch (error) {
+      console.error('[transferToken] Could not detect token program, defaulting to standard:', error.message);
+    }
+
+    try {
+      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, tokenProgram);
+      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, tokenProgram);
+
+      console.error('[transferToken] From ATA:', fromATA.toBase58(), 'To ATA:', toATA.toBase58());
 
       const transaction = new Transaction();
 
-      // Create transfer instruction for Token-2022
+      // Create transfer instruction
       const instruction = createTransferInstruction(
         fromATA,
         toATA,
         fromPublicKey,
         amountInTokens,
         [],
-        TOKEN_2022_PROGRAM_ID
+        tokenProgram
       );
 
       transaction.add(instruction);
@@ -132,7 +146,8 @@ class SolanaHandler {
       const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
       await this.connection.confirmTransaction(signature, 'confirmed');
 
-      console.error('[transferToken] ✅ Token-2022 transfer succeeded');
+      const programName = tokenProgram.equals(TOKEN_2022_PROGRAM_ID) ? 'Token-2022' : 'standard Token Program';
+      console.error(`[transferToken] ✅ ${programName} transfer succeeded`);
 
       return {
         txHash: signature,
@@ -140,49 +155,9 @@ class SolanaHandler {
         to: toAddress,
         status: 'success',
       };
-    } catch (token2022Error) {
-      console.error('[transferToken] Token-2022 failed, trying standard Token Program:', token2022Error.message);
-      
-      try {
-        // Fall back to standard Token Program
-        const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
-        const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
-
-        const transaction = new Transaction();
-
-        // Create transfer instruction for standard Token Program
-        const instruction = createTransferInstruction(
-          fromATA,
-          toATA,
-          fromPublicKey,
-          amountInTokens,
-          [],
-          TOKEN_PROGRAM_ID
-        );
-
-        transaction.add(instruction);
-
-        const { blockhash } = await this.connection.getLatestBlockhash();
-        transaction.recentBlockhash = blockhash;
-        transaction.feePayer = fromPublicKey;
-
-        transaction.sign(fromKeypair);
-
-        const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
-        await this.connection.confirmTransaction(signature, 'confirmed');
-
-        console.error('[transferToken] ✅ Standard Token Program transfer succeeded');
-
-        return {
-          txHash: signature,
-          from: fromPublicKey.toBase58(),
-          to: toAddress,
-          status: 'success',
-        };
-      } catch (standardProgramError) {
-        console.error('[transferToken] Both Token-2022 and standard Token Program failed:', standardProgramError.message);
-        throw standardProgramError;
-      }
+    } catch (error) {
+      console.error('[transferToken] Transfer failed:', error.message);
+      throw error;
     }
   }
 
