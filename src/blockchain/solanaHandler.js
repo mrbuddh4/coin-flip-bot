@@ -358,11 +358,11 @@ class SolanaHandler {
             const accountStr = accountKey.toBase58();
             const expectedBotATAStr = config.solana.sidTokenATA;
             
-            console.log(`[getRecentDepositSender] Token balance change: account=${accountStr.substring(0, 20)}..., pre=${preAmount}, post=${postAmount}, change=${tokenReceived}`);
+            console.log(`[getRecentDepositSender] Token balance change: account=${accountStr}, pre=${preAmount}, post=${postAmount}, change=${tokenReceived}, mint=${post.mint}`);
 
             const isToBot = (accountStr === botWalletAddress || accountStr === expectedBotATAStr);
             if (!isToBot) {
-              console.log(`[getRecentDepositSender] Transfer not to bot (checking against ${botWalletAddress} or ${expectedBotATAStr})`);
+              console.log(`[getRecentDepositSender] Transfer NOT to bot. Bot wallet=${botWalletAddress}, Bot ATA=${expectedBotATAStr}`);
               continue;
             }
 
