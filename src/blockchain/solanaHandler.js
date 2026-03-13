@@ -129,8 +129,11 @@ class SolanaHandler {
     }
 
     try {
-      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, tokenProgram);
-      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, tokenProgram);
+      // For Token-2022, we need allowOwnerOffCurve: true
+      const allowOwnerOffCurve = tokenProgram.equals(TOKEN_2022_PROGRAM_ID);
+      
+      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, allowOwnerOffCurve, tokenProgram);
+      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, allowOwnerOffCurve, tokenProgram);
 
       console.error('[transferToken] Token Program:', tokenProgram.toBase58());
       console.error('[transferToken] From ATA:', fromATA.toBase58());
