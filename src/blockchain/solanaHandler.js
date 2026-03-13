@@ -313,19 +313,14 @@ class SolanaHandler {
           // Check for token transfers
           if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
             for (const transfer of tx.tokenTransfers) {
-              // Validation depends on transfer type:
-              // - SPL tokens (when searching for specific tokenMint): MUST go to ATA only
-              // - Native SOL (no tokenMint specified): goes to main wallet
-              
               let isTransferToBot = false;
               
               if (tokenMint) {
-                // Looking for a specific SPL token: ONLY accept transfers to the bot's ATA for that token
-                // Use pre-computed ATA from config (deterministic derivation of token mint + bot wallet)
+                // Looking for a specific SPL token: accept transfers to EITHER the main wallet OR the ATA
+                // (user might send to main wallet, or it might route to ATA)
                 const expectedBotATAStr = config.solana.sidTokenATA;
                 
-                // For SPL tokens: ONLY accept ATA, not main wallet
-                if (transfer.toUserAccount === expectedBotATAStr) {
+                if (transfer.toUserAccount === expectedBotATAStr || transfer.toUserAccount === botWalletAddress) {
                   isTransferToBot = true;
                 }
               } else {
@@ -542,8 +537,8 @@ class SolanaHandler {
               // Use pre-computed ATA from config (deterministic derivation of token mint + bot wallet)
               const expectedBotATAStr = config.solana.sidTokenATA;
               
-              // For SPL tokens (wrong token refunds): ONLY accept ATA
-              if (transfer.toUserAccount === expectedBotATAStr) {
+              // For SPL tokens (wrong token refunds): accept transfers to EITHER main wallet OR ATA
+              if (transfer.toUserAccount === expectedBotATAStr || transfer.toUserAccount === botWalletAddress) {
                 isTransferToBot = true;
               }
               
