@@ -102,20 +102,10 @@ class SolanaHandler {
       // Create empty transaction FIRST (like working refundIncorrectTokens)
       const transaction = new Transaction();
 
-      // Check if destination ATA exists - CREATE IT if needed (EXACT same pattern as working refundIncorrectTokens)
-      try {
-        await getAccount(this.connection, toATA);
-      } catch (error) {
-        // ATA doesn't exist - create it first
-        console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,              // Payer (sender pays for ATA creation)
-          toATA,                      // ATA to create
-          toPublicKey,                // Owner of ATA
-          mint                        // Token mint
-        );
-        transaction.add(createATAInstruction);
-      }
+      // NOTE: Do NOT try to create ATA here - if recipient doesn't have one, transfer will fail with clear error
+      // For overpayment refunds: recipient already has ATA (they just sent deposit from it)
+      // For timeout refunds: recipient should already have ATA from deposit attempt
+      console.log('[transferToken] Recipient ATA:', toATA.toBase58());
 
       const amountInTokens = BigInt(Math.floor(amount * Math.pow(10, decimals)));
 
