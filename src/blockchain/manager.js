@@ -247,26 +247,28 @@ class BlockchainManager {
    * Send winnings to winner from bot wallet
    */
   async sendWinnings(network, tokenAddress, winnerAddress, amount, decimals) {
+    console.error(`[sendWinnings] ENTRY - network=${network} token=${tokenAddress.slice(0,10)}... amount=${amount}`);
+    
     const handler = this.getHandler(network);
 
     try {
-      console.error(`[BlockchainManager.sendWinnings] CALLED: network=${network}, token=${tokenAddress}, recipient=${winnerAddress}, amount=${amount}, decimals=${decimals}`);
+      console.error(`[sendWinnings] Before winnings logic`);
       
       let result;
       const botPrivateKey = network === 'EVM' ? config.evm.privateKey : config.solana.privateKey;
       
       if (tokenAddress === 'NATIVE') {
-        console.error('[BlockchainManager.sendWinnings] Transferring NATIVE tokens');
+        console.error('[sendWinnings] Transferring NATIVE');
         result = await handler.transferNative(botPrivateKey, winnerAddress, amount);
       } else {
-        console.error('[BlockchainManager.sendWinnings] Transferring SPL/EVM tokens');
+        console.error(`[sendWinnings] Calling transferToken for ${tokenAddress}`);
         result = await handler.transferToken(tokenAddress, botPrivateKey, winnerAddress, amount, decimals);
+        console.error('[sendWinnings] transferToken returned:', result);
       }
-      console.error('[BlockchainManager.sendWinnings] SUCCESS:', result);
+      console.error('[sendWinnings] SUCCESS');
       return result;
     } catch (error) {
-      console.error('[BlockchainManager.sendWinnings] ERROR:', error.message);
-      console.error('Error sending winnings:', error);
+      console.error('[sendWinnings] CATCH ERROR:', error.message.slice(0,100));
       throw error;
     }
   }

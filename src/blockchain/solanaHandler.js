@@ -145,23 +145,18 @@ class SolanaHandler {
         programId: tokenProgram.toBase58()
       });
       
-      // Create transfer instruction with manual construction to ensure Token-2022 program is used
-      // Transfer instruction: discriminant (3) + amount (u64)
-      const data = Buffer.alloc(9);
-      data[0] = 3; // Transfer instruction discriminant
-      data.writeBigUInt64LE(BigInt(amountInTokens), 1);
-      
-      const transferIx = new TransactionInstruction({
-        programId: tokenProgram,
-        keys: [
-          { pubkey: fromATA, isSigner: false, isWritable: true },    // source
-          { pubkey: toATA, isSigner: false, isWritable: true },       // destination
-          { pubkey: fromPublicKey, isSigner: true, isWritable: false }, // owner
-        ],
-        data,
-      });
+      // Use the spl-token helper but verify the result
+      console.error('[transferToken] ABOUT TO CALL createTransferInstruction');
+      const transferIx = createTransferInstruction(
+        fromATA,
+        toATA,
+        fromPublicKey,
+        BigInt(amountInTokens),
+        [],
+        tokenProgram
+      );
+      console.error('[transferToken] createTransferInstruction RETURNED:', { programId: transferIx.programId?.toBase58() });
 
-      console.error('[transferToken] Instruction created (manual):', { programId: transferIx.programId?.toBase58() });
       logger.info('[transferToken] Instruction created', {
         instructionProgramId: transferIx.programId?.toBase58(),
         keysCount: transferIx.keys?.length
