@@ -2799,9 +2799,14 @@ const handlers = {
 
       logger.info('DM message received', { userId, message });
 
-      // Find active session
+      // Find active session - skip AWAITING_DM_START since it's just waiting for button click, not message input
       const activeSession = await models.BotSession.findOne({
-        where: { userId },
+        where: {
+          userId,
+          currentStep: {
+            [Op.ne]: 'AWAITING_DM_START', // Skip transitional states waiting for button click
+          },
+        },
         order: [['createdAt', 'DESC']],
       });
 
