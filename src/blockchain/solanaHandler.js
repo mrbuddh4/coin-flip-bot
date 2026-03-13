@@ -86,33 +86,37 @@ class SolanaHandler {
    * Transfer SPL token (supports both Token Program and Token-2022)
    */
   async transferToken(tokenAddress, fromPrivateKeyB58, toAddress, amount, decimals) {
-    // Validate mint address format
-    const isValidMint = tokenAddress && tokenAddress.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
-    if (!isValidMint) {
-      throw new Error(`Invalid mint address: ${tokenAddress}`);
-    }
-
-    const fromKeypair = Keypair.fromSecretKey(bs58.decode(fromPrivateKeyB58));
-    const fromPublicKey = fromKeypair.publicKey;
-    const mint = new PublicKey(tokenAddress);
-    const toPublicKey = new PublicKey(toAddress);
-
-    // Calculate amount in base units
-    const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
-    const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
-
-    const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
-    const TOKEN_2022_MINTS = new Set([
-      '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump', // SID - MUST use Token-2022
-    ]);
-
-    const isToken2022 = TOKEN_2022_MINTS.has(tokenAddress);
-    const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-    const allowOwnerOffCurve = isToken2022; // true for Token-2022, false for standard
-
-    console.log(`[transferToken] Mint: ${tokenAddress}, Program: ${isToken2022 ? 'Token-2022' : 'Standard'}, Amount: ${amountInTokens}`);
-
+    console.log('=== [transferToken] CALLED ===');
+    console.log('tokenAddress:', tokenAddress);
+    console.log('amount:', amount, 'decimals:', decimals);
+    
     try {
+      // Validate mint address format
+      const isValidMint = tokenAddress && tokenAddress.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
+      if (!isValidMint) {
+        throw new Error(`Invalid mint address: ${tokenAddress}`);
+      }
+
+      const fromKeypair = Keypair.fromSecretKey(bs58.decode(fromPrivateKeyB58));
+      const fromPublicKey = fromKeypair.publicKey;
+      const mint = new PublicKey(tokenAddress);
+      const toPublicKey = new PublicKey(toAddress);
+
+      // Calculate amount in base units
+      const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
+      const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
+
+      const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
+      const TOKEN_2022_MINTS = new Set([
+        '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump', // SID - MUST use Token-2022
+      ]);
+
+      const isToken2022 = TOKEN_2022_MINTS.has(tokenAddress);
+      const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+      const allowOwnerOffCurve = isToken2022; // true for Token-2022, false for standard
+
+      console.log(`[transferToken] Mint: ${tokenAddress}, Program: ${isToken2022 ? 'Token-2022' : 'Standard'}, Amount: ${amountInTokens}`);
+
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, allowOwnerOffCurve, tokenProgram);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, allowOwnerOffCurve, tokenProgram);
 
@@ -130,6 +134,7 @@ class SolanaHandler {
         tokenProgram
       );
 
+      console.log('[transferToken] Transfer instruction created');
       transaction.add(transferIx);
 
       const { blockhash } = await this.connection.getLatestBlockhash();
@@ -154,7 +159,8 @@ class SolanaHandler {
         status: 'success',
       };
     } catch (error) {
-      console.log(`[transferToken] ❌ Transfer failed:`, error.message);
+      console.log(`[transferToken] ❌ Caught error:`, error.message);
+      console.log(error);
       throw error;
     }
   }
