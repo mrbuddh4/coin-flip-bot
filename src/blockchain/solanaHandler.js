@@ -141,17 +141,34 @@ class SolanaHandler {
 
       const transaction = new Transaction();
 
-      // Create transfer instruction directly
-      const instruction = createTransferInstruction(
+      // Check if destination ATA exists, create if it doesn't
+      try {
+        await getAccount(this.connection, toATA);
+        console.error('[transferToken] Destination ATA already exists');
+      } catch (error) {
+        console.error('[transferToken] Creating destination ATA for Token-2022...');
+        // Destination ATA doesn't exist, need to create it
+        const createATAIx = createAssociatedTokenAccountInstruction(
+          fromPublicKey,  // Payer
+          toATA,          // ATA to create  
+          toPublicKey,    // Owner
+          mint,           // Mint
+          tokenProgram    // Token program
+        );
+        transaction.add(createATAIx);
+      }
+
+      // Create transfer instruction with BigInt for amount
+      const transferIx = createTransferInstruction(
         fromATA,
         toATA,
         fromPublicKey,
-        amountInTokens,
+        BigInt(amountInTokens),
         [],
         tokenProgram
       );
 
-      transaction.add(instruction);
+      transaction.add(transferIx);
 
       const { blockhash } = await this.connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
