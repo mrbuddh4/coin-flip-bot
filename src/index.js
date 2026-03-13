@@ -2080,15 +2080,13 @@ async function initBot() {
                   excessDisplay: creatorExcessAmount.toString()
                 });
               } else {
-                // Convert excess from display units to raw units for blockchain transaction
-                const excessRaw = (creatorExcessAmount * Math.pow(10, refundDecimals)).toFixed(0);
+                // Pass display units - transferToken will convert to raw units
                 logger.info('[creator_deposit_confirmed] Sending refund', {
                   flipId,
                   network: flip.tokenNetwork,
                   tokenAddress,
                   recipient: flip.creatorDepositWalletAddress,
                   excessDisplay: creatorExcessAmount.toString(),
-                  excessRaw,
                   decimals: refundDecimals,
                 });
                 
@@ -2096,14 +2094,13 @@ async function initBot() {
                   flip.tokenNetwork,
                   tokenAddress,
                   flip.creatorDepositWalletAddress,
-                  excessRaw,
+                  creatorExcessAmount,
                   refundDecimals
                 );
                 
                 logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
                   flipId, 
-                  excessDisplay: creatorExcessAmount.toString(),
-                  excessRaw,
+                  excess: creatorExcessAmount,
                   recipient: flip.creatorDepositWalletAddress
                 });
               }
