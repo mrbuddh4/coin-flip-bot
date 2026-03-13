@@ -1984,6 +1984,15 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
 
+        // Store the deposit sender wallet address for refunds
+        if (verification.depositSender) {
+          flip.creatorDepositWalletAddress = verification.depositSender;
+          logger.info('[creator_deposit_confirmed] Stored creator deposit wallet address', { 
+            flipId, 
+            wallet: verification.depositSender 
+          });
+        }
+
         // Convert received amount from raw units to display units for comparison
         const creatorTokenDecimals = flip.tokenDecimals || 18;
         const creatorReceivedAmountDisplay = parseFloat(verification.amount) / Math.pow(10, creatorTokenDecimals);
