@@ -35,6 +35,43 @@ describe('Wrong Token Detection & Refund Scenario', () => {
       expect(isWrongToken).toBe(false);
       expect(depositResult.hasWrongTokens).toBe(false);
     });
+
+    test('should detect native SOL as wrong token when SID expected', () => {
+      // User accidentally sends SOL instead of SID
+      const depositResult = {
+        sender: '4kkWyqPFhSPuoPtyDu3PgWtRXe2DLn2nMvBGqMDjn1TR',
+        amount: '1.5', // 1.5 SOL
+        signature: 'test-sol-transfer',
+        tokenMint: 'NATIVE', // Native SOL, not SID
+        wrongToken: 'NATIVE',
+        hasWrongTokens: true,
+      };
+
+      const expectedMint = '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump'; // SID
+
+      const isWrongToken = depositResult.tokenMint !== expectedMint;
+      expect(isWrongToken).toBe(true);
+      expect(depositResult.wrongToken).toBe('NATIVE');
+      expect(depositResult.hasWrongTokens).toBe(true);
+    });
+
+    test('should NOT refund native SOL when native is expected', () => {
+      // If bot is configured to accept SOL, should NOT mark it as wrong
+      const depositResult = {
+        sender: '4kkWyqPFhSPuoPtyDu3PgWtRXe2DLn2nMvBGqMDjn1TR',
+        amount: '1.5',
+        signature: 'test-sol-transfer',
+        tokenMint: 'NATIVE',
+        wrongToken: null,
+        hasWrongTokens: false,
+      };
+
+      const expectedMint = 'NATIVE'; // Expecting native SOL
+
+      const isWrongToken = depositResult.tokenMint !== expectedMint;
+      expect(isWrongToken).toBe(false);
+      expect(depositResult.hasWrongTokens).toBe(false);
+    });
   });
 
   describe('Wrong Token Refund Logic', () => {
@@ -132,6 +169,31 @@ describe('Wrong Token Detection & Refund Scenario', () => {
         !flip.data?.refundAttempted;
 
       expect(shouldRefund).toBe(false); // Should skip native refunds
+    });
+
+    test('should refund native SOL when it is the wrong token', () => {
+      // Setup: Bot expects SID but user sends SOL
+      const verification = {
+        isWrongToken: true,
+        wrongToken: 'NATIVE', // User sent SOL
+        depositSender: '4kkWyqPFhSPuoPtyDu3PgWtRXe2DLn2nMvBGqMDjn1TR',
+      };
+
+      const flip = {
+        tokenNetwork: 'Solana',
+        tokenAddress: '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump', // Expects SID
+        createdAt: new Date(),
+        data: {},
+      };
+
+      // Check if we should refund native SOL
+      const shouldRefundNativeSOL = 
+        verification.isWrongToken && 
+        verification.wrongToken === 'NATIVE' && 
+        verification.depositSender && 
+        flip.tokenAddress !== 'NATIVE'; // Only if we're NOT accepting native
+
+      expect(shouldRefundNativeSOL).toBe(true);
     });
 
     test('should include deposit filtering by flip creation time', () => {

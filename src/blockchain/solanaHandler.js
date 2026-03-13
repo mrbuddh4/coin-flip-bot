@@ -443,6 +443,56 @@ class SolanaHandler {
           console.warn('[getRecentDepositSender] Error processing transaction:', txErr.message);
           continue;
         }
+
+        // NATIVE SOL CHECK: Also check if native SOL was transferred to the bot's main wallet
+        // This catches cases where user sends SOL instead of SID
+        try {
+          const preBalances = tx.meta?.preBalances || [];
+          const postBalances = tx.meta?.postBalances || [];
+          const accountKeys = tx.transaction.message.staticAccountKeys || [];
+
+          for (let i = 0; i < accountKeys.length; i++) {
+            const accountKey = accountKeys[i].toBase58();
+            
+            // Check if this is the bot's main wallet (not ATA, the main wallet)
+            if (accountKey === botWalletAddress.toBase58()) {
+              const preBalance = preBalances[i] || 0;
+              const postBalance = postBalances[i] || 0;
+              const solReceived = (postBalance - preBalance) / 1000000000; // Convert lamports to SOL
+              
+              // Only count if SOL was actually received (and more than just fee refunds)
+              if (solReceived > 0.001) { // More than 0.001 SOL to distinguish from fee refunds
+                console.log('[getRecentDepositSender] Detected native SOL transfer to bot wallet', {
+                  signature: tx.signature,
+                  sender: knownSender,
+                  solReceived,
+                  preBalance,
+                  postBalance,
+                });
+
+                // Only mark as wrong token if we were expecting an SPL token (not native)
+                if (tokenMint && tokenMint !== 'NATIVE') {
+                  wrongTokenDeposits.push({
+                    sender: knownSender,
+                    amount: solReceived.toString(),
+                    signature: tx.signature,
+                    slot: tx.slot || 0,
+                    tokenMint: 'NATIVE', // Native SOL
+                    wrongToken: 'NATIVE',
+                  });
+                  console.log('[getRecentDepositSender] Marked as wrong token: native SOL sent when SID expected', {
+                    flipId: 'N/A',
+                    sender: knownSender,
+                    expectedToken: tokenMint,
+                    receivedToken: 'NATIVE',
+                  });
+                }
+              }
+            }
+          }
+        } catch (nativeErr) {
+          console.warn('[getRecentDepositSender] Error checking native SOL:', nativeErr.message);
+        }
       }
 
       if (deposits.length > 0) {
@@ -555,6 +605,44 @@ class SolanaHandler {
               });
             }
           }
+
+          // NATIVE SOL CHECK: Also look for native SOL transfers to bot's main wallet
+          if (expectedTokenMint !== 'NATIVE') { // Only mark as wrong if we were expecting an SPL token
+            try {
+              const preNativeBalances = tx.meta?.preBalances || [];
+              const postNativeBalances = tx.meta?.postBalances || [];
+              const accountKeys = tx.transaction.message.staticAccountKeys || [];
+
+              for (let i = 0; i < accountKeys.length; i++) {
+                const accountKey = accountKeys[i].toBase58();
+                
+                // Check if this is the bot's main wallet
+                if (accountKey === botWalletAddress) {
+                  const preBalance = preNativeBalances[i] || 0;
+                  const postBalance = postNativeBalances[i] || 0;
+                  const solReceived = (postBalance - preBalance) / 1000000000; // Convert lamports to SOL
+                  
+                  // Only count if SOL was actually received (and more than just fee refunds)
+                  if (solReceived > 0.001) { // More than 0.001 SOL
+                    console.log('[refundIncorrectTokens] Found native SOL transfer to bot - will refund as wrong token', {
+                      signature: tx.signature,
+                      sender: senderAddress,
+                      solReceived,
+                    });
+
+                    refundsToProcess.push({
+                      wrongTokenMint: 'NATIVE', // Mark as native SOL
+                      amount: solReceived,
+                      senderAddress: senderAddress,
+                      signature: tx.signature,
+                    });
+                  }
+                }
+              }
+            } catch (nativeErr) {
+              console.warn('[refundIncorrectTokens] Error checking native SOL:', nativeErr.message);
+            }
+          }
         } catch (err) {
           console.warn('[refundIncorrectTokens] Error processing transaction:', err.message);
           continue;
@@ -582,11 +670,50 @@ class SolanaHandler {
             sender: refund.senderAddress,
           });
 
-          // Get sender's token account for this wrong token
-          const senderTokenAccount = await getAssociatedTokenAddress(
-            new PublicKey(refund.wrongTokenMint),
-            new PublicKey(refund.senderAddress)
-          );
+          // SPECIAL CASE: Native SOL refund
+          if (refund.wrongTokenMint === 'NATIVE') {
+            console.log('[refundIncorrectTokens] Refunding native SOL', {
+              amount: refund.amount,
+              sender: refund.senderAddress,
+            });
+
+            try {
+              // Convert bot's keypair to Base58 for transferNative
+              const botPrivateKeyB58 = bs58.encode(this.wallet.secretKey);
+              
+              // Use transferNative to send SOL back to sender
+              const refundResult = await this.transferNative(
+                botPrivateKeyB58,
+                refund.senderAddress,
+                refund.amount
+              );
+
+              console.log('[refundIncorrectTokens] ✅ Successfully refunded native SOL', {
+                amount: refund.amount,
+                sender: refund.senderAddress,
+                signature: refundResult.txHash,
+              });
+
+              refundResults.push({
+                mint: 'NATIVE',
+                amount: refund.amount,
+                recipient: refund.senderAddress,
+                signature: refundResult.txHash,
+                status: 'success',
+              });
+            } catch (solErr) {
+              console.error('[refundIncorrectTokens] Failed to refund native SOL', {
+                sender: refund.senderAddress,
+                amount: refund.amount,
+                error: solErr.message,
+              });
+              // Continue to next refund
+              continue;
+            }
+            continue; // Skip SPL token logic for native SOL
+          }
+
+          // SPL TOKEN REFUND (non-native)
 
           // Get bot's token account for this wrong token
           const botTokenAccount = await getAssociatedTokenAddress(
