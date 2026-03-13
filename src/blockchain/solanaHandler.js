@@ -280,10 +280,10 @@ class SolanaHandler {
         return null;
       }
 
-      // Use RPC to get recent signatures from the SENDER (not bot) - fetch only 5 most recent to minimize calls
+      // Use RPC to get recent signatures from the SENDER (not bot) - fetch ONLY 1 to minimize calls
       const senderPublicKey = new PublicKey(knownSender);
       const signatures = await this.withExponentialBackoff(() =>
-        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 5 })
+        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 1 })
       );
 
       console.log('[getRecentDepositSender] RPC response from sender', {
@@ -296,29 +296,20 @@ class SolanaHandler {
         return null;
       }
 
-      // Fetch transactions with aggressive delays to avoid rate limiting
+      // Fetch only the single most recent transaction - no delays needed
       const transactions = [];
-      for (let i = 0; i < signatures.length; i++) {
-        try {
-          // Add aggressive delay between requests to avoid rate limiting (2-3 seconds per call)
-          if (i > 0) {
-            console.log(`[getRecentDepositSender] Waiting before fetching tx ${i + 1}/${signatures.length}...`);
-            await new Promise(resolve => setTimeout(resolve, 2500));
-          }
-
-          console.log(`[getRecentDepositSender] Fetching transaction ${i + 1}/${signatures.length}: ${signatures[i].signature}`);
-          const tx = await this.connection.getTransaction(signatures[i].signature, {
-            maxSupportedTransactionVersion: 0
-          });
-          
-          if (tx && !tx.meta?.err) {
-            transactions.push({ ...tx, signature: signatures[i].signature, slot: signatures[i].slot });
-            console.log(`[getRecentDepositSender] Successfully fetched tx ${i + 1}/${signatures.length}`);
-          }
-        } catch (err) {
-          console.warn('[getRecentDepositSender] Failed to fetch transaction:', signatures[i].signature, err.message);
-          // Continue to next transaction on failure
+      try {
+        console.log(`[getRecentDepositSender] Fetching most recent transaction: ${signatures[0].signature}`);
+        const tx = await this.connection.getTransaction(signatures[0].signature, {
+          maxSupportedTransactionVersion: 0
+        });
+        
+        if (tx && !tx.meta?.err) {
+          transactions.push({ ...tx, signature: signatures[0].signature, slot: signatures[0].slot });
+          console.log('[getRecentDepositSender] Successfully fetched transaction');
         }
+      } catch (err) {
+        console.warn('[getRecentDepositSender] Failed to fetch transaction:', signatures[0].signature, err.message);
       }
 
       console.log('[getRecentDepositSender] Fetched transactions from sender', { count: transactions.length });
