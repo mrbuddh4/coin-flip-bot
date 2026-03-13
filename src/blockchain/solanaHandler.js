@@ -106,10 +106,19 @@ class SolanaHandler {
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
       console.error('TRANSFERTOKEN_BEFORE_ATA_CREATION');
-      // For Token-2022, ATAs must be calculated with Token-2022 program ID
-      // Different from standard SPL where standard program is always used
+      
+      // For SID token, use the hardcoded bot ATA where deposits arrive
+      let fromATA;
+      if (isToken2022) {
+        // SID token requires the specific ATA that receives deposits
+        fromATA = new PublicKey('BNGHJazs5Ddps9pgYgFr1JvqPVjRChDngpXvWbYqoz6F');
+      } else {
+        // Standard SPL: derive ATA with standard Token Program
+        fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
+      }
+      
+      // For destination ATA, derive with Token-2022 program for SID
       const ataProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, ataProgram);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, ataProgram);
 
       console.error('TRANSFERTOKEN_BEFORE_INSTRUCTION');
