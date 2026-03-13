@@ -86,11 +86,11 @@ class SolanaHandler {
    * Transfer SPL token (supports both Token Program and Token-2022)
    */
   async transferToken(tokenAddress, fromPrivateKeyB58, toAddress, amount, decimals) {
-    console.log('=== [transferToken] CALLED ===');
-    console.log('tokenAddress:', tokenAddress);
-    console.log('amount:', amount, 'decimals:', decimals);
-    
     try {
+      console.log('=== [transferToken] CALLED ===');
+      console.log('tokenAddress:', tokenAddress);
+      console.log('amount:', amount, 'decimals:', decimals);
+      
       // Validate mint address format
       const isValidMint = tokenAddress && tokenAddress.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
       if (!isValidMint) {
@@ -115,7 +115,9 @@ class SolanaHandler {
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
       const allowOwnerOffCurve = isToken2022; // true for Token-2022, false for standard
 
-      console.log(`[transferToken] Mint: ${tokenAddress}, Program: ${isToken2022 ? 'Token-2022' : 'Standard'}, Amount: ${amountInTokens}`);
+      console.log(`[transferToken] Using program:`, tokenProgram.toBase58());
+      console.log(`[transferToken] Is Token-2022:`, isToken2022);
+      console.log(`[transferToken] Amount in tokens:`, amountInTokens);
 
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, allowOwnerOffCurve, tokenProgram);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, allowOwnerOffCurve, tokenProgram);
@@ -143,14 +145,14 @@ class SolanaHandler {
 
       transaction.sign(fromKeypair);
 
-      console.log(`[transferToken] Sending transaction...`);
+      console.log(`[transferToken] Sending signed transaction...`);
       const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
-      console.log(`[transferToken] Transaction signature: ${signature}`);
+      console.log(`[transferToken] Transaction sent! Signature: ${signature}`);
       
       await this.connection.confirmTransaction(signature, 'confirmed');
 
       const programName = isToken2022 ? 'Token-2022' : 'Standard Token Program';
-      console.log(`[transferToken] ✅ ${programName} transfer succeeded`);
+      console.log(`[transferToken] ✅ ${programName} transfer SUCCEEDED!`);
 
       return {
         txHash: signature,
@@ -159,7 +161,7 @@ class SolanaHandler {
         status: 'success',
       };
     } catch (error) {
-      console.log(`[transferToken] ❌ Caught error:`, error.message);
+      console.log(`[transferToken] ❌ CAUGHT ERROR:`, error.message);
       console.log(error);
       throw error;
     }
