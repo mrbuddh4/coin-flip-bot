@@ -134,6 +134,7 @@ class BlockchainManager {
           return {
             received: false,
             amount: receivedAmountRaw,
+            amountDisplay: receivedAmountDisplay,  // Include display units for proper message formatting
             expected: expectedAmountNum,
             botWallet: botWallet,
             depositSender: depositInfo.sender,  // Keep sender so refund can happen!

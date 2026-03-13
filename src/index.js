@@ -1307,7 +1307,7 @@ async function initBot() {
             const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             // CRITICAL: For wrong tokens, amount is already display units. For correct tokens, convert from raw to display
             const receivedAmountRaw = parseFloat(verification.amount || '0');
-            const receivedAmount = verification.isWrongToken ? receivedAmountRaw : (receivedAmountRaw / Math.pow(10, tokenDecimals));
+            const receivedAmount = verification.amountDisplay !== undefined ? verification.amountDisplay : (verification.isWrongToken ? receivedAmountRaw : (receivedAmountRaw / Math.pow(10, tokenDecimals)));
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
@@ -1318,6 +1318,9 @@ async function initBot() {
               let wrongTokenName = verification.wrongToken;
               if (verification.wrongToken === 'NATIVE') {
                 wrongTokenName = verification.network === 'Solana' ? 'SOL (native)' : 'PAX (native)';
+              } else {
+                // For non-native wrong tokens, use generic label
+                wrongTokenName = 'Token';
               }
               messageText = 
                 `⚠️ <b>Wrong Token Detected</b>\n\n` +
@@ -1331,7 +1334,7 @@ async function initBot() {
               messageText = 
                 `❌ <b>Insufficient Deposit</b>\n\n` +
                 `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-                `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
+                `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` + +
                 `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
                 `<b>Troubleshooting:</b>\n` +
                 `• Verify you sent to: <code>${botWallet}</code>\n` +
@@ -1818,7 +1821,7 @@ async function initBot() {
             const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             // CRITICAL: For wrong tokens, amount is already display units. For correct tokens, convert from raw to display
             const receivedAmountRaw = parseFloat(verification.amount || '0');
-            const receivedAmount = verification.isWrongToken ? receivedAmountRaw : (receivedAmountRaw / Math.pow(10, tokenDecimals));
+            const receivedAmount = verification.amountDisplay !== undefined ? verification.amountDisplay : (verification.isWrongToken ? receivedAmountRaw : (receivedAmountRaw / Math.pow(10, tokenDecimals)));
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
@@ -1829,6 +1832,9 @@ async function initBot() {
               let wrongTokenName = verification.wrongToken;
               if (verification.wrongToken === 'NATIVE') {
                 wrongTokenName = verification.network === 'Solana' ? 'SOL (native)' : 'PAX (native)';
+              } else {
+                // For non-native wrong tokens, use generic label
+                wrongTokenName = 'Token';
               }
               messageText = 
                 `⚠️ <b>Wrong Token Detected</b>\n\n` +
