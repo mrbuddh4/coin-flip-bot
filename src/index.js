@@ -1292,8 +1292,11 @@ async function initBot() {
           
           // Only send notification if more than 30 seconds have passed since last one
           if (timeSinceLastNotification > 30000) {
+            const tokenDecimals = flip.tokenDecimals || 18;
             const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-            const receivedAmount = parseFloat(verification.amount || '0');
+            // CRITICAL: Convert received amount from raw to display units
+            const receivedAmountRaw = parseFloat(verification.amount || '0');
+            const receivedAmount = receivedAmountRaw / Math.pow(10, tokenDecimals);
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
@@ -1786,8 +1789,11 @@ async function initBot() {
           
           // Only send notification if more than 30 seconds have passed since last one
           if (timeSinceLastNotification > 30000) {
+            const tokenDecimals = flip.tokenDecimals || 18;
             const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-            const receivedAmount = parseFloat(verification.amount || '0');
+            // CRITICAL: Convert received amount from raw to display units
+            const receivedAmountRaw = parseFloat(verification.amount || '0');
+            const receivedAmount = receivedAmountRaw / Math.pow(10, tokenDecimals);
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
