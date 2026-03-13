@@ -89,64 +89,29 @@ class SolanaHandler {
    * Transfer SPL token (supports both Token Program and Token-2022)
    */
   async transferToken(tokenAddress, fromPrivateKeyB58, toAddress, amount, decimals) {
+    console.error('TRANSFERTOKEN_START');
     try {
-      // DEBUG: Use raw console.error to ensure visibility
-      console.error('[transferToken] 🚀 CALLED WITH:', JSON.stringify({ tokenAddress, toAddress, amount, decimals }));
-      logger.info('[transferToken] 🚀 CALLED - Starting token transfer', { tokenAddress, toAddress, amount, decimals });
+      console.error('TRANSFERTOKEN_TRY_BLOCK');
       
-      // Validate mint address format
-      const isValidMint = tokenAddress && tokenAddress.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
-      if (!isValidMint) {
-        throw new Error(`Invalid mint address: ${tokenAddress}`);
-      }
-
       const fromKeypair = Keypair.fromSecretKey(bs58.decode(fromPrivateKeyB58));
       const fromPublicKey = fromKeypair.publicKey;
       const mint = new PublicKey(tokenAddress);
       const toPublicKey = new PublicKey(toAddress);
 
-      // Calculate amount in base units
       const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
       const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
 
       const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
-      const TOKEN_2022_MINTS = new Set([
-        '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump', // SID - MUST use Token-2022
-      ]);
-
-      const isToken2022 = TOKEN_2022_MINTS.has(tokenAddress);
+      const isToken2022 = tokenAddress === '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump';
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-      const allowOwnerOffCurve = isToken2022; // true for Token-2022, false for standard
+      const allowOwnerOffCurve = isToken2022;
 
-      console.error('[transferToken] PROGRAM:', { isToken2022, program: tokenProgram.toBase58() });
-      logger.info('[transferToken] Program selection', { 
-        tokenMint: tokenAddress,
-        isToken2022, 
-        tokenProgram: tokenProgram.toBase58(), 
-        amountInTokens 
-      });
-
+      console.error('TRANSFERTOKEN_BEFORE_ATA_CREATION');
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, allowOwnerOffCurve, tokenProgram);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, allowOwnerOffCurve, tokenProgram);
 
-      console.error('[transferToken] ATAs:', { from: fromATA.toBase58(), to: toATA.toBase58() });
-      logger.info('[transferToken] ATAs calculated', { fromATA: fromATA.toBase58(), toATA: toATA.toBase58() });
-
+      console.error('TRANSFERTOKEN_BEFORE_INSTRUCTION');
       const transaction = new Transaction();
-      
-      // NOTE: Not pre-creating destination ATA - let transfer handle it or fail with clear error
-
-      console.error('[transferToken] TRANSFER:', { source: fromATA.toBase58(), dest: toATA.toBase58(), programId: tokenProgram.toBase58() });
-      logger.info('[transferToken] Creating instruction', { 
-        source: fromATA.toBase58(),
-        destination: toATA.toBase58(),
-        authority: fromPublicKey.toBase58(),
-        amount: amountInTokens.toString(),
-        programId: tokenProgram.toBase58()
-      });
-      
-      // Use the spl-token helper but verify the result
-      console.error('[transferToken] ABOUT TO CALL createTransferInstruction');
       const transferIx = createTransferInstruction(
         fromATA,
         toATA,
@@ -155,37 +120,20 @@ class SolanaHandler {
         [],
         tokenProgram
       );
-      console.error('[transferToken] createTransferInstruction RETURNED:', { programId: transferIx.programId?.toBase58() });
 
-      logger.info('[transferToken] Instruction created', {
-        instructionProgramId: transferIx.programId?.toBase58(),
-        keysCount: transferIx.keys?.length
-      });
+      console.error('TRANSFERTOKEN_INSTRUCTION_CREATED');
       transaction.add(transferIx);
 
       const { blockhash } = await this.connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = fromPublicKey;
-
       transaction.sign(fromKeypair);
 
-      console.error('[transferToken] READY TO SEND:', { instructionCount: transaction.instructions.length, programs: transaction.instructions.map(ix => ix.programId?.toBase58()) });
-      logger.info('[transferToken] Transaction signed and ready', {
-        instructionCount: transaction.instructions.length,
-        feePayer: transaction.feePayer?.toBase58(),
-        instructionProgramIds: transaction.instructions.map(ix => ix.programId?.toBase58())
-      });
-
-      console.error('[transferToken] SENDING TRANSACTION NOW');
-      logger.info('[transferToken] ⏳ Sending transaction...');
+      console.error('TRANSFERTOKEN_BEFORE_SEND');
       const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
-      console.error('[transferToken] SUCCESS:', signature);
-      logger.info('[transferToken] ✅ Transaction sent', { signature });
       
+      console.error('TRANSFERTOKEN_SUCCESS');
       await this.connection.confirmTransaction(signature, 'confirmed');
-      logger.info('[transferToken] ✅ Transaction confirmed', { signature });
-
-      const programName = isToken2022 ? 'Token-2022' : 'Standard Token Program';
 
       return {
         txHash: signature,
@@ -194,37 +142,7 @@ class SolanaHandler {
         status: 'success',
       };
     } catch (error) {
-      console.error('[transferToken] EXCEPTION:', error.message, error.transactionLogs);
-      
-      // Try to get detailed logs from SendTransactionError
-      if (error.getLogs && typeof error.getLogs === 'function') {
-        try {
-          const detailedLogs = error.getLogs();
-          console.error('[transferToken] DETAILED LOGS FROM SOLANA:', JSON.stringify(detailedLogs, null, 2));
-        } catch (logsErr) {
-          console.error('[transferToken] Could not get detailed logs:', logsErr.message);
-        }
-      }
-      
-      // Log the entire error object
-      console.error('[transferToken] FULL ERROR:', JSON.stringify({
-        name: error.name,
-        message: error.message,
-        code: error.code,
-        signature: error.signature,
-        transactionMessage: error.transactionMessage,
-        transactionLogs: error.transactionLogs,
-        logs: error.logs,
-        // Include keys for debugging
-        keys: Object.keys(error)
-      }, null, 2));
-      
-      logger.error('[transferToken] ❌ FAILED', {
-        errorMessage: error.message,
-        errorCode: error.code,
-        stack: error.stack,
-        transactionLogs: error.transactionLogs
-      });
+      console.error('TRANSFERTOKEN_ERROR:', error.message);
       throw error;
     }
   }
