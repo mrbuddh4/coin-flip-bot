@@ -127,12 +127,14 @@ class SolanaHandler {
 
       const transaction = new Transaction();
 
+      // createTransferInstruction with correct parameter order for v0.4.x
+      // Parameters: source, destination, authority, amount, [], programId
       const transferIx = createTransferInstruction(
         fromATA,
         toATA,
         fromPublicKey,
         BigInt(amountInTokens),
-        [],
+        tokenProgram === TOKEN_PROGRAM_ID ? [] : [], // multiSigners
         tokenProgram
       );
 
