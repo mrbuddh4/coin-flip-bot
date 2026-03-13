@@ -14,6 +14,22 @@ const DatabaseUtils = require('./database/utils');
 const logger = require('./utils/logger');
 const { validateConfig, formatNetworkName, getVideoDuration } = require('./utils/helpers');
 
+// Known token symbols for common Solana tokens
+const KNOWN_TOKENS = {
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
+  'Es9vMFrzaCERmJfrF4H2FYD9DUwRzTk67cBrTSsiv31': 'USDT',
+  'So11111111111111111111111111111111111111112': 'SOL',
+  '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump': 'SID', // Our test token
+};
+
+/**
+ * Get token symbol from mint address
+ */
+function getTokenSymbol(mint) {
+  if (!mint) return 'Token';
+  return KNOWN_TOKENS[mint] || 'Token';
+}
+
 let bot;
 let sessionStore = {};
 let challengeTimeouts = {}; // Store challenge acceptance timeouts by flipId
@@ -1319,8 +1335,8 @@ async function initBot() {
               if (verification.wrongToken === 'NATIVE') {
                 wrongTokenName = verification.network === 'Solana' ? 'SOL (native)' : 'PAX (native)';
               } else {
-                // For non-native wrong tokens, use generic label
-                wrongTokenName = 'Token';
+                // For SPL tokens, lookup the symbol from mint address
+                wrongTokenName = getTokenSymbol(verification.wrongToken);
               }
               messageText = 
                 `⚠️ <b>Wrong Token Detected</b>\n\n` +
@@ -1833,8 +1849,8 @@ async function initBot() {
               if (verification.wrongToken === 'NATIVE') {
                 wrongTokenName = verification.network === 'Solana' ? 'SOL (native)' : 'PAX (native)';
               } else {
-                // For non-native wrong tokens, use generic label
-                wrongTokenName = 'Token';
+                // For SPL tokens, lookup the symbol from mint address
+                wrongTokenName = getTokenSymbol(verification.wrongToken);
               }
               messageText = 
                 `⚠️ <b>Wrong Token Detected</b>\n\n` +
