@@ -98,20 +98,24 @@ class SolanaHandler {
       const mint = new PublicKey(tokenAddress);
       const toPublicKey = new PublicKey(toAddress);
 
-      // Detect if this is a Token-2022 token by fetching mint info
+      // Token-2022 program ID
+      const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
+      
+      // Detect if this is a Token-2022 token by checking mint account owner
       let tokenProgramId = TOKEN_PROGRAM_ID;
       try {
-        const mintInfo = await this.connection.getParsedAccountInfo(mint);
-        if (mintInfo.value?.owner) {
-          const ownerStr = mintInfo.value.owner.toBase58();
-          // Token-2022 program ID: TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A
+        const mintAccountInfo = await this.connection.getAccountInfo(mint);
+        if (mintAccountInfo && mintAccountInfo.owner) {
+          const ownerStr = mintAccountInfo.owner.toBase58();
+          console.log('[transferToken] Mint owner:', ownerStr);
+          
           if (ownerStr === 'TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A') {
-            tokenProgramId = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
-            console.log('[transferToken] Detected Token-2022 token');
+            tokenProgramId = TOKEN_2022_PROGRAM_ID;
+            console.log('[transferToken] ✅ Detected Token-2022 token');
           }
         }
       } catch (err) {
-        console.warn('[transferToken] Could not detect token type, assuming standard Token Program:', err.message);
+        console.warn('[transferToken] Could not fetch mint account info:', err.message);
       }
 
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, tokenProgramId);
@@ -143,7 +147,9 @@ class SolanaHandler {
         fromATA,
         toATA,
         fromPublicKey,
-        amountInTokens
+        amountInTokens,
+        [],
+        tokenProgramId
       );
 
       transaction.add(instruction);
