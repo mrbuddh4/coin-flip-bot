@@ -6,11 +6,10 @@ const {
   SystemProgram,
   LAMPORTS_PER_SOL,
   TransactionInstruction,
-  sendAndConfirmTransaction,
 } = require('@solana/web3.js');
 const {
   getAssociatedTokenAddress,
-  createTransferCheckedInstruction,
+  transferChecked,
   TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
