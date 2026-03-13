@@ -1576,8 +1576,9 @@ async function initBot() {
                 logger.info('[deposit_confirmed] Refunded excess deposit', { 
                   flipId, 
                   excess: excessAmount,
-                recipient: flip.challengerDepositWalletAddress
-              });
+                  recipient: flip.challengerDepositWalletAddress
+                });
+              }
             }
           } catch (excessErr) {
             logger.error('[deposit_confirmed] Failed to refund excess deposit', { flipId, error: excessErr.message });
@@ -2079,7 +2080,8 @@ async function initBot() {
                   excessDisplay: creatorExcessAmount.toString(),
                   excessRaw,
                   recipient: flip.creatorDepositWalletAddress
-              });
+                });
+              }
             }
           } catch (excessErr) {
             logger.error('[creator_deposit_confirmed] Failed to refund excess deposit', { flipId, error: excessErr.message });
