@@ -12,6 +12,7 @@ const {
   transfer,
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const config = require('../config');
@@ -82,7 +83,7 @@ class SolanaHandler {
   }
 
   /**
-   * Transfer SPL token
+   * Transfer SPL token (supports both Token Program and Token-2022)
    */
   async transferToken(tokenAddress, fromPrivateKeyB58, toAddress, amount, decimals) {
     try {
@@ -97,14 +98,30 @@ class SolanaHandler {
       const mint = new PublicKey(tokenAddress);
       const toPublicKey = new PublicKey(toAddress);
 
-      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey);
-      const toATA = await getAssociatedTokenAddress(mint, toPublicKey);
+      // Detect if this is a Token-2022 token by fetching mint info
+      let tokenProgramId = TOKEN_PROGRAM_ID;
+      try {
+        const mintInfo = await this.connection.getParsedAccountInfo(mint);
+        if (mintInfo.value?.owner) {
+          const ownerStr = mintInfo.value.owner.toBase58();
+          // Token-2022 program ID: TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A
+          if (ownerStr === 'TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A') {
+            tokenProgramId = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
+            console.log('[transferToken] Detected Token-2022 token');
+          }
+        }
+      } catch (err) {
+        console.warn('[transferToken] Could not detect token type, assuming standard Token Program:', err.message);
+      }
+
+      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, tokenProgramId);
+      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, tokenProgramId);
 
       const transaction = new Transaction();
 
       // Check if destination ATA exists - CREATE IT if needed
       try {
-        await getAccount(this.connection, toATA);
+        await getAccount(this.connection, toATA, 'confirmed', tokenProgramId);
       } catch (error) {
         // ATA doesn't exist - create it first
         console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
@@ -112,7 +129,8 @@ class SolanaHandler {
           fromPublicKey,  // Payer (bot will pay for ATA creation)
           toATA,          // ATA to create
           toPublicKey,    // Owner of ATA
-          mint            // Token mint
+          mint,           // Token mint
+          tokenProgramId  // Token program (standard or Token-2022)
         );
         transaction.add(createATAInstruction);
       }
