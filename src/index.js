@@ -1241,7 +1241,8 @@ async function initBot() {
               // CRITICAL: Convert current total from raw to display units
               const tokenDecimals = flip.tokenDecimals || 18;
               const currentTotalRaw = parseFloat(verification.amount || 0);
-              const currentTotal = currentTotalRaw / Math.pow(10, tokenDecimals);
+              // For wrong tokens (especially native SOL), amount is already display units
+              const currentTotal = verification.isWrongToken ? currentTotalRaw : (currentTotalRaw / Math.pow(10, tokenDecimals));
               flip.challengerAccumulatedDeposit = currentTotal.toString();
               
               logger.info('[deposit_confirmed] Updated challenger accumulated deposit', {
@@ -1784,13 +1785,8 @@ async function initBot() {
               // CRITICAL: Convert current total from raw to display units
               const tokenDecimals = flip.tokenDecimals || 18;
               const currentTotalRaw = parseFloat(verification.amount || 0);
-              const currentTotal = currentTotalRaw / Math.pow(10, tokenDecimals);
-              flip.creatorAccumulatedDeposit = currentTotal.toString();
-              
-              logger.info('[creator_deposit_confirmed] Updated creator accumulated deposit', {
-                flipId,
-                previousAccumulated,
-                currentTotal,
+                // For wrong tokens (especially native SOL), amount is already display units
+                const currentTotal = verification.isWrongToken ? currentTotalRaw : (currentTotalRaw / Math.pow(10, tokenDecimals));
                 newDepositsSinceLastCheck: currentTotal - previousAccumulated,
               });
             }

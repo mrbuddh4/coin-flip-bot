@@ -288,11 +288,11 @@ class SolanaHandler {
         return null;
       }
 
-      // Use RPC to get recent signatures from the SENDER (not bot) - fetch up to 3 to reduce rate limiting.
-      // Limit to 3 instead of 5 to avoid hitting RPC rate limits on high-volume verification
+      // Use RPC to get recent signatures from the SENDER (not bot) - fetch up to 2 to reduce rate limiting.
+      // Limit to 2 to aggressively avoid hitting RPC rate limits on high-volume verification
       const senderPublicKey = new PublicKey(knownSender);
       const signatures = await this.withExponentialBackoff(() =>
-        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 3 })
+        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 2 })
       );
 
       console.log('[getRecentDepositSender] RPC response from sender', {
@@ -309,10 +309,10 @@ class SolanaHandler {
       const transactions = [];
       for (let i = 0; i < signatures.length; i++) {
         try {
-          // Add delay before each fetch to avoid rate limiting (increased to 1.5s for high-volume)
+          // Add delay before each fetch to avoid rate limiting (increased to 3s for aggressive protection)
           if (i > 0) {
-            console.log(`[getRecentDepositSender] Waiting 1.5s before fetching tx ${i + 1}/${signatures.length}...`);
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            console.log(`[getRecentDepositSender] Waiting 3s before fetching tx ${i + 1}/${signatures.length}...`);
+            await new Promise(resolve => setTimeout(resolve, 3000));
           }
 
           console.log(`[getRecentDepositSender] Fetching tx ${i + 1}/${signatures.length}: ${signatures[i].signature.substring(0, 20)}...`);
@@ -540,10 +540,10 @@ class SolanaHandler {
       });
 
       // Query sender's recent transactions to find any token transfers that DON'T match expected mint
-      // Limit to 5 instead of 10 to reduce RPC rate limiting
+      // Limit to 2 to aggressively avoid RPC rate limiting during refunds
       const senderPublicKey = new PublicKey(senderAddress);
       const signatures = await this.withExponentialBackoff(() =>
-        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 5 })
+        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 2 })
       );
 
       if (!signatures || signatures.length === 0) {
@@ -557,9 +557,9 @@ class SolanaHandler {
 
       for (let i = 0; i < signatures.length; i++) {
         try {
-          // Add delay between requests to respect RPC rate limits
+          // Add delay between requests to respect RPC rate limits (3s for aggressive protection)
           if (i > 0) {
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            await new Promise(resolve => setTimeout(resolve, 3000));
           }
 
           const tx = await this.connection.getTransaction(signatures[i].signature, {
