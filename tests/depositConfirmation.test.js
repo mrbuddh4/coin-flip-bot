@@ -194,6 +194,70 @@ describe('Deposit Confirmation Flow', () => {
     });
   });
 
+  describe('Bug #3: Unit conversion in verification comparison', () => {
+    test('should NOT accept underpayment when comparing raw to display units', () => {
+      // THE BUG: Comparing 500000 (raw) >= 0.99 (display) = TRUE ❌
+      // THE FIX: Convert raw to display first: 500000 / 10^6 = 0.5, then 0.5 >= 0.99 = FALSE ✅
+      
+      const tokenDecimals = 6;
+      const receivedRaw = 500000;  // Raw units from blockchain (0.5 SID)
+      const expectedDisplay = 1;    // Display units (wager amount)
+      
+      // WRONG WAY (bug):
+      const hasDepositWrongWay = receivedRaw >= (expectedDisplay - 0.01);
+      expect(hasDepositWrongWay).toBe(true); // This is the bug - returns TRUE!
+      
+      // CORRECT WAY (fix):
+      const receivedDisplay = receivedRaw / Math.pow(10, tokenDecimals);
+      const variance = expectedDisplay * 0.01;
+      const hasDepositCorrectWay = receivedDisplay >= (expectedDisplay - variance);
+      expect(hasDepositCorrectWay).toBe(false); // Should be FALSE
+      
+      // Verify the conversion happened
+      expect(receivedDisplay).toBe(0.5);
+      expect(receivedDisplay).toBeLessThan(expectedDisplay);
+    });
+
+    test('should correctly handle exact deposit with unit conversion', () => {
+      const tokenDecimals = 6;
+      const receivedRaw = 1000000;  // 1 SID
+      const expectedDisplay = 1;
+      
+      const receivedDisplay = receivedRaw / Math.pow(10, tokenDecimals);
+      const variance = expectedDisplay * 0.01;
+      const hasDeposit = receivedDisplay >= (expectedDisplay - variance);
+      
+      expect(receivedDisplay).toBe(1);
+      expect(hasDeposit).toBe(true);
+    });
+
+    test('should correctly handle overpayment with unit conversion', () => {
+      const tokenDecimals = 6;
+      const receivedRaw = 2000000;  // 2 SID
+      const expectedDisplay = 1;
+      
+      const receivedDisplay = receivedRaw / Math.pow(10, tokenDecimals);
+      const variance = expectedDisplay * 0.01;
+      const hasDeposit = receivedDisplay >= (expectedDisplay - variance);
+      
+      expect(receivedDisplay).toBe(2);
+      expect(hasDeposit).toBe(true);
+    });
+
+    test('should correctly handle deposits with 18-decimal tokens', () => {
+      const tokenDecimals = 18;
+      const receivedRaw = BigInt('1000000000000000000');  // 1 token (18 decimals)
+      const expectedDisplay = 1;
+      
+      const receivedDisplay = parseFloat(receivedRaw) / Math.pow(10, tokenDecimals);
+      const variance = expectedDisplay * 0.01;
+      const hasDeposit = receivedDisplay >= (expectedDisplay - variance);
+      
+      expect(receivedDisplay).toBe(1);
+      expect(hasDeposit).toBe(true);
+    });
+  });
+
   describe('Refund wallet tracking', () => {
     test('should store deposit sender for refund purposes', () => {
       const flip = {

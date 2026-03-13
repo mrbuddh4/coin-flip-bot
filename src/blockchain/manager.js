@@ -97,12 +97,15 @@ class BlockchainManager {
 
       if (depositInfo) {
         // Transaction found on blockchain
-        const receivedAmount = parseFloat(depositInfo.amount);
-        const expectedAmountNum = parseFloat(expectedAmount);
+        const receivedAmountRaw = parseFloat(depositInfo.amount); // Amount in raw blockchain units
+        const expectedAmountNum = parseFloat(expectedAmount);      // Amount in display units
+        
+        // Convert received amount from raw units to display units for comparison
+        const receivedAmountDisplay = receivedAmountRaw / Math.pow(10, tokenDecimals);
         
         // Allow 1% variance for rounding/fees
         const variance = expectedAmountNum * 0.01;
-        const hasDeposit = receivedAmount >= (expectedAmountNum - variance);
+        const hasDeposit = receivedAmountDisplay >= (expectedAmountNum - variance);
         
         // CRITICAL: Check if the deposit is the WRONG TOKEN
         // If it is, reject it so the refund logic can trigger
@@ -111,7 +114,8 @@ class BlockchainManager {
         if (hasWrongTokens) {
           console.log('[verifyDeposit] WRONG TOKEN DETECTED - rejecting deposit to trigger refund', {
             network,
-            received: receivedAmount,
+            receivedRaw: receivedAmountRaw,
+            receivedDisplay: receivedAmountDisplay,
             expected: expectedAmountNum,
             sender: depositInfo.sender,
             wrongTokenInfo: depositInfo.wrongToken,
@@ -121,7 +125,7 @@ class BlockchainManager {
           // Return with depositSender so refund logic can execute
           return {
             received: false,
-            amount: receivedAmount,
+            amount: receivedAmountRaw,
             expected: expectedAmountNum,
             botWallet: botWallet,
             depositSender: depositInfo.sender,  // Keep sender so refund can happen!
@@ -136,15 +140,17 @@ class BlockchainManager {
 
         console.log('[verifyDeposit] Blockchain transaction found', {
           network,
-          received: receivedAmount,
+          receivedRaw: receivedAmountRaw,
+          receivedDisplay: receivedAmountDisplay,
           expected: expectedAmountNum,
           sender: depositInfo.sender,
           hasDeposit,
+          variance,
         });
 
         return {
           received: hasDeposit,
-          amount: receivedAmount,
+          amount: receivedAmountRaw,
           expected: expectedAmountNum,
           botWallet: botWallet,
           depositSender: depositInfo.sender,
