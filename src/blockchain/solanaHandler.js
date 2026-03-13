@@ -417,7 +417,13 @@ class SolanaHandler {
 
       if (deposits.length > 0) {
         console.log('[getRecentDepositSender] Found matching deposits from sender:', deposits.length);
-        return deposits[0];
+        // Sum all deposits from sender (handle multiple transfers accumulating)
+        const totalAmount = deposits.reduce((sum, dep) => sum + parseFloat(dep.amount), 0);
+        console.log('[getRecentDepositSender] Total accumulated from multiple deposits:', { count: deposits.length, total: totalAmount });
+        return {
+          ...deposits[0], // Use first deposit's metadata
+          amount: totalAmount.toString(), // But use the cumulative amount
+        };
       }
 
       // Return wrong token deposit instead of throwing - let caller decide what to do

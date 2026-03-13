@@ -1454,7 +1454,8 @@ async function initBot() {
         });
 
         // If they sent more than the wager, refund the excess (both in display units)
-        const receivedAmount = parseFloat(flip.challengerAccumulatedDeposit || wagerAmountDisplay);
+        // Use accumulated deposit if available, otherwise use wager as fallback
+        const receivedAmount = flip.challengerAccumulatedDeposit ? parseFloat(flip.challengerAccumulatedDeposit) : wagerAmountDisplay;
         const wagerAmount = wagerAmountDisplay;
         let overpaymentDetected = false;
         
