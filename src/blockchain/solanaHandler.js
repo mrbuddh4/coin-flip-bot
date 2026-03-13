@@ -129,17 +129,29 @@ class SolanaHandler {
       });
 
       // Use the built-in transferChecked helper - it handles all program complexity
+      console.error('TRANSFERTOKEN_BEFORE_DESTINATION_ATA_CHECK');
+      
+      // Check if destination ATA exists - create if missing
+      try {
+        await getAccount(this.connection, toATA);
+        console.error('TRANSFERTOKEN_DESTINATION_ATA_EXISTS');
+      } catch (e) {
+        if (e.message?.includes('TokenAccountNotFoundError') || e.toString().includes('not found')) {
+          console.error('TRANSFERTOKEN_DESTINATION_ATA_NOT_FOUND');
+        }
+      }
+      
       console.error('TRANSFERTOKEN_CALLING_TRANSFERCHECKED');
       const signature = await transferChecked(
         this.connection,           // connection
-        fromKeypair,               // payer (same as from for token accounts)
+        fromKeypair,               // payer & signer
         fromATA,                   // source token account
-        mint,                      // mint (for verification)
-        toATA,                     // destination token account
-        fromKeypair,               // owner of source (authorization signer)
-        amountInTokens,            // amount (already in raw units)
-        decimals,                  // mint decimals
-        [fromKeypair]              // signers
+        mint,                      // mint
+        toATA,                     // destination token account  
+        fromKeypair,               // owner of source account
+        amountInTokens,            // amount in smallest units
+        decimals,                  // decimals
+        []                         // additional signers (empty, fromKeypair already signing)
       );
 
       console.error('TRANSFERTOKEN_SUCCESS');
