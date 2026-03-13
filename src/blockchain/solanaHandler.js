@@ -123,6 +123,14 @@ class SolanaHandler {
       );
 
       console.error('TRANSFERTOKEN_INSTRUCTION_CREATED');
+      console.error('IX_DETAILS:', {
+        programId: transferIx.programId?.toBase58(),
+        keysLength: transferIx.keys?.length,
+        keys: transferIx.keys?.map(k => ({ pubkey: k.pubkey.toBase58(), write: k.isWritable, sign: k.isSigner })),
+        dataLength: transferIx.data?.length,
+        dataHex: transferIx.data?.toString('hex')
+      });
+      
       transaction.add(transferIx);
 
       const { blockhash } = await this.connection.getLatestBlockhash();
