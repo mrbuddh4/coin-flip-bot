@@ -764,7 +764,7 @@ class SolanaHandler {
           // Get bot's token account for this wrong token
           const botTokenAccount = await getAssociatedTokenAddress(
             new PublicKey(refund.wrongTokenMint),
-            this.botKeypair.publicKey
+            this.wallet.publicKey
           );
 
           // Verify bot has the tokens to refund
@@ -792,20 +792,42 @@ class SolanaHandler {
             continue;
           }
 
+          // Get or create sender's token account for this token
+          const senderTokenAccount = await getAssociatedTokenAddress(
+            new PublicKey(refund.wrongTokenMint),
+            new PublicKey(refund.senderAddress)
+          );
+
+          // Create transaction
+          const transaction = new Transaction();
+
+          // Check if sender's ATA exists - CREATE IT if needed
+          try {
+            await getAccount(this.connection, senderTokenAccount);
+          } catch (error) {
+            // ATA doesn't exist - create it first
+            console.log('[refundIncorrectTokens] Sender ATA does not exist, creating:', senderTokenAccount.toBase58());
+            const createATAInstruction = createAssociatedTokenAccountInstruction(
+              this.wallet.publicKey,     // Payer (bot pays for ATA creation)
+              senderTokenAccount,        // ATA to create
+              new PublicKey(refund.senderAddress), // Owner of ATA
+              new PublicKey(refund.wrongTokenMint) // Token mint
+            );
+            transaction.add(createATAInstruction);
+          }
+
           // Create transfer instruction
           const transferInstruction = createTransferInstruction(
             botTokenAccount,           // from (bot's token account)
             senderTokenAccount,        // to (sender's token account)
-            this.botKeypair.publicKey, // owner
+            this.wallet.publicKey, // owner
             BigInt(refund.amount)      // amount in raw units
           );
-
-          // Create and send transaction
-          const transaction = new Transaction().add(transferInstruction);
-          transaction.feePayer = this.botKeypair.publicKey;
+          transaction.add(transferInstruction);
+          transaction.feePayer = this.wallet.publicKey;
           transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
 
-          const signature = await this.connection.sendTransaction(transaction, [this.botKeypair], {
+          const signature = await this.connection.sendTransaction(transaction, [this.wallet], {
             maxRetries: 3,
           });
 
