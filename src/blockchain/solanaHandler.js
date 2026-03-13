@@ -11,6 +11,7 @@ const {
   getAccount,
   transfer,
   createTransferInstruction,
+  createAssociatedTokenAccountInstruction,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const config = require('../config');
@@ -95,12 +96,19 @@ class SolanaHandler {
 
       const transaction = new Transaction();
 
-      // Check if destination ATA exists
+      // Check if destination ATA exists - CREATE IT if needed
       try {
         await getAccount(this.connection, toATA);
       } catch (error) {
-        // ATA doesn't exist, but we'll let the transfer fail gracefully
-        // In production, you might want to create the ATA first
+        // ATA doesn't exist - create it first
+        console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
+        const createATAInstruction = createAssociatedTokenAccountInstruction(
+          fromPublicKey,  // Payer (bot will pay for ATA creation)
+          toATA,          // ATA to create
+          toPublicKey,    // Owner of ATA
+          mint            // Token mint
+        );
+        transaction.add(createATAInstruction);
       }
 
       const amountInTokens = Math.floor(amount * Math.pow(10, decimals));
@@ -325,12 +333,34 @@ class SolanaHandler {
 
       console.log('[getRecentDepositSender] Fetched transactions from sender', { count: transactions.length });
 
+      // Calculate cutoff time for filtering deposits to this specific flip
+      let filterByTime = false;
+      let cutoffTimestamp = 0;
+      if (flipCreatedAt) {
+        const createdTime = new Date(flipCreatedAt);
+        cutoffTimestamp = Math.floor(createdTime.getTime() / 1000); // Convert to Unix timestamp in seconds
+        filterByTime = true;
+        console.log('[getRecentDepositSender] Filtering deposits by flip creation time', { 
+          flipCreatedAt, 
+          cutoffTimestamp,
+          createdDateString: createdTime.toISOString() 
+        });
+      }
+
       // Collect deposits from sender to bot
       let deposits = [];
       let wrongTokenDeposits = [];
 
       for (const tx of transactions) {
         try {
+          // Skip transactions that happened before this flip was created
+          if (filterByTime && tx.blockTime) {
+            if (tx.blockTime < cutoffTimestamp) {
+              console.log(`[getRecentDepositSender] Skipping tx ${tx.signature.substring(0, 20)} (blockTime ${tx.blockTime} < cutoff ${cutoffTimestamp})`);
+              continue;
+            }
+          }
+
           // Parse token transfers from metadata
           const postBalances = tx.meta?.postTokenBalances || [];
           const preBalances = tx.meta?.preTokenBalances || [];
