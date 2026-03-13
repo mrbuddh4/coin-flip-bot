@@ -142,6 +142,7 @@ class BlockchainManager {
             verified: 'blockchain',
             wrongToken: depositInfo.wrongToken,  // Include info about wrong token (e.g., 'NATIVE' or token address)
             isWrongToken: true,  // Flag indicating this is a wrong token scenario
+            network: network,  // CRITICAL: Include network for correct token label in message
             error: 'Wrong token sent - will refund automatically',
           };
         }
