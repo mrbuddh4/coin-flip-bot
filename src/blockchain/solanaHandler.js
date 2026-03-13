@@ -129,6 +129,24 @@ class SolanaHandler {
 
       const transaction = new Transaction();
 
+      // Check if destination ATA exists - CREATE IT if needed
+      try {
+        await getAccount(this.connection, toATA);
+        logger.info('[transferToken] Destination ATA already exists');
+      } catch (error) {
+        logger.info('[transferToken] Destination ATA does not exist, creating it');
+        const ATA_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+        const createATAIx = createAssociatedTokenAccountInstruction(
+          fromPublicKey,    // Payer (sender pays for ATA creation)
+          toATA,            // ATA to create
+          toPublicKey,      // Owner of ATA
+          mint,             // Token mint
+          tokenProgram      // Token program ID
+        );
+        transaction.add(createATAIx);
+        logger.info('[transferToken] Created ATA instruction for destination');
+      }
+
       logger.info('[transferToken] Creating instruction', { 
         source: fromATA.toBase58(),
         destination: toATA.toBase58(),
