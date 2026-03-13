@@ -139,7 +139,7 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                       }
                     }
 
-                    // Add aggressive delays BEFORE refund - same pattern as working refundIncorrectTokens
+                    // Add aggressive delays BEFORE refund to prevent RPC rate limiting
                     logger.info('[challengeTimeout] Waiting 5s before initiating refund RPC call...');
                     await new Promise(resolve => setTimeout(resolve, 5000));
 
@@ -1429,7 +1429,7 @@ async function initBot() {
                       }
                     }
 
-                    // Add aggressive delays BEFORE refund - same pattern as working refundIncorrectTokens
+                    // Add aggressive delays BEFORE refund to prevent RPC rate limiting
                     logger.info('[insufficient_deposit_timeout_challenger] Waiting 5s before initiating refund RPC call...');
                     await new Promise(resolve => setTimeout(resolve, 5000));
 

@@ -109,7 +109,9 @@ class SolanaHandler {
         fromPublicKey,              // Payer
         toATA,                      // Associated token account address
         toPublicKey,                // Owner of the associated token account
-        mint                        // Mint of the token
+        mint,                       // Mint of the token
+        TOKEN_PROGRAM_ID,           // Token Program ID
+        ASSOCIATED_TOKEN_PROGRAM_ID // Associated Token Program ID
       );
       transaction.add(createATAInstruction);
 
@@ -557,7 +559,7 @@ class SolanaHandler {
         flipCreatedAt,
       });
 
-      // Add aggressive delay BEFORE attempting any RPC calls to reduce rate limiting
+      // Add aggressive delay BEFORE attempting any RPC calls to prevent rate limiting
       console.log('[refundIncorrectTokens] Waiting 5s before querying sender transactions...');
       await new Promise(resolve => setTimeout(resolve, 5000));
 
