@@ -102,11 +102,24 @@ class SolanaHandler {
       // Create empty transaction FIRST (like working refundIncorrectTokens)
       const transaction = new Transaction();
 
-      // No ATA check - recipient must already have ATA if they have balance
-      console.log('[transferToken] Creating transfer to:', toATA.toBase58());
+      // Check if destination ATA exists - CREATE IT if needed (EXACT same pattern as working refundIncorrectTokens)
+      try {
+        await getAccount(this.connection, toATA);
+      } catch (error) {
+        // ATA doesn't exist - create it first
+        console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
+        const createATAInstruction = createAssociatedTokenAccountInstruction(
+          fromPublicKey,              // Payer (sender pays for ATA creation)
+          toATA,                      // ATA to create
+          toPublicKey,                // Owner of ATA
+          mint                        // Token mint
+        );
+        transaction.add(createATAInstruction);
+      }
 
       const amountInTokens = BigInt(Math.floor(amount * Math.pow(10, decimals)));
 
+      // Create transfer instruction
       const instruction = createTransferInstruction(
         fromATA,
         toATA,
@@ -116,6 +129,15 @@ class SolanaHandler {
 
       transaction.add(instruction);
 
+      // Log all accounts in the transaction before signing
+      console.log('[transferToken] Transaction accounts:', {
+        instruction_keys: instruction.keys.map(k => ({
+          pubkey: k.pubkey.toBase58(),
+          isSigner: k.isSigner,
+          isWritable: k.isWritable
+        }))
+      });
+
       // Set feePayer and recentBlockhash AFTER adding instructions (like working refundIncorrectTokens)
       transaction.feePayer = fromPublicKey;
       transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
@@ -123,11 +145,23 @@ class SolanaHandler {
       transaction.sign(fromKeypair);
 
       console.log('[transferToken] Sending transaction...');
-      const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
+      const signature = await this.connection.sendTransaction(transaction, [fromKeypair], {
+        maxRetries: 3,
+      });
       console.log('[transferToken] Transaction sent with signature:', signature);
       
+      // Check confirmation with timeout (like working refundIncorrectTokens)
       console.log('[transferToken] Confirming transaction...');
-      await this.connection.confirmTransaction(signature, 'confirmed');
+      const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+      
+      if (confirmation.value.err) {
+        console.error('[transferToken] Transaction failed', {
+          signature,
+          error: confirmation.value.err,
+        });
+        throw new Error(`Transaction failed: ${confirmation.value.err}`);
+      }
+      
       console.log('[transferToken] Transaction confirmed');
 
       return {
