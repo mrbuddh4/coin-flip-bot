@@ -274,7 +274,7 @@ class FlipHandler {
           // Check if wrong token was detected
           let messageText;
           if (verification.isWrongToken) {
-            const wrongTokenName = verification.wrongToken === 'NATIVE' ? 'PAX (native)' : (verification.wrongToken || 'unknown token');
+              const wrongTokenName = verification.wrongToken === 'NATIVE' ? 'SOL (native)' : (verification.wrongToken || 'unknown token');
             messageText = 
               `⚠️ <b>Wrong Token Detected</b>\n\n` +
               `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +

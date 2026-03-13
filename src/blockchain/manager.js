@@ -97,11 +97,19 @@ class BlockchainManager {
 
       if (depositInfo) {
         // Transaction found on blockchain
-        const receivedAmountRaw = parseFloat(depositInfo.amount); // Amount in raw blockchain units
+        const receivedAmountRaw = parseFloat(depositInfo.amount); // Amount returned from handler
         const expectedAmountNum = parseFloat(expectedAmount);      // Amount in display units
         
-        // Convert received amount from raw units to display units for comparison
-        const receivedAmountDisplay = receivedAmountRaw / Math.pow(10, tokenDecimals);
+        // SPECIAL CASE: For native SOL tokens, amount is already in display units (SOL)
+        // For SPL tokens, amount is in raw units and needs conversion
+        let receivedAmountDisplay;
+        if (depositInfo.tokenMint === 'NATIVE') {
+          // Native SOL - amount is already in display units (SOL)
+          receivedAmountDisplay = receivedAmountRaw;
+        } else {
+          // SPL token - convert from raw units to display units
+          receivedAmountDisplay = receivedAmountRaw / Math.pow(10, tokenDecimals);
+        }
         
         // Allow 1% variance for rounding/fees
         const variance = expectedAmountNum * 0.01;

@@ -540,7 +540,7 @@ class SolanaHandler {
       });
 
       // Query sender's recent transactions to find any token transfers that DON'T match expected mint
-n      // Limit to 5 instead of 10 to reduce RPC rate limiting
+      // Limit to 5 instead of 10 to reduce RPC rate limiting
       const senderPublicKey = new PublicKey(senderAddress);
       const signatures = await this.withExponentialBackoff(() =>
         this.connection.getSignaturesForAddress(senderPublicKey, { limit: 5 })
