@@ -102,24 +102,9 @@ class SolanaHandler {
       // Create empty transaction FIRST (like working refundIncorrectTokens)
       const transaction = new Transaction();
 
-      // Check if recipient ATA exists - CREATE IT if needed
-      try {
-        console.log('[transferToken] Checking if recipient ATA exists:', toATA.toBase58());
-        await getAccount(this.connection, toATA);
-        console.log('[transferToken] Recipient ATA exists');
-      } catch (error) {
-        // ATA doesn't exist - create it first
-        console.log('[transferToken] Recipient ATA does not exist, creating:', toATA.toBase58());
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,              // Payer (bot pays for ATA creation)
-          toATA,                      // Associated token account address
-          toPublicKey,                // Owner of the associated token account
-          mint                        // Mint of the token
-        );
-        transaction.add(createATAInstruction);
-      }
+      // No ATA check - recipient must already have ATA if they have balance
+      console.log('[transferToken] Creating transfer to:', toATA.toBase58());
 
-      console.log('[transferToken] About to create transfer instruction');
       const amountInTokens = BigInt(Math.floor(amount * Math.pow(10, decimals)));
 
       const instruction = createTransferInstruction(
