@@ -9,7 +9,7 @@ const {
 } = require('@solana/web3.js');
 const {
   getAssociatedTokenAddress,
-  transferChecked,
+  createTransferCheckedInstruction,
   TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
@@ -112,9 +112,6 @@ class SolanaHandler {
         fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
       }
       
-      // For destination ATA, derive with Token-2022 program for SID
-      const ataProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-      
       console.error('TRANSFERTOKEN_BEFORE_DESTINATION_ATA_CHECK');
       
       // For Token-2022, query the destination user's token accounts to find their SID account
@@ -153,20 +150,35 @@ class SolanaHandler {
         amountDisplay: amountNum
       });
 
-      console.error('TRANSFERTOKEN_CALLING_TRANSFERCHECKED');
-      const signature = await transferChecked(
-        this.connection,           // connection
-        fromKeypair,               // payer & signer
-        fromATA,                   // source token account
-        mint,                      // mint
-        toATA,                     // destination token account  
-        fromKeypair,               // owner of source account
-        amountInTokens,            // amount in smallest units
-        decimals,                  // decimals
-        [],                        // additional signers
-        undefined,                 // confirmOptions
-        isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID  // token program ID
+      console.error('TRANSFERTOKEN_CREATING_INSTRUCTION');
+      
+      // Create transfer instruction with ONLY the token program (no ATA Program or SystemProgram)
+      const transferInstruction = createTransferCheckedInstruction(
+        fromATA,                  // source token account
+        mint,                     // mint
+        toATA,                    // destination token account
+        fromPublicKey,            // owner of source (will sign)
+        amountInTokens,           // amount in smallest units
+        decimals,                 // decimals
+        [],                       // additional signers (empty, owner signs tx)
+        tokenProgram              // token program (Token-2022 or Token Program)
       );
+
+      // Build transaction with ONLY the transfer instruction (no extra programs)
+      const transaction = new Transaction().add(transferInstruction);
+      
+      const { blockhash } = await this.connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = fromKeypair.publicKey;
+
+      console.error('TRANSFERTOKEN_SIGNING_TRANSACTION');
+      transaction.sign(fromKeypair);
+
+      console.error('TRANSFERTOKEN_SENDING_TRANSACTION');
+      const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
+      
+      console.error('TRANSFERTOKEN_CONFIRMING_TRANSACTION');
+      await this.connection.confirmTransaction(signature, 'confirmed');
 
       console.error('TRANSFERTOKEN_SUCCESS');
       return {
