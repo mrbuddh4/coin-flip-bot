@@ -160,7 +160,6 @@ class SolanaHandler {
       throw error;
     }
   }
-  }
 
   /**
    * Transfer native SOL
