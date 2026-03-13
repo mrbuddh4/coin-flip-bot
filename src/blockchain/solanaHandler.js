@@ -16,6 +16,7 @@ const {
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const config = require('../config');
+const logger = require('../utils/logger');
 
 class SolanaHandler {
   constructor() {
@@ -88,9 +89,7 @@ class SolanaHandler {
    */
   async transferToken(tokenAddress, fromPrivateKeyB58, toAddress, amount, decimals) {
     try {
-      console.log('=== [transferToken] CALLED ===');
-      console.log('tokenAddress:', tokenAddress);
-      console.log('amount:', amount, 'decimals:', decimals);
+      logger.info('[transferToken] 🚀 CALLED - Starting token transfer', { tokenAddress, toAddress, amount, decimals });
       
       // Validate mint address format
       const isValidMint = tokenAddress && tokenAddress.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
@@ -116,26 +115,27 @@ class SolanaHandler {
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
       const allowOwnerOffCurve = isToken2022; // true for Token-2022, false for standard
 
-      console.log(`[transferToken] Using program:`, tokenProgram.toBase58());
-      console.log(`[transferToken] Is Token-2022:`, isToken2022);
-      console.log(`[transferToken] Amount in tokens:`, amountInTokens);
+      logger.info('[transferToken] Program selection', { 
+        tokenMint: tokenAddress,
+        isToken2022, 
+        tokenProgram: tokenProgram.toBase58(), 
+        amountInTokens 
+      });
 
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, allowOwnerOffCurve, tokenProgram);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, allowOwnerOffCurve, tokenProgram);
 
-      console.log(`[transferToken] From ATA: ${fromATA.toBase58()}`);
-      console.log(`[transferToken] To ATA: ${toATA.toBase58()}`);
+      logger.info('[transferToken] ATAs calculated', { fromATA: fromATA.toBase58(), toATA: toATA.toBase58() });
 
       const transaction = new Transaction();
 
-      // createTransferInstruction with correct parameter order for v0.4.x
-      // Parameters: source, destination, authority, amount, multiSigners, programId
-      console.log('[transferToken] Creating transfer instruction with:');
-      console.log('  - programId:', tokenProgram.toBase58());
-      console.log('  - source:', fromATA.toBase58());
-      console.log('  - destination:', toATA.toBase58());
-      console.log('  - authority:', fromPublicKey.toBase58());
-      console.log('  - amount:', amountInTokens.toString());
+      logger.info('[transferToken] Creating instruction', { 
+        source: fromATA.toBase58(),
+        destination: toATA.toBase58(),
+        authority: fromPublicKey.toBase58(),
+        amount: amountInTokens.toString(),
+        programId: tokenProgram.toBase58()
+      });
       
       const transferIx = createTransferInstruction(
         fromATA,
@@ -146,8 +146,10 @@ class SolanaHandler {
         tokenProgram
       );
 
-      console.log('[transferToken] Transfer instruction created successfully');
-      console.log('  - Instruction program:', transferIx.programId?.toBase58());
+      logger.info('[transferToken] Instruction created', {
+        instructionProgramId: transferIx.programId?.toBase58(),
+        keysCount: transferIx.keys?.length
+      });
       transaction.add(transferIx);
 
       const { blockhash } = await this.connection.getLatestBlockhash();
@@ -156,30 +158,20 @@ class SolanaHandler {
 
       transaction.sign(fromKeypair);
 
-      console.log(`[transferToken] Transaction details:`, {
-        version: transaction.version,
-        feePayer: transaction.feePayer?.toBase58(),
-        recentBlockhash: transaction.recentBlockhash,
+      logger.info('[transferToken] Transaction signed and ready', {
         instructionCount: transaction.instructions.length,
+        feePayer: transaction.feePayer?.toBase58(),
+        instructionProgramIds: transaction.instructions.map(ix => ix.programId?.toBase58())
       });
-      
-      // Log the instruction details
-      if (transaction.instructions.length > 0) {
-        const ix = transaction.instructions[0];
-        console.log(`[transferToken] Instruction details:`, {
-          programId: ix.programId?.toBase58(),
-          keysCount: ix.keys?.length,
-        });
-      }
 
-      console.log(`[transferToken] Sending signed transaction...`);
+      logger.info('[transferToken] ⏳ Sending transaction...');
       const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
-      console.log(`[transferToken] Transaction sent! Signature: ${signature}`);
+      logger.info('[transferToken] ✅ Transaction sent', { signature });
       
       await this.connection.confirmTransaction(signature, 'confirmed');
+      logger.info('[transferToken] ✅ Transaction confirmed', { signature });
 
       const programName = isToken2022 ? 'Token-2022' : 'Standard Token Program';
-      console.log(`[transferToken] ✅ ${programName} transfer SUCCEEDED!`);
 
       return {
         txHash: signature,
@@ -188,8 +180,12 @@ class SolanaHandler {
         status: 'success',
       };
     } catch (error) {
-      console.log(`[transferToken] ❌ CAUGHT ERROR:`, error.message);
-      console.log(error);
+      logger.error('[transferToken] ❌ FAILED', {
+        errorMessage: error.message,
+        errorCode: error.code,
+        stack: error.stack,
+        transactionLogs: error.transactionLogs
+      });
       throw error;
     }
   }
