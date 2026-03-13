@@ -85,7 +85,7 @@ class FlipHandler {
       // Find active session from group-initiated flip
       const session = await models.BotSession.findOne({
         where: { userId, sessionType: 'INITIATING' },
-        order: [['createdAt', 'DESC']],
+        order: [['updatedAt', 'DESC']], // Use updatedAt to get the most recently modified session
       });
 
       if (!session) {
