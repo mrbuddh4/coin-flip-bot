@@ -399,14 +399,13 @@ class SolanaHandler {
             const isToBot = (accountStr === botWalletAddress || accountStr === expectedBotATAStr || accountStr === correctBotATA);
             
             if (!isToBot) {
-              // For ATA accounts, we can't reliably check ownership from transaction data alone
-              // So we'll accept transfers to ATAs we haven't explicitly recognized
-              // This allows us to receive other SPL tokens as "wrong token"
-              const isLikelyBotATA = accountStr.length === expectedBotATAStr.length && 
-                                     accountStr.match(/^[1-9A-HJ-NP-Z]{43,44}$/); // Solana base58 address format
+              // For ATA accounts, accept any valid Solana base58 address that isn't the sender
+              // This allows us to receive SPL tokens (correct or incorrect) to bot ATAs
+              const isValidSolanaAddress = accountStr.match(/^[1-9A-HJ-NP-Z]{43,44}$/); // Solana base58 format
+              const isSenderAccount = accountStr === knownSender || accountStr === botWalletAddress;
               
-              if (!isLikelyBotATA) {
-                console.log(`[getRecentDepositSender] Transfer NOT to bot. Bot wallet=${botWalletAddress}, Expected ATA=${expectedBotATAStr}, Correct ATA=${correctBotATA}`);
+              if (!isValidSolanaAddress || isSenderAccount) {
+                console.log(`[getRecentDepositSender] Transfer NOT to bot. Account=${accountStr}, Is sender=${isSenderAccount}, Valid format=${!!isValidSolanaAddress}`);
                 continue;
               }
               
