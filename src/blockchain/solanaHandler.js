@@ -12,7 +12,6 @@ const {
   getAccount,
   transfer,
   createTransferInstruction,
-  createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
@@ -133,20 +132,6 @@ class SolanaHandler {
       });
       
       const transaction = new Transaction();
-      
-      // For Token-2022, ensure destination ATA exists (idempotent - won't fail if exists)
-      if (isToken2022) {
-        console.error('TRANSFERTOKEN_CREATING_TOKEN2022_ATA');
-        const createAtaIx = createAssociatedTokenAccountIdempotentInstruction(
-          fromPublicKey,  // payer (bot)
-          toATA,          // associated token account
-          toPublicKey,    // owner (recipient)
-          mint,           // mint
-          tokenProgram    // Token-2022 program
-        );
-        transaction.add(createAtaIx);
-        console.error('TRANSFERTOKEN_CREATED_TOKEN2022_ATA');
-      }
       
       const transferIx = createTransferInstruction(
         fromATA,
