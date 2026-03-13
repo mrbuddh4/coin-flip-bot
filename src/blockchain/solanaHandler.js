@@ -86,6 +86,12 @@ class SolanaHandler {
    */
   async transferToken(tokenAddress, fromPrivateKeyB58, toAddress, amount, decimals) {
     try {
+      // Validate mint address format
+      const isValidMint = tokenAddress && tokenAddress.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
+      if (!isValidMint) {
+        throw new Error(`Invalid mint address: ${tokenAddress}`);
+      }
+
       const fromKeypair = Keypair.fromSecretKey(bs58.decode(fromPrivateKeyB58));
       const fromPublicKey = fromKeypair.publicKey;
       const mint = new PublicKey(tokenAddress);
@@ -111,7 +117,9 @@ class SolanaHandler {
         transaction.add(createATAInstruction);
       }
 
-      const amountInTokens = Math.floor(amount * Math.pow(10, decimals));
+      // Ensure amount is a number
+      const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
+      const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
 
       const instruction = createTransferInstruction(
         fromATA,
