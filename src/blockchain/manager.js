@@ -250,16 +250,22 @@ class BlockchainManager {
     const handler = this.getHandler(network);
 
     try {
+      console.error(`[BlockchainManager.sendWinnings] CALLED: network=${network}, token=${tokenAddress}, recipient=${winnerAddress}, amount=${amount}, decimals=${decimals}`);
+      
       let result;
       const botPrivateKey = network === 'EVM' ? config.evm.privateKey : config.solana.privateKey;
       
       if (tokenAddress === 'NATIVE') {
+        console.error('[BlockchainManager.sendWinnings] Transferring NATIVE tokens');
         result = await handler.transferNative(botPrivateKey, winnerAddress, amount);
       } else {
+        console.error('[BlockchainManager.sendWinnings] Transferring SPL/EVM tokens');
         result = await handler.transferToken(tokenAddress, botPrivateKey, winnerAddress, amount, decimals);
       }
+      console.error('[BlockchainManager.sendWinnings] SUCCESS:', result);
       return result;
     } catch (error) {
+      console.error('[BlockchainManager.sendWinnings] ERROR:', error.message);
       console.error('Error sending winnings:', error);
       throw error;
     }
