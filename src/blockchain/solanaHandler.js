@@ -542,11 +542,15 @@ class SolanaHandler {
         flipCreatedAt,
       });
 
+      // Add aggressive delay BEFORE attempting any RPC calls to reduce rate limiting
+      console.log('[refundIncorrectTokens] Waiting 5s before querying sender transactions...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+
       // Query sender's recent transactions to find any token transfers that DON'T match expected mint
-      // Limit to 2 to aggressively avoid RPC rate limiting during refunds
+      // Limit to 1 transaction only to minimize RPC calls
       const senderPublicKey = new PublicKey(senderAddress);
       const signatures = await this.withExponentialBackoff(() =>
-        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 2 })
+        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 1 })
       );
 
       if (!signatures || signatures.length === 0) {

@@ -1270,7 +1270,11 @@ async function initBot() {
               flip.data = { ...flip.data, refundAttempted: true };
               await flip.save();
               
-              // Call refund immediately on first detection, don't throttle this
+              // Wait 10 seconds before calling refund to let RPC recover from rate limiting
+              logger.info('[deposit_confirmed] Waiting 10s before attempting refund to avoid RPC rate limits', { flipId });
+              await new Promise(resolve => setTimeout(resolve, 10000));
+              
+              // Call refund with RPC back-off
               const refundResults = await blockchainManager.refundIncorrectTokens(
                 flip.tokenNetwork,
                 flip.tokenAddress,
@@ -1887,7 +1891,11 @@ async function initBot() {
               flip.data = { ...flip.data, refundAttempted: true };
               await flip.save();
               
-              // Call refund immediately on first detection, don't throttle this
+              // Wait 10 seconds before calling refund to let RPC recover from rate limiting
+              logger.info('[creator_deposit_confirmed] Waiting 10s before attempting refund to avoid RPC rate limits', { flipId });
+              await new Promise(resolve => setTimeout(resolve, 10000));
+              
+              // Call refund with RPC back-off
               const refundResults = await blockchainManager.refundIncorrectTokens(
                 flip.tokenNetwork,
                 flip.tokenAddress,
