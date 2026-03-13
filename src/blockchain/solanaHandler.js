@@ -151,8 +151,22 @@ class SolanaHandler {
         status: 'success',
       };
     } catch (error) {
-      console.error('TRANSFERTOKEN_ERROR:', error.message);
-      throw error;
+      console.error('TRANSFERTOKEN_ERROR:', error.message);      
+      // Check if this is a SendTransactionError with transaction logs
+      if (error?.name === 'SendTransactionError' && typeof error?.getLogs === 'function') {
+        try {
+          const logs = error.getLogs();
+          console.error('TRANSFERTOKEN_ERROR_LOGS:', logs);
+        } catch (logError) {
+          console.error('Could not get transaction logs:', logError?.message);
+        }
+      }
+      
+      // Log full error if it has a cause or additional details
+      if (error?.cause) {
+        console.error('TRANSFERTOKEN_ERROR_CAUSE:', error.cause?.message);
+      }
+            throw error;
     }
   }
 
