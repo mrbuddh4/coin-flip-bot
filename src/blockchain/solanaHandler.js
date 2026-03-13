@@ -104,11 +104,12 @@ class SolanaHandler {
       const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
       const isToken2022 = tokenAddress === '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump';
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-      const allowOwnerOffCurve = isToken2022;
 
       console.error('TRANSFERTOKEN_BEFORE_ATA_CREATION');
-      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, allowOwnerOffCurve, tokenProgram);
-      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, allowOwnerOffCurve, tokenProgram);
+      // NOTE: Calculate ATAs using standard parameters - ATA Program is always the same
+      // Only the transfer instruction itself needs the Token-2022 program ID
+      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
+      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
 
       console.error('TRANSFERTOKEN_BEFORE_INSTRUCTION');
       const transaction = new Transaction();
