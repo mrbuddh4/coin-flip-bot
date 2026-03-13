@@ -9,10 +9,8 @@ const {
 } = require('@solana/web3.js');
 const {
   getAssociatedTokenAddress,
-  getAccount,
   transferChecked,
   TOKEN_PROGRAM_ID,
-  getOrCreateAssociatedTokenAccount,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const config = require('../config');
@@ -122,30 +120,11 @@ class SolanaHandler {
       // For Token-2022, ensure destination ATA exists with correct program
       let toATA;
       if (isToken2022) {
-        console.error('TRANSFERTOKEN_CREATING_DESTINATION_ATA_TOKEN2022');
-        try {
-          // Use getOrCreateAssociatedTokenAccount for Token-2022 with explicit program
-          const destinationAccount = await getOrCreateAssociatedTokenAccount(
-            this.connection,
-            fromKeypair,              // payer
-            mint,                     // mint
-            toPublicKey,              // owner of token account
-            false,                    // allowOwnerOffCurve
-            'processed',              // commitment
-            {},                       // confirmOptions
-            TOKEN_2022_PROGRAM_ID     // token program ID
-          );
-          toATA = destinationAccount.address;
-          console.error('TRANSFERTOKEN_DESTINATION_ATA_CREATED_OR_EXISTS:', toATA.toBase58());
-        } catch (ataError) {
-          console.error('TRANSFERTOKEN_ATA_CREATION_ERROR:', {
-            message: ataError?.message,
-            name: ataError?.name,
-            toString: ataError?.toString(),
-            fullError: JSON.stringify(ataError, null, 2)
-          });
-          throw ataError;
-        }
+        console.error('TRANSFERTOKEN_DERIVING_DESTINATION_ATA_TOKEN2022');
+        // For Token-2022, derive ATA with Token-2022 program context
+        // transferChecked will create the account if it doesn't exist
+        toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_2022_PROGRAM_ID);
+        console.error('TRANSFERTOKEN_DESTINATION_ATA_DERIVED:', toATA.toBase58());
       } else {
         toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
       }
