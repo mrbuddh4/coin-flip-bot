@@ -262,48 +262,64 @@ class SolanaHandler {
   }
 
   /**
-   * Find the sender of a recent incoming transaction to the bot wallet using RPC
+   * Find the sender of a recent incoming transaction to the bot wallet using optimized RPC
+   * Queries the sender's wallet history instead of bot wallet to minimize RPC calls
    */
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenMint = null, knownSender = null, flipCreatedAt = null) {
     try {
-      console.log('[getRecentDepositSender] Searching for Solana deposits via RPC', {
+      console.log('[getRecentDepositSender] Searching for Solana deposits via RPC (sender-optimized)', {
         botWallet: botWalletAddress,
         tokenMint,
         expectedAmount,
         knownSender,
       });
 
-      // Use RPC to get recent signatures
-      const botPublicKey = new PublicKey(botWalletAddress);
-      const signatures = await this.withExponentialBackoff(() =>
-        this.connection.getSignaturesForAddress(botPublicKey, { limit: 50 })
-      );
-
-      console.log('[getRecentDepositSender] RPC response', {
-        transactionCount: signatures?.length || 0,
-      });
-
-      if (!signatures || signatures.length === 0) {
-        console.log('[getRecentDepositSender] No transactions found');
+      // If we have a known sender, query their wallet history to find transfers to bot
+      if (!knownSender) {
+        console.log('[getRecentDepositSender] No known sender, cannot verify deposit');
         return null;
       }
 
-      // Fetch full transaction details
+      // Use RPC to get recent signatures from the SENDER (not bot)
+      const senderPublicKey = new PublicKey(knownSender);
+      const signatures = await this.withExponentialBackoff(() =>
+        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 15 })
+      );
+
+      console.log('[getRecentDepositSender] RPC response from sender', {
+        transactionCount: signatures?.length || 0,
+        sender: knownSender,
+      });
+
+      if (!signatures || signatures.length === 0) {
+        console.log('[getRecentDepositSender] No transactions found from sender');
+        return null;
+      }
+
+      // Fetch transactions with spacing to avoid rate limits
       const transactions = [];
-      for (const sig of signatures) {
+      for (let i = 0; i < signatures.length; i++) {
         try {
-          const tx = await this.withExponentialBackoff(() =>
-            this.connection.getTransaction(sig.signature, { maxSupportedTransactionVersion: 0 })
-          );
+          // Add delay between requests to avoid rate limiting
+          if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, 150));
+          }
+
+          const tx = await this.connection.getTransaction(signatures[i].signature, {
+            maxSupportedTransactionVersion: 0
+          });
+          
           if (tx && !tx.meta?.err) {
-            transactions.push({ ...tx, signature: sig.signature, slot: sig.slot });
+            transactions.push({ ...tx, signature: signatures[i].signature, slot: signatures[i].slot });
           }
         } catch (err) {
-          // Skip transactions that can't be fetched
+          console.warn('[getRecentDepositSender] Failed to fetch transaction:', signatures[i].signature, err.message);
         }
       }
 
-      // Collect deposits and wrong tokens
+      console.log('[getRecentDepositSender] Fetched transactions from sender', { count: transactions.length });
+
+      // Collect deposits from sender to bot
       let deposits = [];
       let wrongTokenDeposits = [];
 
@@ -336,7 +352,8 @@ class SolanaHandler {
 
             const transferMint = post.mint;
 
-            console.log('[getRecentDepositSender] Found token transfer TO BOT', {
+            console.log('[getRecentDepositSender] Found token transfer from sender TO BOT', {
+              sender: knownSender,
               recipient: accountStr,
               mint: transferMint,
               amount: tokenReceived,
@@ -347,7 +364,7 @@ class SolanaHandler {
             if (tokenMint) {
               if (transferMint.toLowerCase() === tokenMint.toLowerCase()) {
                 deposits.push({
-                  sender: knownSender || 'unknown',
+                  sender: knownSender,
                   amount: tokenReceived.toString(),
                   signature: tx.signature,
                   slot: tx.slot || 0,
@@ -356,7 +373,7 @@ class SolanaHandler {
                 });
               } else {
                 wrongTokenDeposits.push({
-                  sender: knownSender || 'unknown',
+                  sender: knownSender,
                   amount: tokenReceived.toString(),
                   signature: tx.signature,
                   slot: tx.slot || 0,
@@ -366,7 +383,7 @@ class SolanaHandler {
               }
             } else {
               deposits.push({
-                sender: knownSender || 'unknown',
+                sender: knownSender,
                 amount: tokenReceived.toString(),
                 signature: tx.signature,
                 slot: tx.slot || 0,
@@ -382,18 +399,18 @@ class SolanaHandler {
       }
 
       if (deposits.length > 0) {
-        console.log('[getRecentDepositSender] Found matching deposits:', deposits.length);
+        console.log('[getRecentDepositSender] Found matching deposits from sender:', deposits.length);
         return deposits[0];
       }
 
       if (wrongTokenDeposits.length > 0) {
-        console.log('[getRecentDepositSender] Found wrong token deposits:', wrongTokenDeposits.length);
+        console.log('[getRecentDepositSender] Found wrong token deposits from sender:', wrongTokenDeposits.length);
         // Store wrong token deposits for refund
         this.wrongTokenDeposits = wrongTokenDeposits;
         throw new Error(`Wrong token received. Deposit in ${wrongTokenDeposits[0].wrongToken} instead of ${tokenMint}`);
       }
 
-      console.log('[getRecentDepositSender] No deposits found');
+      console.log('[getRecentDepositSender] No deposits found from sender');
       return null;
     } catch (error) {
       console.error('[getRecentDepositSender] Error:', error);
