@@ -1239,8 +1239,9 @@ async function initBot() {
         if (!verification.received) {
           logger.info('[deposit_confirmed] Deposit not received', { userId, flipId, before_save: flip });
           
-          // Store detected amount for refunds
-          if (verification.depositSender) {
+          // Store detected amount for refunds - BUT ONLY FOR CORRECT TOKENS
+          // Wrong tokens are auto-refunded and should NOT be counted toward timeout refunds
+          if (verification.depositSender && !verification.isWrongToken) {
             if (!flip.challengerAccumulatedDeposit) {
               // CRITICAL: Store in DISPLAY units, not raw units
               const tokenDecimals = flip.tokenDecimals || 18;
@@ -1257,8 +1258,7 @@ async function initBot() {
               // CRITICAL: Convert current total from raw to display units
               const tokenDecimals = flip.tokenDecimals || 18;
               const currentTotalRaw = parseFloat(verification.amount || 0);
-              // For wrong tokens (especially native SOL), amount is already display units
-              const currentTotal = verification.isWrongToken ? currentTotalRaw : (currentTotalRaw / Math.pow(10, tokenDecimals));
+              const currentTotal = currentTotalRaw / Math.pow(10, tokenDecimals);
               flip.challengerAccumulatedDeposit = currentTotal.toString();
               
               logger.info('[deposit_confirmed] Updated challenger accumulated deposit', {
@@ -1268,6 +1268,13 @@ async function initBot() {
                 newDepositsSinceLastCheck: currentTotal - previousAccumulated,
               });
             }
+          } else if (verification.isWrongToken) {
+            logger.info('[deposit_confirmed] Skipping wrong token in accumulated deposit tracking', {
+              flipId,
+              wrongToken: verification.wrongToken,
+              amount: verification.amount,
+              willBeRefundedAutomatically: true
+            });
           }
           
           // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
@@ -1796,8 +1803,9 @@ async function initBot() {
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received (insufficient)', { userId, flipId, verificationReceived: verification.received });
           
-          // Store detected amount for refunds  
-          if (verification.depositSender) {
+          // Store detected amount for refunds - BUT ONLY FOR CORRECT TOKENS
+          // Wrong tokens are auto-refunded and should NOT be counted toward timeout refunds
+          if (verification.depositSender && !verification.isWrongToken) {
             if (!flip.creatorAccumulatedDeposit) {
               // CRITICAL: Store in DISPLAY units, not raw units
               const tokenDecimals = flip.tokenDecimals || 18;
@@ -1814,8 +1822,7 @@ async function initBot() {
               // CRITICAL: Convert current total from raw to display units
               const tokenDecimals = flip.tokenDecimals || 18;
               const currentTotalRaw = parseFloat(verification.amount || 0);
-              // For wrong tokens (especially native SOL), amount is already display units
-              const currentTotal = verification.isWrongToken ? currentTotalRaw : (currentTotalRaw / Math.pow(10, tokenDecimals));
+              const currentTotal = currentTotalRaw / Math.pow(10, tokenDecimals);
               flip.creatorAccumulatedDeposit = currentTotal.toString();
 
               logger.info('[creator_deposit_confirmed] Updated creator accumulated deposit', {
@@ -1825,6 +1832,13 @@ async function initBot() {
                 newDepositsSinceLastCheck: currentTotal - previousAccumulated,
               });
             }
+          } else if (verification.isWrongToken) {
+            logger.info('[creator_deposit_confirmed] Skipping wrong token in accumulated deposit tracking', {
+              flipId,
+              wrongToken: verification.wrongToken,
+              amount: verification.amount,
+              willBeRefundedAutomatically: true
+            });
           }
           
           // Check if notification already sent for this verification attempt
