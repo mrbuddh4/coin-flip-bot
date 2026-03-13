@@ -530,14 +530,128 @@ class SolanaHandler {
         return [];
       }
 
-      console.log('[refundIncorrectTokens] Found wrong token transfers, but refund service not yet implemented', {
+      console.log('[refundIncorrectTokens] Processing wrong token refunds', {
         count: refundsToProcess.length,
-        refunds: refundsToProcess,
+        refunds: refundsToProcess.map(r => ({ mint: r.wrongTokenMint, amount: r.amount })),
       });
 
-      // TODO: Implement actual refund transfers using SPL Token Program
-      // For now, return the info for logging
-      return refundsToProcess;
+      // Execute actual refund transfers using SPL Token Program
+      const refundResults = [];
+      
+      for (const refund of refundsToProcess) {
+        try {
+          console.log('[refundIncorrectTokens] Attempting to refund wrong token', {
+            mint: refund.wrongTokenMint,
+            amount: refund.amount,
+            sender: refund.senderAddress,
+          });
+
+          // Get sender's token account for this wrong token
+          const senderTokenAccount = await getAssociatedTokenAddress(
+            new PublicKey(refund.wrongTokenMint),
+            new PublicKey(refund.senderAddress)
+          );
+
+          // Get bot's token account for this wrong token
+          const botTokenAccount = await getAssociatedTokenAddress(
+            new PublicKey(refund.wrongTokenMint),
+            this.botKeypair.publicKey
+          );
+
+          // Verify bot has the tokens to refund
+          let botTokenAccountExists = false;
+          try {
+            const botAccount = await getAccount(this.connection, botTokenAccount);
+            if (botAccount.amount < BigInt(refund.amount)) {
+              console.warn('[refundIncorrectTokens] Bot token account has insufficient balance', {
+                mint: refund.wrongTokenMint,
+                balance: botAccount.amount.toString(),
+                needed: refund.amount.toString(),
+              });
+              continue; // Skip this refund if insufficient balance
+            }
+            botTokenAccountExists = true;
+          } catch (err) {
+            console.warn('[refundIncorrectTokens] Bot token account not found or error checking balance', {
+              mint: refund.wrongTokenMint,
+              error: err.message,
+            });
+            continue;
+          }
+
+          if (!botTokenAccountExists) {
+            continue;
+          }
+
+          // Create transfer instruction
+          const transferInstruction = createTransferInstruction(
+            botTokenAccount,           // from (bot's token account)
+            senderTokenAccount,        // to (sender's token account)
+            this.botKeypair.publicKey, // owner
+            BigInt(refund.amount)      // amount in raw units
+          );
+
+          // Create and send transaction
+          const transaction = new Transaction().add(transferInstruction);
+          transaction.feePayer = this.botKeypair.publicKey;
+          transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
+
+          const signature = await this.connection.sendTransaction(transaction, [this.botKeypair], {
+            maxRetries: 3,
+          });
+
+          // Wait for confirmation with timeout
+          const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
+          
+          if (confirmation.value.err) {
+            console.error('[refundIncorrectTokens] Transaction failed', {
+              mint: refund.wrongTokenMint,
+              signature,
+              error: confirmation.value.err,
+            });
+            continue;
+          }
+
+          console.log('[refundIncorrectTokens] ✅ Successfully refunded wrong token', {
+            mint: refund.wrongTokenMint,
+            amount: refund.amount,
+            sender: refund.senderAddress,
+            signature,
+          });
+
+          refundResults.push({
+            mint: refund.wrongTokenMint,
+            amount: refund.amount,
+            recipient: refund.senderAddress,
+            signature,
+            status: 'SUCCESS',
+          });
+
+        } catch (err) {
+          console.error('[refundIncorrectTokens] Failed to process refund', {
+            mint: refund.wrongTokenMint,
+            sender: refund.senderAddress,
+            error: err.message,
+            stack: err.stack,
+          });
+
+          refundResults.push({
+            mint: refund.wrongTokenMint,
+            amount: refund.amount,
+            recipient: refund.senderAddress,
+            status: 'FAILED',
+            error: err.message,
+          });
+        }
+      }
+
+      console.log('[refundIncorrectTokens] Refund processing complete', {
+        totalAttempted: refundsToProcess.length,
+        successful: refundResults.filter(r => r.status === 'SUCCESS').length,
+        failed: refundResults.filter(r => r.status === 'FAILED').length,
+      });
+
+      return refundResults;
     } catch (error) {
       console.error('[refundIncorrectTokens] Error:', error);
       return [];
