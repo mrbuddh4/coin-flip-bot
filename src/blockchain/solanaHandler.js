@@ -110,14 +110,14 @@ class SolanaHandler {
     const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
     const allowOwnerOffCurve = isToken2022; // true for Token-2022, false for standard
 
-    console.error(`[transferToken] Mint: ${tokenAddress}, Program: ${isToken2022 ? 'Token-2022' : 'Standard'}, Amount: ${amountInTokens}`);
+    console.log(`[transferToken] Mint: ${tokenAddress}, Program: ${isToken2022 ? 'Token-2022' : 'Standard'}, Amount: ${amountInTokens}`);
 
     try {
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, allowOwnerOffCurve, tokenProgram);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, allowOwnerOffCurve, tokenProgram);
 
-      console.error(`[transferToken] From ATA: ${fromATA.toBase58()}`);
-      console.error(`[transferToken] To ATA: ${toATA.toBase58()}`);
+      console.log(`[transferToken] From ATA: ${fromATA.toBase58()}`);
+      console.log(`[transferToken] To ATA: ${toATA.toBase58()}`);
 
       const transaction = new Transaction();
 
@@ -138,14 +138,14 @@ class SolanaHandler {
 
       transaction.sign(fromKeypair);
 
-      console.error(`[transferToken] Sending transaction...`);
+      console.log(`[transferToken] Sending transaction...`);
       const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
-      console.error(`[transferToken] Transaction signature: ${signature}`);
+      console.log(`[transferToken] Transaction signature: ${signature}`);
       
       await this.connection.confirmTransaction(signature, 'confirmed');
 
       const programName = isToken2022 ? 'Token-2022' : 'Standard Token Program';
-      console.error(`[transferToken] ✅ ${programName} transfer succeeded`);
+      console.log(`[transferToken] ✅ ${programName} transfer succeeded`);
 
       return {
         txHash: signature,
@@ -154,7 +154,7 @@ class SolanaHandler {
         status: 'success',
       };
     } catch (error) {
-      console.error(`[transferToken] ❌ Transfer failed:`, error.message);
+      console.log(`[transferToken] ❌ Transfer failed:`, error.message);
       throw error;
     }
   }
