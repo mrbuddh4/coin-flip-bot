@@ -420,11 +420,15 @@ class SolanaHandler {
         return deposits[0];
       }
 
+      // Return wrong token deposit instead of throwing - let caller decide what to do
       if (wrongTokenDeposits.length > 0) {
         console.log('[getRecentDepositSender] Found wrong token deposits from sender:', wrongTokenDeposits.length);
-        // Store wrong token deposits for refund
-        this.wrongTokenDeposits = wrongTokenDeposits;
-        throw new Error(`Wrong token received. Deposit in ${wrongTokenDeposits[0].wrongToken} instead of ${tokenMint}`);
+        const wrongTokenDeposit = wrongTokenDeposits[0];
+        return {
+          ...wrongTokenDeposit,
+          hasWrongTokens: true,
+          wrongToken: wrongTokenDeposit.wrongToken,
+        };
       }
 
       console.log('[getRecentDepositSender] No deposits found from sender');
@@ -436,17 +440,104 @@ class SolanaHandler {
   }
 
   /**
-   * Refund incorrect tokens on Solana  
+   * Refund incorrect tokens on Solana - search recent transactions for wrong token transfers
    */
   async refundIncorrectTokens(botWalletAddress, expectedTokenMint, senderAddress, flipCreatedAt = null) {
     try {
-      console.log('[refundIncorrectTokens] Refund function temporarily disabled', {
+      console.log('[refundIncorrectTokens] Searching for wrong token deposits to refund', {
         senderAddress,
         expectedTokenMint,
-        botWalletAddress,
+        botWallet: botWalletAddress,
+        flipCreatedAt,
       });
-      // TODO: Implement refunds via Solscan API
-      return [];
+
+      // Query sender's recent transactions to find any token transfers that DON'T match expected mint
+      const senderPublicKey = new PublicKey(senderAddress);
+      const signatures = await this.withExponentialBackoff(() =>
+        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 10 })
+      );
+
+      if (!signatures || signatures.length === 0) {
+        console.log('[refundIncorrectTokens] No transactions found from sender');
+        return [];
+      }
+
+      // Find wrong token transfers
+      const refundsToProcess = [];
+      const correctBotATA = 'BNGHJazs5Ddps9pgYgFr1JvqPVjRChDngpXvWbYqoz6F';
+
+      for (let i = 0; i < signatures.length; i++) {
+        try {
+          // Add delay between requests
+          if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+
+          const tx = await this.connection.getTransaction(signatures[i].signature, {
+            maxSupportedTransactionVersion: 0
+          });
+
+          if (!tx || tx.meta?.err) continue;
+
+          // Look for token transfers to bot with WRONG token
+          const postBalances = tx.meta?.postTokenBalances || [];
+          const preBalances = tx.meta?.preTokenBalances || [];
+
+          for (const post of postBalances) {
+            const pre = preBalances.find(p => p.accountIndex === post.accountIndex);
+            if (!pre) continue;
+
+            const postAmount = parseFloat(post.uiTokenAmount?.amount || 0);
+            const preAmount = parseFloat(pre.uiTokenAmount?.amount || 0);
+            const tokenReceived = postAmount - preAmount;
+
+            if (tokenReceived <= 0) continue;
+
+            // Check if transfer is to bot
+            const accountKey = tx.transaction.message.staticAccountKeys[post.accountIndex];
+            if (!accountKey) continue;
+
+            const accountStr = accountKey.toBase58();
+            const isToBot = (accountStr === botWalletAddress || accountStr === correctBotATA);
+            if (!isToBot) continue;
+
+            // Check if it's the WRONG token
+            const transferMint = post.mint;
+            if (transferMint.toLowerCase() !== expectedTokenMint.toLowerCase()) {
+              console.log('[refundIncorrectTokens] Found wrong token transfer to refund', {
+                mint: transferMint,
+                amount: tokenReceived,
+                recipient: accountStr,
+                signature: tx.signature,
+              });
+
+              refundsToProcess.push({
+                wrongTokenMint: transferMint,
+                amount: tokenReceived,
+                senderAddress: senderAddress,
+                signature: tx.signature,
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('[refundIncorrectTokens] Error processing transaction:', err.message);
+          continue;
+        }
+      }
+
+      if (refundsToProcess.length === 0) {
+        console.log('[refundIncorrectTokens] No wrong token transfers found to refund');
+        return [];
+      }
+
+      console.log('[refundIncorrectTokens] Found wrong token transfers, but refund service not yet implemented', {
+        count: refundsToProcess.length,
+        refunds: refundsToProcess,
+      });
+
+      // TODO: Implement actual refund transfers using SPL Token Program
+      // For now, return the info for logging
+      return refundsToProcess;
     } catch (error) {
       console.error('[refundIncorrectTokens] Error:', error);
       return [];

@@ -1250,7 +1250,7 @@ async function initBot() {
           // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
           // But only attempt ONCE per flip to prevent duplicate transactions
           const hasAttemptedRefund = flip.data?.refundAttempted === true;
-          if (verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE' && !hasAttemptedRefund) {
+          if (verification.isWrongToken && verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE' && !hasAttemptedRefund) {
             try {
               const blockchainManager = getBlockchainManager();
               logger.info('[deposit_confirmed] Attempting to refund incorrect tokens from challenger', { 
@@ -1518,7 +1518,7 @@ async function initBot() {
               
               logger.info('[deposit_confirmed] Refunded excess deposit', { 
                 flipId, 
-                excess: excessStr,
+                excess: excessAmount,
                 recipient: flip.challengerDepositWalletAddress
               });
             }
@@ -1845,7 +1845,7 @@ async function initBot() {
           // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
           // But only attempt ONCE per flip to prevent duplicate transactions
           const hasAttemptedRefund = flip.data?.refundAttempted === true;
-          if (verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE' && !hasAttemptedRefund) {
+          if (verification.isWrongToken && verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE' && !hasAttemptedRefund) {
             try {
               const blockchainManager = getBlockchainManager();
               logger.info('[creator_deposit_confirmed] Attempting to refund incorrect tokens from creator', { 
