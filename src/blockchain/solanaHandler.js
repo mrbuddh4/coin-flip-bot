@@ -101,32 +101,44 @@ class SolanaHandler {
     const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
     const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
 
-    // Detect token program by checking mint account owner
+    // Map of known Token-2022 tokens (mint address -> program)
     const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
+    const TOKEN_2022_MINTS = new Set([
+      '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump', // SID
+    ]);
+
+    // Determine token program
     let tokenProgram = TOKEN_PROGRAM_ID; // Default to standard
 
-    try {
-      const mintAccount = await this.connection.getAccountInfo(mint);
-      if (mintAccount && mintAccount.owner.equals(TOKEN_2022_PROGRAM_ID)) {
-        tokenProgram = TOKEN_2022_PROGRAM_ID;
-        console.error('[transferToken] ✅ Detected Token-2022 mint:', tokenAddress);
-      } else {
-        console.error('[transferToken] ✅ Detected standard Token Program mint:', tokenAddress);
+    if (TOKEN_2022_MINTS.has(tokenAddress)) {
+      tokenProgram = TOKEN_2022_PROGRAM_ID;
+      console.error('[transferToken] ✅ SID is a Token-2022 token, using Token-2022 program');
+    } else {
+      // Try to detect dynamically as fallback
+      try {
+        const mintAccount = await this.connection.getAccountInfo(mint);
+        if (mintAccount && mintAccount.owner.equals(TOKEN_2022_PROGRAM_ID)) {
+          tokenProgram = TOKEN_2022_PROGRAM_ID;
+          console.error('[transferToken] ✅ Detected Token-2022 mint:', tokenAddress);
+        } else {
+          console.error('[transferToken] ✅ Detected standard Token Program mint:', tokenAddress);
+        }
+      } catch (error) {
+        console.error('[transferToken] ⚠️ Could not detect token program, defaulting to standard:', error.message);
       }
-    } catch (error) {
-      console.error('[transferToken] ⚠️ Could not detect token program, defaulting to standard:', error.message);
     }
 
     try {
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, tokenProgram);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, tokenProgram);
 
+      console.error('[transferToken] Token Program:', tokenProgram.toBase58());
       console.error('[transferToken] From ATA:', fromATA.toBase58());
       console.error('[transferToken] To ATA:', toATA.toBase58());
 
       const transaction = new Transaction();
 
-      // Create transfer instruction directly (let it fail with specific error if ATA doesn't exist)
+      // Create transfer instruction directly
       const instruction = createTransferInstruction(
         fromATA,
         toATA,
