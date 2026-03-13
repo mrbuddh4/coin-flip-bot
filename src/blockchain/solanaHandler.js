@@ -103,10 +103,16 @@ class SolanaHandler {
       const transaction = new Transaction();
 
       // Skip ATA creation - recipient should already have ATA since they sent deposit
-      console.log('[transferToken] Assuming recipient ATA exists:', toATA.toBase58());
+      console.log('[transferToken] Transfer account setup:', {
+        fromWallet: fromPublicKey.toBase58(),
+        fromATA: fromATA.toBase58(),
+        toWallet: toPublicKey.toBase58(), 
+        toATA: toATA.toBase58(),
+        mint: mint.toBase58()
+      });
 
       console.log('[transferToken] About to create transfer instruction');
-      const amountInTokens = Math.floor(amount * Math.pow(10, decimals));
+      const amountInTokens = BigInt(Math.floor(amount * Math.pow(10, decimals)));
 
       const instruction = createTransferInstruction(
         fromATA,
