@@ -106,44 +106,26 @@ class SolanaHandler {
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
       console.error('TRANSFERTOKEN_BEFORE_ATA_CREATION');
-      // NOTE: Calculate ATAs using standard parameters - ATA Program is always the same
-      // Only the transfer instruction itself needs the Token-2022 program ID
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
 
-      console.error('TRANSFERTOKEN_BEFORE_INSTRUCTION');
+      console.error('TRANSFERTOKEN_BEFORE_TRANSFER');
       const transaction = new Transaction();
-      const transferIx = createTransferInstruction(
+      
+      // Use the transfer helper which creates the instruction properly for Token-2022
+      const signature = await transfer(
+        this.connection,
+        fromKeypair,
         fromATA,
         toATA,
         fromPublicKey,
         BigInt(amountInTokens),
         [],
+        { skipPreflight: false },
         tokenProgram
       );
 
-      console.error('TRANSFERTOKEN_INSTRUCTION_CREATED');
-      console.error('IX_DETAILS:', {
-        programId: transferIx.programId?.toBase58(),
-        keysLength: transferIx.keys?.length,
-        keys: transferIx.keys?.map(k => ({ pubkey: k.pubkey.toBase58(), write: k.isWritable, sign: k.isSigner })),
-        dataLength: transferIx.data?.length,
-        dataHex: transferIx.data?.toString('hex')
-      });
-      
-      transaction.add(transferIx);
-
-      const { blockhash } = await this.connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = fromPublicKey;
-      transaction.sign(fromKeypair);
-
-      console.error('TRANSFERTOKEN_BEFORE_SEND');
-      const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
-      
       console.error('TRANSFERTOKEN_SUCCESS');
-      await this.connection.confirmTransaction(signature, 'confirmed');
-
       return {
         txHash: signature,
         from: fromPublicKey.toBase58(),
