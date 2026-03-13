@@ -12,6 +12,7 @@ const {
   transfer,
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
+  createAssociatedTokenAccountIdempotentInstruction,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
@@ -102,22 +103,15 @@ class SolanaHandler {
         feePayer: fromPublicKey,
       });
 
-      // Check if destination ATA exists - CREATE IT if needed
-      try {
-        await getAccount(this.connection, toATA);
-      } catch (error) {
-        // ATA doesn't exist - create it first
-        console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,              // Payer
-          toATA,                      // Associated token account address
-          toPublicKey,                // Owner of the associated token account
-          mint,                       // Mint of the token
-          TOKEN_PROGRAM_ID,           // Token program ID
-          ASSOCIATED_TOKEN_PROGRAM_ID // Associated token program ID
-        );
-        transaction.add(createATAInstruction);
-      }
+      // The idempotent instruction handles ATA creation safely - it's a no-op if ATA already exists
+      console.log('[transferToken] Ensuring destination ATA exists:', toATA.toBase58());
+      const createATAInstruction = createAssociatedTokenAccountIdempotentInstruction(
+        fromPublicKey,              // Payer
+        toATA,                      // Associated token account address
+        toPublicKey,                // Owner of the associated token account
+        mint                        // Mint of the token
+      );
+      transaction.add(createATAInstruction);
 
       const amountInTokens = Math.floor(amount * Math.pow(10, decimals));
 

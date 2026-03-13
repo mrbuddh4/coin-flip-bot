@@ -330,6 +330,13 @@ class FlipHandler {
                     }
                   }
 
+                  // Add aggressive delays BEFORE refund - same pattern as working refundIncorrectTokens
+                  logger.info('[insufficient_deposit_timeout] Waiting 5s before initiating refund RPC call...');
+                  await new Promise(resolve => setTimeout(resolve, 5000));
+
+                  logger.info('[insufficient_deposit_timeout] Waiting 10s before executing refund transaction...');
+                  await new Promise(resolve => setTimeout(resolve, 10000));
+
                   await blockchainManager.sendWinnings(
                     flipCheck.tokenNetwork,
                     tokenAddress,
