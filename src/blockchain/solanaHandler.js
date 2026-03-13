@@ -564,10 +564,10 @@ class SolanaHandler {
       await new Promise(resolve => setTimeout(resolve, 5000));
 
       // Query sender's recent transactions to find any token transfers that DON'T match expected mint
-      // Limit to 1 transaction only to minimize RPC calls
+      // Limit to 2 transactions to ensure we find the right one (same as verification)
       const senderPublicKey = new PublicKey(senderAddress);
       const signatures = await this.withExponentialBackoff(() =>
-        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 1 })
+        this.connection.getSignaturesForAddress(senderPublicKey, { limit: 2 })
       );
 
       if (!signatures || signatures.length === 0) {
@@ -583,9 +583,9 @@ class SolanaHandler {
         try {
           // Add aggressive delay BEFORE each transaction fetch to prevent RPC rate limiting
           if (i === 0) {
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Initial 2s delay
+            await new Promise(resolve => setTimeout(resolve, 3000)); // Initial 3s delay (match verification)
           } else {
-            await new Promise(resolve => setTimeout(resolve, 3000)); // 3s between subsequent calls
+            await new Promise(resolve => setTimeout(resolve, 5000)); // 5s between subsequent calls (match verification)
           }
 
           const tx = await this.connection.getTransaction(signatures[i].signature, {
@@ -613,7 +613,24 @@ class SolanaHandler {
             if (!accountKey) continue;
 
             const accountStr = accountKey.toBase58();
-            const isToBot = (accountStr === botWalletAddress || accountStr === correctBotATA);
+            const correctBotATA = 'BNGHJazs5Ddps9pgYgFr1JvqPVjRChDngpXvWbYqoz6F';
+            
+            // Check if transfer is to bot (main wallet or known ATAs)
+            let isToBot = (accountStr === botWalletAddress || accountStr === correctBotATA);
+            
+            if (!isToBot) {
+              // For unknown ATA accounts, accept any valid Solana base58 address
+              // This allows us to detect SPL tokens (correct or incorrect) to bot's various ATAs
+              const isValidSolanaAddress = accountStr.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/);
+              const isSenderAccount = accountStr === senderAddress || accountStr === botWalletAddress;
+              
+              if (!isValidSolanaAddress || isSenderAccount) {
+                continue;
+              }
+              
+              isToBot = true; // Accept it as a bot ATA
+            }
+            
             if (!isToBot) continue;
 
             // Check if it's the WRONG token
