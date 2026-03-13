@@ -106,13 +106,22 @@ class SolanaHandler {
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
       console.error('TRANSFERTOKEN_BEFORE_ATA_CREATION');
-      // For Token-2022, ATAs must be calculated with Token-2022 program ID
-      // For standard tokens, use TOKEN_PROGRAM_ID
-      const ataProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
-      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, ataProgram);
-      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, ataProgram);
+      // ATAs are standardized and always use the standard Token Program for address derivation
+      // The token program parameter in the transfer instruction specifies which program handles the transfer
+      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
+      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
 
       console.error('TRANSFERTOKEN_BEFORE_INSTRUCTION');
+      console.error('TRANSFER_DETAILS:', {
+        mint: mint.toBase58(),
+        fromATA: fromATA.toBase58(),
+        toATA: toATA.toBase58(),
+        fromPublicKey: fromPublicKey.toBase58(),
+        tokenProgram: tokenProgram.toBase58(),
+        isToken2022: isToken2022,
+        amount: amountInTokens.toString()
+      });
+      
       const transaction = new Transaction();
       const transferIx = createTransferInstruction(
         fromATA,
