@@ -106,26 +106,37 @@ class SolanaHandler {
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
       console.error('TRANSFERTOKEN_BEFORE_ATA_CREATION');
-      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
-      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
+      // For Token-2022, ATAs must be calculated with Token-2022 program ID
+      // For standard tokens, use TOKEN_PROGRAM_ID
+      const ataProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+      const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, ataProgram);
+      const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, ataProgram);
 
-      console.error('TRANSFERTOKEN_BEFORE_TRANSFER');
+      console.error('TRANSFERTOKEN_BEFORE_INSTRUCTION');
       const transaction = new Transaction();
-      
-      // Use the transfer helper which creates the instruction properly for Token-2022
-      const signature = await transfer(
-        this.connection,
-        fromKeypair,
+      const transferIx = createTransferInstruction(
         fromATA,
         toATA,
         fromPublicKey,
         BigInt(amountInTokens),
         [],
-        { skipPreflight: false },
         tokenProgram
       );
 
+      console.error('TRANSFERTOKEN_INSTRUCTION_CREATED');
+      transaction.add(transferIx);
+
+      const { blockhash } = await this.connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = fromPublicKey;
+      transaction.sign(fromKeypair);
+
+      console.error('TRANSFERTOKEN_BEFORE_SEND');
+      const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
+      
       console.error('TRANSFERTOKEN_SUCCESS');
+      await this.connection.confirmTransaction(signature, 'confirmed');
+
       return {
         txHash: signature,
         from: fromPublicKey.toBase58(),
@@ -134,7 +145,6 @@ class SolanaHandler {
       };
     } catch (error) {
       console.error('TRANSFERTOKEN_ERROR:', error.message);      
-      // Check if this is a SendTransactionError with transaction logs
       if (error?.name === 'SendTransactionError' && typeof error?.getLogs === 'function') {
         try {
           const logs = error.getLogs();
@@ -144,12 +154,12 @@ class SolanaHandler {
         }
       }
       
-      // Log full error if it has a cause or additional details
       if (error?.cause) {
         console.error('TRANSFERTOKEN_ERROR_CAUSE:', error.cause?.message);
       }
-            throw error;
+      throw error;
     }
+  }
   }
 
   /**
