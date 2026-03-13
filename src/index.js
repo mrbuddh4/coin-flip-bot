@@ -1324,6 +1324,8 @@ async function initBot() {
                 `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
                 `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${wrongTokenName}\n\n` +
                 `<b>Status: Automatically refunding your ${wrongTokenName}...</b>\n\n` +
+                `<b>Send ${flip.tokenSymbol} to:</b>\n` +
+                `<code>${botWallet}</code>\n\n` +
                 `Please send the correct token: <b>${flip.tokenSymbol}</b>`;
             } else {
               messageText = 
@@ -1833,6 +1835,8 @@ async function initBot() {
                 `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
                 `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${wrongTokenName}\n\n` +
                 `<b>Status: Automatically refunding your ${wrongTokenName}...</b>\n\n` +
+                `<b>Send ${flip.tokenSymbol} to:</b>\n` +
+                `<code>${botWallet}</code>\n\n` +
                 `Please send the correct token: <b>${flip.tokenSymbol}</b>`;
             } else {
               messageText = 
