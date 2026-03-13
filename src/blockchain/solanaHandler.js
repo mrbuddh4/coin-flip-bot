@@ -10,8 +10,7 @@ const {
 const {
   getAssociatedTokenAddress,
   getAccount,
-  transfer,
-  createTransferInstruction,
+  transferChecked,
   TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
@@ -98,21 +97,19 @@ class SolanaHandler {
       const toPublicKey = new PublicKey(toAddress);
 
       const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
-      const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
+      const amountInTokens = BigInt(Math.floor(amountNum * Math.pow(10, decimals)));
 
       const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
       const isToken2022 = tokenAddress === '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump';
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
-      console.error('TRANSFERTOKEN_BEFORE_ATA_CREATION');
+      console.error('TRANSFERTOKEN_BEFORE_ATA_RETRIEVAL');
       
       // For SID token, use the hardcoded bot ATA where deposits arrive
       let fromATA;
       if (isToken2022) {
-        // SID token requires the specific ATA that receives deposits
         fromATA = new PublicKey('BNGHJazs5Ddps9pgYgFr1JvqPVjRChDngpXvWbYqoz6F');
       } else {
-        // Standard SPL: derive ATA with standard Token Program
         fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, TOKEN_PROGRAM_ID);
       }
       
@@ -120,7 +117,6 @@ class SolanaHandler {
       const ataProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, ataProgram);
 
-      console.error('TRANSFERTOKEN_BEFORE_INSTRUCTION');
       console.error('TRANSFER_DETAILS:', {
         mint: mint.toBase58(),
         fromATA: fromATA.toBase58(),
@@ -128,52 +124,25 @@ class SolanaHandler {
         fromPublicKey: fromPublicKey.toBase58(),
         tokenProgram: tokenProgram.toBase58(),
         isToken2022: isToken2022,
-        amount: amountInTokens.toString()
+        amount: amountInTokens.toString(),
+        amountDisplay: amountNum
       });
-      
-      const transaction = new Transaction();
-      
-      const transferIx = createTransferInstruction(
-        fromATA,
-        toATA,
-        fromPublicKey,
-        BigInt(amountInTokens),
-        [],
-        tokenProgram
+
+      // Use the built-in transferChecked helper - it handles all program complexity
+      console.error('TRANSFERTOKEN_CALLING_TRANSFERCHECKED');
+      const signature = await transferChecked(
+        this.connection,           // connection
+        fromKeypair,               // payer (same as from for token accounts)
+        fromATA,                   // source token account
+        mint,                      // mint (for verification)
+        toATA,                     // destination token account
+        fromKeypair,               // owner of source (authorization signer)
+        amountInTokens,            // amount (already in raw units)
+        decimals,                  // mint decimals
+        [fromKeypair]              // signers
       );
 
-      console.error('TRANSFERTOKEN_INSTRUCTION_CREATED');
-      console.error('INSTRUCTION_DETAILS:', {
-        programId: transferIx.programId?.toBase58(),
-        accountsCount: transferIx.keys?.length,
-        dataHex: transferIx.data?.toString('hex'),
-        keys: transferIx.keys?.map((k, i) => ({
-          index: i,
-          pubkey: k.pubkey.toBase58(),
-          isWritable: k.isWritable,
-          isSigner: k.isSigner
-        }))
-      });
-      
-      transaction.add(transferIx);
-
-      const { blockhash } = await this.connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = fromPublicKey;
-      transaction.sign(fromKeypair);
-
-      console.error('TRANSFERTOKEN_TRANSACTION_DETAILS:', {
-        message: transaction.compileMessage().accountKeys.map(k => k.toBase58()),
-        instructions: transaction.compileMessage().instructions.length,
-        recentBlockhash: transaction.recentBlockhash
-      });
-
-      console.error('TRANSFERTOKEN_BEFORE_SEND');
-      const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
-      
       console.error('TRANSFERTOKEN_SUCCESS');
-      await this.connection.confirmTransaction(signature, 'confirmed');
-
       return {
         txHash: signature,
         from: fromPublicKey.toBase58(),
