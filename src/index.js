@@ -30,6 +30,15 @@ function getTokenSymbol(mint) {
   return KNOWN_TOKENS[mint] || 'Token';
 }
 
+/**
+ * Validate mint address format
+ */
+function isValidMintAddress(tokenAddress) {
+  if (!tokenAddress) return false;
+  if (tokenAddress === 'NATIVE') return true;
+  return tokenAddress.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/) !== null;
+}
+
 let bot;
 let sessionStore = {};
 let challengeTimeouts = {}; // Store challenge acceptance timeouts by flipId
@@ -1536,29 +1545,37 @@ async function initBot() {
                 }
               }
 
-              // Convert excess from display units to raw units for blockchain transaction
-              const excessRaw = (excessAmount * Math.pow(10, refundDecimals)).toFixed(0);
-              logger.info('[deposit_confirmed] Sending refund', {
-                flipId,
-                network: flip.tokenNetwork,
-                tokenAddress,
-                recipient: flip.challengerDepositWalletAddress,
-                excessDisplay: excessAmount.toString(),
-                excessRaw,
-                decimals: refundDecimals,
-              });
-              
-              await blockchainManager.sendWinnings(
-                flip.tokenNetwork,
-                tokenAddress,
-                flip.challengerDepositWalletAddress,
-                excessRaw,
-                refundDecimals
-              );
-              
-              logger.info('[deposit_confirmed] Refunded excess deposit', { 
-                flipId, 
-                excess: excessAmount,
+              // Validate token address before attempting refund
+              if (!isValidMintAddress(tokenAddress)) {
+                logger.warn('[deposit_confirmed] Skipping excess refund - invalid token address', { 
+                  flipId, 
+                  tokenAddress,
+                  excess: excessAmount.toString()
+                });
+              } else {
+                // Convert excess from display units to raw units for blockchain transaction
+                const excessRaw = (excessAmount * Math.pow(10, refundDecimals)).toFixed(0);
+                logger.info('[deposit_confirmed] Sending refund', {
+                  flipId,
+                  network: flip.tokenNetwork,
+                  tokenAddress,
+                  recipient: flip.challengerDepositWalletAddress,
+                  excessDisplay: excessAmount.toString(),
+                  excessRaw,
+                  decimals: refundDecimals,
+                });
+                
+                await blockchainManager.sendWinnings(
+                  flip.tokenNetwork,
+                  tokenAddress,
+                  flip.challengerDepositWalletAddress,
+                  excessRaw,
+                  refundDecimals
+                );
+                
+                logger.info('[deposit_confirmed] Refunded excess deposit', { 
+                  flipId, 
+                  excess: excessAmount,
                 recipient: flip.challengerDepositWalletAddress
               });
             }
@@ -2029,31 +2046,39 @@ async function initBot() {
                 }
               }
 
-              // Convert excess from display units to raw units for blockchain transaction
-              const excessRaw = (creatorExcessAmount * Math.pow(10, refundDecimals)).toFixed(0);
-              logger.info('[creator_deposit_confirmed] Sending refund', {
-                flipId,
-                network: flip.tokenNetwork,
-                tokenAddress,
-                recipient: flip.creatorDepositWalletAddress,
-                excessDisplay: creatorExcessAmount.toString(),
-                excessRaw,
-                decimals: refundDecimals,
-              });
-              
-              await blockchainManager.sendWinnings(
-                flip.tokenNetwork,
-                tokenAddress,
-                flip.creatorDepositWalletAddress,
-                excessRaw,
-                refundDecimals
-              );
-              
-              logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
-                flipId, 
-                excessDisplay: creatorExcessAmount.toString(),
-                excessRaw,
-                recipient: flip.creatorDepositWalletAddress
+              // Validate token address before attempting refund
+              if (!isValidMintAddress(tokenAddress)) {
+                logger.warn('[creator_deposit_confirmed] Skipping excess refund - invalid token address', { 
+                  flipId, 
+                  tokenAddress,
+                  excessDisplay: creatorExcessAmount.toString()
+                });
+              } else {
+                // Convert excess from display units to raw units for blockchain transaction
+                const excessRaw = (creatorExcessAmount * Math.pow(10, refundDecimals)).toFixed(0);
+                logger.info('[creator_deposit_confirmed] Sending refund', {
+                  flipId,
+                  network: flip.tokenNetwork,
+                  tokenAddress,
+                  recipient: flip.creatorDepositWalletAddress,
+                  excessDisplay: creatorExcessAmount.toString(),
+                  excessRaw,
+                  decimals: refundDecimals,
+                });
+                
+                await blockchainManager.sendWinnings(
+                  flip.tokenNetwork,
+                  tokenAddress,
+                  flip.creatorDepositWalletAddress,
+                  excessRaw,
+                  refundDecimals
+                );
+                
+                logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
+                  flipId, 
+                  excessDisplay: creatorExcessAmount.toString(),
+                  excessRaw,
+                  recipient: flip.creatorDepositWalletAddress
               });
             }
           } catch (excessErr) {
