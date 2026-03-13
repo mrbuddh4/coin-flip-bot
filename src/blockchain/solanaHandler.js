@@ -6,13 +6,14 @@ const {
   SystemProgram,
   LAMPORTS_PER_SOL,
   TransactionInstruction,
+  Layout,
 } = require('@solana/web3.js');
 const {
   getAssociatedTokenAddress,
-  createTransferCheckedInstruction,
   TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
+const { Buffer } = require('buffer');
 const config = require('../config');
 const logger = require('../utils/logger');
 
@@ -84,6 +85,7 @@ class SolanaHandler {
 
   /**
    * Transfer SPL token (supports both Token Program and Token-2022)
+   * Uses manual instruction building to avoid unwanted program references
    */
   async transferToken(tokenAddress, fromPrivateKeyB58, toAddress, amount, decimals) {
     console.error('TRANSFERTOKEN_START');
@@ -98,7 +100,8 @@ class SolanaHandler {
       const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
       const amountInTokens = BigInt(Math.floor(amountNum * Math.pow(10, decimals)));
 
-      const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
+      // Correct Token-2022 Program ID (official Solana program)
+      const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
       const isToken2022 = tokenAddress === '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump';
       const tokenProgram = isToken2022 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
 
@@ -150,21 +153,54 @@ class SolanaHandler {
         amountDisplay: amountNum
       });
 
-      console.error('TRANSFERTOKEN_CREATING_INSTRUCTION');
+      console.error('TRANSFERTOKEN_BUILDING_MANUAL_INSTRUCTION');
       
-      // Create transfer instruction with ONLY the token program (no ATA Program or SystemProgram)
-      const transferInstruction = createTransferCheckedInstruction(
-        fromATA,                  // source token account
-        mint,                     // mint
-        toATA,                    // destination token account
-        fromPublicKey,            // owner of source (will sign)
-        amountInTokens,           // amount in smallest units
-        decimals,                 // decimals
-        [],                       // additional signers (empty, owner signs tx)
-        tokenProgram              // token program (Token-2022 or Token Program)
-      );
+      // Build TransferChecked instruction data manually: instruction type + amount + decimals
+      // Instruction: 12 = TransferChecked
+      // Data: [instruction_type (1 byte)] + [amount (8 bytes LE)] + [decimals (1 byte)]
+      const instructionType = Buffer.from([12]); // TransferChecked opcode
+      const amountBuffer = Buffer.alloc(8);
+      amountBuffer.writeBigUInt64LE(amountInTokens, 0);
+      const decimalsBuffer = Buffer.from([decimals]);
+      
+      const data = Buffer.concat([instructionType, amountBuffer, decimalsBuffer]);
+      
+      console.error('TRANSFERTOKEN_INSTRUCTION_DATA:', {
+        dataLength: data.length,
+        dataHex: data.toString('hex'),
+        instructionType: 12,
+        amountBigInt: amountInTokens.toString(),
+        decimals: decimals
+      });
 
-      // Build transaction with ONLY the transfer instruction (no extra programs)
+      // Build accounts for TransferChecked: 
+      // 0. source token account (writable, signer's token account)
+      // 1. token mint
+      // 2. destination token account (writable)
+      // 3. owner/authority of source (signer)
+      const keys = [
+        { pubkey: fromATA, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: toATA, isSigner: false, isWritable: true },
+        { pubkey: fromPublicKey, isSigner: true, isWritable: false }
+      ];
+
+      console.error('TRANSFERTOKEN_INSTRUCTION_KEYS:', keys.map(k => ({
+        pubkey: k.pubkey.toBase58(),
+        isSigner: k.isSigner,
+        isWritable: k.isWritable
+      })));
+
+      // Create instruction with ONLY token program - no extras
+      const transferInstruction = new TransactionInstruction({
+        keys: keys,
+        programId: tokenProgram,
+        data: data
+      });
+
+      console.error('TRANSFERTOKEN_INSTRUCTION_CREATED');
+
+      // Build transaction with ONLY the transfer instruction
       const transaction = new Transaction().add(transferInstruction);
       
       const { blockhash } = await this.connection.getLatestBlockhash();
