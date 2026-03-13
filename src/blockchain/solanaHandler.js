@@ -123,6 +123,21 @@ class SolanaHandler {
       });
       
       const transaction = new Transaction();
+      
+      // For Token-2022, we need to create the destination ATA first
+      if (isToken2022) {
+        console.error('TRANSFERTOKEN_CREATING_TOKEN2022_ATA');
+        const createAtaIx = createAssociatedTokenAccountInstruction(
+          fromPublicKey,  // payer (bot)
+          toATA,          // associated token account
+          toPublicKey,    // owner (recipient)
+          mint,           // mint
+          tokenProgram    // Token-2022 program
+        );
+        transaction.add(createAtaIx);
+        console.error('TRANSFERTOKEN_CREATED_TOKEN2022_ATA');
+      }
+      
       const transferIx = createTransferInstruction(
         fromATA,
         toATA,
