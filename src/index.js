@@ -1301,16 +1301,20 @@ async function initBot() {
           if (timeSinceLastNotification > 30000) {
             const tokenDecimals = flip.tokenDecimals || 18;
             const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-            // CRITICAL: Convert received amount from raw to display units
+            // CRITICAL: For wrong tokens, amount is already display units. For correct tokens, convert from raw to display
             const receivedAmountRaw = parseFloat(verification.amount || '0');
-            const receivedAmount = receivedAmountRaw / Math.pow(10, tokenDecimals);
+            const receivedAmount = verification.isWrongToken ? receivedAmountRaw : (receivedAmountRaw / Math.pow(10, tokenDecimals));
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
             // Check if wrong token was detected
             let messageText;
             if (verification.isWrongToken) {
-              const wrongTokenName = verification.wrongToken === 'NATIVE' ? 'PAX (native)' : (verification.wrongToken || 'unknown token');
+              // Determine correct native token name based on network
+              let wrongTokenName = verification.wrongToken;
+              if (verification.wrongToken === 'NATIVE') {
+                wrongTokenName = verification.network === 'Solana' ? 'SOL (native)' : 'PAX (native)';
+              }
               messageText = 
                 `⚠️ <b>Wrong Token Detected</b>\n\n` +
                 `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
@@ -1806,16 +1810,20 @@ async function initBot() {
           if (timeSinceLastNotification > 30000) {
             const tokenDecimals = flip.tokenDecimals || 18;
             const formattedExpected = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-            // CRITICAL: Convert received amount from raw to display units
+            // CRITICAL: For wrong tokens, amount is already display units. For correct tokens, convert from raw to display
             const receivedAmountRaw = parseFloat(verification.amount || '0');
-            const receivedAmount = receivedAmountRaw / Math.pow(10, tokenDecimals);
+            const receivedAmount = verification.isWrongToken ? receivedAmountRaw : (receivedAmountRaw / Math.pow(10, tokenDecimals));
             const shortfallAmount = (parseFloat(flip.wagerAmount) - receivedAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
             const botWallet = verification.botWallet || 'Unknown';
             
             // Check if wrong token was detected
             let messageText;
             if (verification.isWrongToken) {
-              const wrongTokenName = verification.wrongToken === 'NATIVE' ? 'PAX (native)' : (verification.wrongToken || 'unknown token');
+              // Determine correct native token name based on network
+              let wrongTokenName = verification.wrongToken;
+              if (verification.wrongToken === 'NATIVE') {
+                wrongTokenName = verification.network === 'Solana' ? 'SOL (native)' : 'PAX (native)';
+              }
               messageText = 
                 `⚠️ <b>Wrong Token Detected</b>\n\n` +
                 `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +

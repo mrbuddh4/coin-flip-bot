@@ -309,10 +309,13 @@ class SolanaHandler {
       const transactions = [];
       for (let i = 0; i < signatures.length; i++) {
         try {
-          // Add delay before each fetch to avoid rate limiting (increased to 3s for aggressive protection)
-          if (i > 0) {
+          // Add aggressive delay BEFORE each fetch to avoid rate limiting
+          if (i === 0) {
+            console.log(`[getRecentDepositSender] Waiting 2s before fetching tx ${i + 1}/${signatures.length}...`);
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Initial 2s delay
+          } else {
             console.log(`[getRecentDepositSender] Waiting 3s before fetching tx ${i + 1}/${signatures.length}...`);
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            await new Promise(resolve => setTimeout(resolve, 3000)); // 3s between subsequent calls
           }
 
           console.log(`[getRecentDepositSender] Fetching tx ${i + 1}/${signatures.length}: ${signatures[i].signature.substring(0, 20)}...`);
@@ -557,9 +560,11 @@ class SolanaHandler {
 
       for (let i = 0; i < signatures.length; i++) {
         try {
-          // Add delay between requests to respect RPC rate limits (3s for aggressive protection)
-          if (i > 0) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
+          // Add aggressive delay BEFORE each transaction fetch to prevent RPC rate limiting
+          if (i === 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Initial 2s delay
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 3000)); // 3s between subsequent calls
           }
 
           const tx = await this.connection.getTransaction(signatures[i].signature, {
