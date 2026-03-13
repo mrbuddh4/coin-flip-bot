@@ -755,6 +755,7 @@ class SolanaHandler {
                 wrongTokenMint: transferMint,
                 amount: tokenReceived,
                 senderAddress: senderAddress,
+                botTokenAccount: accountStr, // The actual ATA that received the tokens
                 signature: tx.signature,
               });
             }
@@ -869,21 +870,17 @@ class SolanaHandler {
 
           // SPL TOKEN REFUND (non-native)
 
-          // Get bot's token account for this wrong token
-          const botTokenAccount = await getAssociatedTokenAddress(
-            new PublicKey(refund.wrongTokenMint),
-            this.wallet.publicKey,
-            false, // allowOwnerOffCurve (false for standard Token Program)
-            TOKEN_PROGRAM_ID
-          );
+          // Use the actual bot token account where the tokens currently are (not derived)
+          const botTokenAccount = new PublicKey(refund.botTokenAccount);
 
-          // Verify bot has the tokens to refund
+          // Verify bot token account has the tokens to refund
           let botTokenAccountExists = false;
           try {
             const botAccount = await getAccount(this.connection, botTokenAccount);
             if (botAccount.amount < BigInt(refund.amount)) {
               console.warn('[refundIncorrectTokens] Bot token account has insufficient balance', {
                 mint: refund.wrongTokenMint,
+                account: botTokenAccount.toBase58(),
                 balance: botAccount.amount.toString(),
                 needed: refund.amount.toString(),
               });
@@ -893,6 +890,7 @@ class SolanaHandler {
           } catch (err) {
             console.warn('[refundIncorrectTokens] Bot token account not found or error checking balance', {
               mint: refund.wrongTokenMint,
+              account: botTokenAccount.toBase58(),
               error: err.message,
             });
             continue;
@@ -931,7 +929,7 @@ class SolanaHandler {
 
           // Create transfer instruction with explicit TOKEN_PROGRAM_ID
           const transferInstruction = createTransferInstruction(
-            botTokenAccount,           // from (bot's token account)
+            botTokenAccount,           // from (bot's token account where tokens are)
             senderTokenAccount,        // to (sender's token account)
             this.wallet.publicKey,     // owner
             BigInt(refund.amount),     // amount in raw units
