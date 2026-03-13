@@ -102,27 +102,8 @@ class SolanaHandler {
       // Create empty transaction FIRST (like working refundIncorrectTokens)
       const transaction = new Transaction();
 
-      // Check if destination ATA exists - CREATE IT if needed (same pattern as working refundIncorrectTokens)
-      console.log('[transferToken] Checking if destination ATA exists:', toATA.toBase58());
-      try {
-        // Add timeout to prevent hanging on RPC call
-        const checkATAPromise = getAccount(this.connection, toATA);
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('getAccount timeout')), 5000)
-        );
-        await Promise.race([checkATAPromise, timeoutPromise]);
-        console.log('[transferToken] Destination ATA exists, skipping creation');
-      } catch (error) {
-        // ATA doesn't exist or timeout - create it first
-        console.log('[transferToken] Destination ATA does not exist or RPC timeout, creating:', toATA.toBase58());
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,              // Payer (sender pays for ATA creation)
-          toATA,                      // Associated token account address
-          toPublicKey,                // Owner of the associated token account
-          mint                        // Mint of the token
-        );
-        transaction.add(createATAInstruction);
-      }
+      // Skip ATA creation - recipient should already have ATA since they sent deposit
+      console.log('[transferToken] Assuming recipient ATA exists:', toATA.toBase58());
 
       console.log('[transferToken] About to create transfer instruction');
       const amountInTokens = Math.floor(amount * Math.pow(10, decimals));
