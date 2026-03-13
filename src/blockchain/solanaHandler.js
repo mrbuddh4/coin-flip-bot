@@ -103,18 +103,26 @@ class SolanaHandler {
       const transaction = new Transaction();
 
       // Check if destination ATA exists - CREATE IT if needed (EXACT same pattern as working refundIncorrectTokens)
+      let ataExists = false;
       try {
         await getAccount(this.connection, toATA);
+        ataExists = true;
+        console.log('[transferToken] Destination ATA exists:', toATA.toBase58());
       } catch (error) {
-        // ATA doesn't exist - create it first
-        console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,              // Payer (sender pays for ATA creation)
-          toATA,                      // ATA to create
-          toPublicKey,                // Owner of ATA
-          mint                        // Token mint
-        );
-        transaction.add(createATAInstruction);
+        // Only create ATA if the specific error is that the account doesn't exist
+        if (error.name === 'TokenAccountNotFoundError' || error.message.includes('not found')) {
+          console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
+          const createATAInstruction = createAssociatedTokenAccountInstruction(
+            fromPublicKey,              // Payer (sender pays for ATA creation)
+            toATA,                      // ATA to create
+            toPublicKey,                // Owner of ATA
+            mint                        // Token mint
+          );
+          transaction.add(createATAInstruction);
+        } else {
+          // If it's a different error (RPC timeout, etc), log and continue
+          console.warn('[transferToken] Error checking ATA existence (might exist, trying transfer anyway):', error.message);
+        }
       }
 
       const amountInTokens = BigInt(Math.floor(amount * Math.pow(10, decimals)));
