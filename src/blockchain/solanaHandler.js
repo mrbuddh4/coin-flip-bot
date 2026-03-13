@@ -97,7 +97,11 @@ class SolanaHandler {
     const mint = new PublicKey(tokenAddress);
     const toPublicKey = new PublicKey(toAddress);
 
-    // Try Token-2022 first, fall back to standard Token Program if it fails
+    // Calculate amount in base units
+    const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
+    const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
+
+    // Try Token-2022 first
     const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A');
     console.error('[transferToken] Attempting Token-2022 transfer for mint:', tokenAddress);
 
@@ -107,26 +111,7 @@ class SolanaHandler {
 
       const transaction = new Transaction();
 
-      // Check if destination ATA exists - CREATE IT if needed
-      try {
-        await getAccount(this.connection, toATA, 'confirmed', TOKEN_2022_PROGRAM_ID);
-      } catch (error) {
-        // ATA doesn't exist - create it first
-        console.error('[transferToken] Creating Token-2022 ATA:', toATA.toBase58());
-        const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,  // Payer
-          toATA,          // ATA to create
-          toPublicKey,    // Owner of ATA
-          mint,           // Token mint
-          TOKEN_2022_PROGRAM_ID  // Token-2022 program
-        );
-        transaction.add(createATAInstruction);
-      }
-
-      // Ensure amount is a number
-      const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
-      const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
-
+      // Create transfer instruction for Token-2022
       const instruction = createTransferInstruction(
         fromATA,
         toATA,
@@ -165,26 +150,7 @@ class SolanaHandler {
 
         const transaction = new Transaction();
 
-        // Check if destination ATA exists - CREATE IT if needed
-        try {
-          await getAccount(this.connection, toATA, 'confirmed', TOKEN_PROGRAM_ID);
-        } catch (error) {
-          // ATA doesn't exist - create it first
-          console.error('[transferToken] Creating standard Token Program ATA:', toATA.toBase58());
-          const createATAInstruction = createAssociatedTokenAccountInstruction(
-            fromPublicKey,  // Payer
-            toATA,          // ATA to create
-            toPublicKey,    // Owner of ATA
-            mint,           // Token mint
-            TOKEN_PROGRAM_ID  // Standard Token Program
-          );
-          transaction.add(createATAInstruction);
-        }
-
-        // Ensure amount is a number
-        const amountNum = typeof amount === 'string' ? parseFloat(amount) : amount;
-        const amountInTokens = Math.floor(amountNum * Math.pow(10, decimals));
-
+        // Create transfer instruction for standard Token Program
         const instruction = createTransferInstruction(
           fromATA,
           toATA,
