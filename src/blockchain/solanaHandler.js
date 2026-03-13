@@ -132,38 +132,8 @@ class SolanaHandler {
       logger.info('[transferToken] ATAs calculated', { fromATA: fromATA.toBase58(), toATA: toATA.toBase58() });
 
       const transaction = new Transaction();
-
-      // Check if destination ATA exists - CREATE IT in a SEPARATE transaction if needed
-      try {
-        await getAccount(this.connection, toATA);
-        console.error('[transferToken] Destination ATA EXISTS - proceeding with transfer');
-        logger.info('[transferToken] Destination ATA already exists');
-      } catch (ataError) {
-        console.error('[transferToken] Destination ATA MISSING - will create in separate transaction');
-        logger.info('[transferToken] Destination ATA does not exist, creating it');
-        const ATA_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
-        const createATAIx = createAssociatedTokenAccountInstruction(
-          fromPublicKey,    // Payer (sender pays for ATA creation)
-          toATA,            // ATA to create
-          toPublicKey,      // Owner of ATA
-          mint,             // Token mint
-          tokenProgram      // Token program ID
-        );
-        
-        // Create ATA in separate transaction first
-        const ataTransaction = new Transaction();
-        ataTransaction.add(createATAIx);
-        const { blockhash: ataBlockhash } = await this.connection.getLatestBlockhash();
-        ataTransaction.recentBlockhash = ataBlockhash;
-        ataTransaction.feePayer = fromPublicKey;
-        ataTransaction.sign(fromKeypair);
-        
-        console.error('[transferToken] Sending ATA creation transaction');
-        const ataSignature = await this.connection.sendTransaction(ataTransaction, [fromKeypair]);
-        console.error('[transferToken] ATA creation sent:', ataSignature);
-        await this.connection.confirmTransaction(ataSignature, 'confirmed');
-        console.error('[transferToken] ATA creation confirmed');
-      }
+      
+      // NOTE: Not pre-creating destination ATA - let transfer handle it or fail with clear error
 
       console.error('[transferToken] TRANSFER:', { source: fromATA.toBase58(), dest: toATA.toBase58(), programId: tokenProgram.toBase58() });
       logger.info('[transferToken] Creating instruction', { 
