@@ -927,7 +927,14 @@ async function initBot() {
 
           // Show deposit instructions directly
           const blockchainManager = getBlockchainManager();
-          const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+          const config = require('../config');
+          let botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+          
+          // For Solana SPL tokens (SID), use the pre-computed ATA instead of main wallet
+          if (flip.tokenNetwork === 'Solana' && flip.tokenAddress) {
+            botWalletAddress = config.solana.sidTokenATA;
+          }
+          
           const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
           await ctx.reply(
@@ -2383,7 +2390,14 @@ const handlers = {
 
             // Show deposit instructions
             const blockchainManager = getBlockchainManager();
-            const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+            const config = require('../config');
+            let botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+            
+            // For Solana SPL tokens (SID), use the pre-computed ATA instead of main wallet
+            if (flip.tokenNetwork === 'Solana' && flip.tokenAddress) {
+              botWalletAddress = config.solana.sidTokenATA;
+            }
+            
             const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
             await ctx.reply(
@@ -2473,7 +2487,14 @@ const handlers = {
 
               // Show deposit instructions directly
               const blockchainManager = getBlockchainManager();
-              const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+              const config = require('../config');
+              let botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+              
+              // For Solana SPL tokens (SID), use the pre-computed ATA instead of main wallet
+              if (flip.tokenNetwork === 'Solana' && flip.tokenAddress) {
+                botWalletAddress = config.solana.sidTokenATA;
+              }
+              
               const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
 
               await ctx.reply(

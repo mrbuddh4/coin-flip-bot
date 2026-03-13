@@ -155,7 +155,13 @@ class FlipHandler {
 
       // Get bot's wallet address for this network
       const blockchainManager = getBlockchainManager();
-      const botWalletAddress = blockchainManager.getBotWalletAddress(tokenInfo.network);
+      const config = require('../config');
+      let botWalletAddress = blockchainManager.getBotWalletAddress(tokenInfo.network);
+      
+      // For Solana SPL tokens (SID), use the pre-computed ATA instead of main wallet
+      if (tokenInfo.network === 'Solana' && tokenInfo.address) {
+        botWalletAddress = config.solana.sidTokenATA;
+      }
 
       // Update session with flip ID
       session.coinFlipId = flip.id;
