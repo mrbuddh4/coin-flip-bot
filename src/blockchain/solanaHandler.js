@@ -133,13 +133,13 @@ class SolanaHandler {
 
       const transaction = new Transaction();
 
-      // Check if destination ATA exists - CREATE IT if needed
+      // Check if destination ATA exists - CREATE IT in a SEPARATE transaction if needed
       try {
         await getAccount(this.connection, toATA);
-        console.error('[transferToken] Destination ATA EXISTS');
+        console.error('[transferToken] Destination ATA EXISTS - proceeding with transfer');
         logger.info('[transferToken] Destination ATA already exists');
       } catch (ataError) {
-        console.error('[transferToken] Destination ATA MISSING - will create');
+        console.error('[transferToken] Destination ATA MISSING - will create in separate transaction');
         logger.info('[transferToken] Destination ATA does not exist, creating it');
         const ATA_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
         const createATAIx = createAssociatedTokenAccountInstruction(
@@ -149,9 +149,20 @@ class SolanaHandler {
           mint,             // Token mint
           tokenProgram      // Token program ID
         );
-        transaction.add(createATAIx);
-        console.error('[transferToken] ATA instruction ADDED to transaction');
-        logger.info('[transferToken] Created ATA instruction for destination');
+        
+        // Create ATA in separate transaction first
+        const ataTransaction = new Transaction();
+        ataTransaction.add(createATAIx);
+        const { blockhash: ataBlockhash } = await this.connection.getLatestBlockhash();
+        ataTransaction.recentBlockhash = ataBlockhash;
+        ataTransaction.feePayer = fromPublicKey;
+        ataTransaction.sign(fromKeypair);
+        
+        console.error('[transferToken] Sending ATA creation transaction');
+        const ataSignature = await this.connection.sendTransaction(ataTransaction, [fromKeypair]);
+        console.error('[transferToken] ATA creation sent:', ataSignature);
+        await this.connection.confirmTransaction(ataSignature, 'confirmed');
+        console.error('[transferToken] ATA creation confirmed');
       }
 
       console.error('[transferToken] TRANSFER:', { source: fromATA.toBase58(), dest: toATA.toBase58(), programId: tokenProgram.toBase58() });
@@ -211,6 +222,30 @@ class SolanaHandler {
       };
     } catch (error) {
       console.error('[transferToken] EXCEPTION:', error.message, error.transactionLogs);
+      
+      // Try to get detailed logs from SendTransactionError
+      if (error.getLogs && typeof error.getLogs === 'function') {
+        try {
+          const detailedLogs = error.getLogs();
+          console.error('[transferToken] DETAILED LOGS FROM SOLANA:', JSON.stringify(detailedLogs, null, 2));
+        } catch (logsErr) {
+          console.error('[transferToken] Could not get detailed logs:', logsErr.message);
+        }
+      }
+      
+      // Log the entire error object
+      console.error('[transferToken] FULL ERROR:', JSON.stringify({
+        name: error.name,
+        message: error.message,
+        code: error.code,
+        signature: error.signature,
+        transactionMessage: error.transactionMessage,
+        transactionLogs: error.transactionLogs,
+        logs: error.logs,
+        // Include keys for debugging
+        keys: Object.keys(error)
+      }, null, 2));
+      
       logger.error('[transferToken] ❌ FAILED', {
         errorMessage: error.message,
         errorCode: error.code,
