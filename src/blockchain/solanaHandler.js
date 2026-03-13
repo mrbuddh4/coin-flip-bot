@@ -103,20 +103,26 @@ class SolanaHandler {
       
       // Detect token program by fetching mint owner
       let tokenProgramId = TOKEN_PROGRAM_ID;
+      console.error('[transferToken] STARTING TOKEN DETECTION for mint:', tokenAddress);
       try {
         const mintInfo = await this.connection.getAccountInfo(mint);
+        console.error('[transferToken] mintInfo retrieved, owner:', mintInfo?.owner?.toBase58());
         if (mintInfo) {
           const owner = mintInfo.owner.toBase58();
+          console.error('[transferToken] Mint owner is:', owner);
           if (owner === 'TokenzQdBNBrrGT3VLaYAmM1yPPmWbeJvybw29ztn2A') {
             tokenProgramId = TOKEN_2022_PROGRAM_ID;
-            console.log('[transferToken] ✅ Token-2022 detected');
+            console.error('[transferToken] ✅ Token-2022 DETECTED, using:', TOKEN_2022_PROGRAM_ID.toBase58());
           } else {
-            console.log('[transferToken] ✅ Standard Token Program detected');
+            console.error('[transferToken] ✅ Standard Token Program detected, using:', TOKEN_PROGRAM_ID.toBase58());
           }
+        } else {
+          console.error('[transferToken] mintInfo is null!');
         }
       } catch (err) {
-        console.log('[transferToken] Could not detect token type, using standard:', err.message);
+        console.error('[transferToken] ERROR during detection:', err.message, err.stack);
       }
+      console.error('[transferToken] USING tokenProgramId:', tokenProgramId.toBase58());
 
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey, false, tokenProgramId);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, tokenProgramId);
