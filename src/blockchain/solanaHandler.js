@@ -12,9 +12,6 @@ const {
   transfer,
   createTransferInstruction,
   createAssociatedTokenAccountInstruction,
-  createAssociatedTokenAccountIdempotentInstruction,
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const config = require('../config');
@@ -89,8 +86,6 @@ class SolanaHandler {
    */
   async transferToken(tokenAddress, fromPrivateKeyB58, toAddress, amount, decimals) {
     try {
-      console.log('[transferToken] Starting token transfer', { tokenAddress, toAddress, amount, decimals });
-      
       const fromKeypair = Keypair.fromSecretKey(bs58.decode(fromPrivateKeyB58));
       const fromPublicKey = fromKeypair.publicKey;
       const mint = new PublicKey(tokenAddress);
@@ -99,27 +94,25 @@ class SolanaHandler {
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey);
 
-      // Create empty transaction FIRST (like working refundIncorrectTokens)
       const transaction = new Transaction();
 
-      // Check if destination ATA exists - CREATE IT if needed (EXACT same pattern as working refundIncorrectTokens)
+      // Check if destination ATA exists - CREATE IT if needed
       try {
         await getAccount(this.connection, toATA);
       } catch (error) {
         // ATA doesn't exist - create it first
         console.log('[transferToken] Destination ATA does not exist, creating:', toATA.toBase58());
         const createATAInstruction = createAssociatedTokenAccountInstruction(
-          fromPublicKey,              // Payer (sender pays for ATA creation)
-          toATA,                      // ATA to create
-          toPublicKey,                // Owner of ATA
-          mint                        // Token mint
+          fromPublicKey,  // Payer (bot will pay for ATA creation)
+          toATA,          // ATA to create
+          toPublicKey,    // Owner of ATA
+          mint            // Token mint
         );
         transaction.add(createATAInstruction);
       }
 
-      const amountInTokens = BigInt(Math.floor(amount * Math.pow(10, decimals)));
+      const amountInTokens = Math.floor(amount * Math.pow(10, decimals));
 
-      // Create transfer instruction
       const instruction = createTransferInstruction(
         fromATA,
         toATA,
@@ -129,40 +122,14 @@ class SolanaHandler {
 
       transaction.add(instruction);
 
-      // Log all accounts in the transaction before signing
-      console.log('[transferToken] Transaction accounts:', {
-        instruction_keys: instruction.keys.map(k => ({
-          pubkey: k.pubkey.toBase58(),
-          isSigner: k.isSigner,
-          isWritable: k.isWritable
-        }))
-      });
-
-      // Set feePayer and recentBlockhash AFTER adding instructions (like working refundIncorrectTokens)
+      const { blockhash } = await this.connection.getLatestBlockhash();
+      transaction.recentBlockhash = blockhash;
       transaction.feePayer = fromPublicKey;
-      transaction.recentBlockhash = (await this.connection.getLatestBlockhash()).blockhash;
 
       transaction.sign(fromKeypair);
 
-      console.log('[transferToken] Sending transaction...');
-      const signature = await this.connection.sendTransaction(transaction, [fromKeypair], {
-        maxRetries: 3,
-      });
-      console.log('[transferToken] Transaction sent with signature:', signature);
-      
-      // Check confirmation with timeout (like working refundIncorrectTokens)
-      console.log('[transferToken] Confirming transaction...');
-      const confirmation = await this.connection.confirmTransaction(signature, 'confirmed');
-      
-      if (confirmation.value.err) {
-        console.error('[transferToken] Transaction failed', {
-          signature,
-          error: confirmation.value.err,
-        });
-        throw new Error(`Transaction failed: ${confirmation.value.err}`);
-      }
-      
-      console.log('[transferToken] Transaction confirmed');
+      const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
+      await this.connection.confirmTransaction(signature, 'confirmed');
 
       return {
         txHash: signature,
@@ -592,7 +559,7 @@ class SolanaHandler {
         flipCreatedAt,
       });
 
-      // Add aggressive delay BEFORE attempting any RPC calls to prevent rate limiting
+      // Add aggressive delay BEFORE attempting any RPC calls to reduce rate limiting
       console.log('[refundIncorrectTokens] Waiting 5s before querying sender transactions...');
       await new Promise(resolve => setTimeout(resolve, 5000));
 

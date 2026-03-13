@@ -139,13 +139,6 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                       }
                     }
 
-                    // Add aggressive delays BEFORE refund to prevent RPC rate limiting
-                    logger.info('[challengeTimeout] Waiting 5s before initiating refund RPC call...');
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-
-                    logger.info('[challengeTimeout] Waiting 10s before executing refund transaction...');
-                    await new Promise(resolve => setTimeout(resolve, 10000));
-
                     const txHash = await blockchainManager.sendWinnings(
                       flipCheck.tokenNetwork,
                       tokenAddress,
@@ -1246,9 +1239,8 @@ async function initBot() {
         if (!verification.received) {
           logger.info('[deposit_confirmed] Deposit not received', { userId, flipId, before_save: flip });
           
-          // Store detected amount for refunds - BUT ONLY FOR CORRECT TOKENS
-          // Wrong tokens are auto-refunded and should NOT be counted toward timeout refunds
-          if (verification.depositSender && !verification.isWrongToken) {
+          // Store detected amount for refunds
+          if (verification.depositSender) {
             if (!flip.challengerAccumulatedDeposit) {
               // CRITICAL: Store in DISPLAY units, not raw units
               const tokenDecimals = flip.tokenDecimals || 18;
@@ -1265,7 +1257,8 @@ async function initBot() {
               // CRITICAL: Convert current total from raw to display units
               const tokenDecimals = flip.tokenDecimals || 18;
               const currentTotalRaw = parseFloat(verification.amount || 0);
-              const currentTotal = currentTotalRaw / Math.pow(10, tokenDecimals);
+              // For wrong tokens (especially native SOL), amount is already display units
+              const currentTotal = verification.isWrongToken ? currentTotalRaw : (currentTotalRaw / Math.pow(10, tokenDecimals));
               flip.challengerAccumulatedDeposit = currentTotal.toString();
               
               logger.info('[deposit_confirmed] Updated challenger accumulated deposit', {
@@ -1275,13 +1268,6 @@ async function initBot() {
                 newDepositsSinceLastCheck: currentTotal - previousAccumulated,
               });
             }
-          } else if (verification.isWrongToken) {
-            logger.info('[deposit_confirmed] Skipping wrong token in accumulated deposit tracking', {
-              flipId,
-              wrongToken: verification.wrongToken,
-              amount: verification.amount,
-              willBeRefundedAutomatically: true
-            });
           }
           
           // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
@@ -1429,13 +1415,6 @@ async function initBot() {
                       }
                     }
 
-                    // Add aggressive delays BEFORE refund to prevent RPC rate limiting
-                    logger.info('[insufficient_deposit_timeout_challenger] Waiting 5s before initiating refund RPC call...');
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-
-                    logger.info('[insufficient_deposit_timeout_challenger] Waiting 10s before executing refund transaction...');
-                    await new Promise(resolve => setTimeout(resolve, 10000));
-
                     await blockchainManager.sendWinnings(
                       flipCheck.tokenNetwork,
                       tokenAddress,
@@ -1557,13 +1536,15 @@ async function initBot() {
                 }
               }
 
-              // Use display units directly (like timeout refund does) - NOT raw units
+              // Convert excess from display units to raw units for blockchain transaction
+              const excessRaw = (excessAmount * Math.pow(10, refundDecimals)).toFixed(0);
               logger.info('[deposit_confirmed] Sending refund', {
                 flipId,
                 network: flip.tokenNetwork,
                 tokenAddress,
                 recipient: flip.challengerDepositWalletAddress,
                 excessDisplay: excessAmount.toString(),
+                excessRaw,
                 decimals: refundDecimals,
               });
               
@@ -1571,7 +1552,7 @@ async function initBot() {
                 flip.tokenNetwork,
                 tokenAddress,
                 flip.challengerDepositWalletAddress,
-                excessAmount,
+                excessRaw,
                 refundDecimals
               );
               
@@ -1815,9 +1796,8 @@ async function initBot() {
         if (!verification.received) {
           logger.warn('[creator_deposit_confirmed] Deposit not received (insufficient)', { userId, flipId, verificationReceived: verification.received });
           
-          // Store detected amount for refunds - BUT ONLY FOR CORRECT TOKENS
-          // Wrong tokens are auto-refunded and should NOT be counted toward timeout refunds
-          if (verification.depositSender && !verification.isWrongToken) {
+          // Store detected amount for refunds  
+          if (verification.depositSender) {
             if (!flip.creatorAccumulatedDeposit) {
               // CRITICAL: Store in DISPLAY units, not raw units
               const tokenDecimals = flip.tokenDecimals || 18;
@@ -1834,7 +1814,8 @@ async function initBot() {
               // CRITICAL: Convert current total from raw to display units
               const tokenDecimals = flip.tokenDecimals || 18;
               const currentTotalRaw = parseFloat(verification.amount || 0);
-              const currentTotal = currentTotalRaw / Math.pow(10, tokenDecimals);
+              // For wrong tokens (especially native SOL), amount is already display units
+              const currentTotal = verification.isWrongToken ? currentTotalRaw : (currentTotalRaw / Math.pow(10, tokenDecimals));
               flip.creatorAccumulatedDeposit = currentTotal.toString();
 
               logger.info('[creator_deposit_confirmed] Updated creator accumulated deposit', {
@@ -1844,13 +1825,6 @@ async function initBot() {
                 newDepositsSinceLastCheck: currentTotal - previousAccumulated,
               });
             }
-          } else if (verification.isWrongToken) {
-            logger.info('[creator_deposit_confirmed] Skipping wrong token in accumulated deposit tracking', {
-              flipId,
-              wrongToken: verification.wrongToken,
-              amount: verification.amount,
-              willBeRefundedAutomatically: true
-            });
           }
           
           // Check if notification already sent for this verification attempt
@@ -2055,41 +2029,35 @@ async function initBot() {
                 }
               }
 
-              // Use display units directly (like timeout refund does) - NOT raw units
+              // Convert excess from display units to raw units for blockchain transaction
+              const excessRaw = (creatorExcessAmount * Math.pow(10, refundDecimals)).toFixed(0);
               logger.info('[creator_deposit_confirmed] Sending refund', {
                 flipId,
                 network: flip.tokenNetwork,
                 tokenAddress,
                 recipient: flip.creatorDepositWalletAddress,
                 excessDisplay: creatorExcessAmount.toString(),
+                excessRaw,
                 decimals: refundDecimals,
               });
               
-              try {
-                await blockchainManager.sendWinnings(
-                  flip.tokenNetwork,
-                  tokenAddress,
-                  flip.creatorDepositWalletAddress,
-                  creatorExcessAmount,
-                  refundDecimals
-                );
-                
-                logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
-                  flipId, 
-                  excessDisplay: creatorExcessAmount.toString(),
-                  recipient: flip.creatorDepositWalletAddress
-                });
-              } catch (refundErr) {
-                logger.error('[creator_deposit_confirmed] Refund transaction failed', {
-                  flipId,
-                  error: refundErr.message,
-                  stack: refundErr.stack
-                });
-                // Continue - don't fail the deposit confirmation if refund fails
-              }
+              await blockchainManager.sendWinnings(
+                flip.tokenNetwork,
+                tokenAddress,
+                flip.creatorDepositWalletAddress,
+                excessRaw,
+                refundDecimals
+              );
+              
+              logger.info('[creator_deposit_confirmed] Refunded excess deposit', { 
+                flipId, 
+                excessDisplay: creatorExcessAmount.toString(),
+                excessRaw,
+                recipient: flip.creatorDepositWalletAddress
+              });
             }
           } catch (excessErr) {
-            logger.error('[creator_deposit_confirmed] Failed to refund excess deposit', { flipId, error: excessErr.message, stack: excessErr.stack });
+            logger.error('[creator_deposit_confirmed] Failed to refund excess deposit', { flipId, error: excessErr.message });
           }
         }
 
