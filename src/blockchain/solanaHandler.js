@@ -123,19 +123,29 @@ class SolanaHandler {
       let toATA;
       if (isToken2022) {
         console.error('TRANSFERTOKEN_CREATING_DESTINATION_ATA_TOKEN2022');
-        // Use getOrCreateAssociatedTokenAccount for Token-2022 with explicit program
-        const destinationAccount = await getOrCreateAssociatedTokenAccount(
-          this.connection,
-          fromKeypair,              // payer
-          mint,                     // mint
-          toPublicKey,              // owner of token account
-          false,                    // allowOwnerOffCurve
-          'processed',              // commitment
-          {},                       // confirmOptions
-          TOKEN_2022_PROGRAM_ID     // token program ID
-        );
-        toATA = destinationAccount.address;
-        console.error('TRANSFERTOKEN_DESTINATION_ATA_CREATED_OR_EXISTS:', toATA.toBase58());
+        try {
+          // Use getOrCreateAssociatedTokenAccount for Token-2022 with explicit program
+          const destinationAccount = await getOrCreateAssociatedTokenAccount(
+            this.connection,
+            fromKeypair,              // payer
+            mint,                     // mint
+            toPublicKey,              // owner of token account
+            false,                    // allowOwnerOffCurve
+            'processed',              // commitment
+            {},                       // confirmOptions
+            TOKEN_2022_PROGRAM_ID     // token program ID
+          );
+          toATA = destinationAccount.address;
+          console.error('TRANSFERTOKEN_DESTINATION_ATA_CREATED_OR_EXISTS:', toATA.toBase58());
+        } catch (ataError) {
+          console.error('TRANSFERTOKEN_ATA_CREATION_ERROR:', {
+            message: ataError?.message,
+            name: ataError?.name,
+            toString: ataError?.toString(),
+            fullError: JSON.stringify(ataError, null, 2)
+          });
+          throw ataError;
+        }
       } else {
         toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_PROGRAM_ID);
       }
@@ -174,7 +184,14 @@ class SolanaHandler {
         status: 'success',
       };
     } catch (error) {
-      console.error('TRANSFERTOKEN_ERROR:', error.message);      
+      console.error('TRANSFERTOKEN_ERROR:', error?.message || error?.toString() || String(error));
+      console.error('TRANSFERTOKEN_ERROR_FULL:', {
+        message: error?.message,
+        name: error?.name,
+        code: error?.code,
+        toString: error?.toString(),
+        fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2)
+      });
       if (error?.name === 'SendTransactionError' && typeof error?.getLogs === 'function') {
         try {
           const logs = error.getLogs();
