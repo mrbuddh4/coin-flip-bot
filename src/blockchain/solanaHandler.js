@@ -133,12 +133,30 @@ class SolanaHandler {
       );
 
       console.error('TRANSFERTOKEN_INSTRUCTION_CREATED');
+      console.error('INSTRUCTION_DETAILS:', {
+        programId: transferIx.programId?.toBase58(),
+        accountsCount: transferIx.keys?.length,
+        dataHex: transferIx.data?.toString('hex'),
+        keys: transferIx.keys?.map((k, i) => ({
+          index: i,
+          pubkey: k.pubkey.toBase58(),
+          isWritable: k.isWritable,
+          isSigner: k.isSigner
+        }))
+      });
+      
       transaction.add(transferIx);
 
       const { blockhash } = await this.connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = fromPublicKey;
       transaction.sign(fromKeypair);
+
+      console.error('TRANSFERTOKEN_TRANSACTION_DETAILS:', {
+        message: transaction.compileMessage().accountKeys.map(k => k.toBase58()),
+        instructions: transaction.compileMessage().instructions.length,
+        recentBlockhash: transaction.recentBlockhash
+      });
 
       console.error('TRANSFERTOKEN_BEFORE_SEND');
       const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
