@@ -96,7 +96,11 @@ class SolanaHandler {
       const fromATA = await getAssociatedTokenAddress(mint, fromPublicKey);
       const toATA = await getAssociatedTokenAddress(mint, toPublicKey);
 
-      const transaction = new Transaction();
+      const { blockhash } = await this.connection.getLatestBlockhash();
+      const transaction = new Transaction({
+        recentBlockhash: blockhash,
+        feePayer: fromPublicKey,
+      });
 
       // Check if destination ATA exists - CREATE IT if needed
       try {
@@ -108,8 +112,9 @@ class SolanaHandler {
           fromPublicKey,              // Payer
           toATA,                      // Associated token account address
           toPublicKey,                // Owner of the associated token account
-          mint                        // Mint of the token
-          // TOKEN_PROGRAM_ID and ASSOCIATED_TOKEN_PROGRAM_ID are inferred automatically
+          mint,                       // Mint of the token
+          TOKEN_PROGRAM_ID,           // Token program ID
+          ASSOCIATED_TOKEN_PROGRAM_ID // Associated token program ID
         );
         transaction.add(createATAInstruction);
       }
@@ -124,10 +129,6 @@ class SolanaHandler {
       );
 
       transaction.add(instruction);
-
-      const { blockhash } = await this.connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = fromPublicKey;
 
       transaction.sign(fromKeypair);
 
