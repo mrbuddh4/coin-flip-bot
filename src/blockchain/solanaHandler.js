@@ -128,17 +128,25 @@ class SolanaHandler {
       const transaction = new Transaction();
 
       // createTransferInstruction with correct parameter order for v0.4.x
-      // Parameters: source, destination, authority, amount, [], programId
+      // Parameters: source, destination, authority, amount, multiSigners, programId
+      console.log('[transferToken] Creating transfer instruction with:');
+      console.log('  - programId:', tokenProgram.toBase58());
+      console.log('  - source:', fromATA.toBase58());
+      console.log('  - destination:', toATA.toBase58());
+      console.log('  - authority:', fromPublicKey.toBase58());
+      console.log('  - amount:', amountInTokens.toString());
+      
       const transferIx = createTransferInstruction(
         fromATA,
         toATA,
         fromPublicKey,
         BigInt(amountInTokens),
-        tokenProgram === TOKEN_PROGRAM_ID ? [] : [], // multiSigners
+        [], // multiSigners
         tokenProgram
       );
 
-      console.log('[transferToken] Transfer instruction created');
+      console.log('[transferToken] Transfer instruction created successfully');
+      console.log('  - Instruction program:', transferIx.programId?.toBase58());
       transaction.add(transferIx);
 
       const { blockhash } = await this.connection.getLatestBlockhash();
@@ -146,6 +154,22 @@ class SolanaHandler {
       transaction.feePayer = fromPublicKey;
 
       transaction.sign(fromKeypair);
+
+      console.log(`[transferToken] Transaction details:`, {
+        version: transaction.version,
+        feePayer: transaction.feePayer?.toBase58(),
+        recentBlockhash: transaction.recentBlockhash,
+        instructionCount: transaction.instructions.length,
+      });
+      
+      // Log the instruction details
+      if (transaction.instructions.length > 0) {
+        const ix = transaction.instructions[0];
+        console.log(`[transferToken] Instruction details:`, {
+          programId: ix.programId?.toBase58(),
+          keysCount: ix.keys?.length,
+        });
+      }
 
       console.log(`[transferToken] Sending signed transaction...`);
       const signature = await this.connection.sendTransaction(transaction, [fromKeypair]);
