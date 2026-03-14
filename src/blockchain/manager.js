@@ -163,6 +163,7 @@ class BlockchainManager {
         return {
           received: hasDeposit,
           amount: receivedAmountRaw,
+          amountDisplay: receivedAmountDisplay,  // Include display units for proper message formatting
           expected: expectedAmountNum,
           botWallet: botWallet,
           depositSender: depositInfo.sender,
