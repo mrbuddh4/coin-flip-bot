@@ -328,10 +328,12 @@ class EVMHandler {
               })),
             });
             
-            // Sum ALL transfers from target sender
+            // For native transfers, only take the MOST RECENT one to avoid duplicate refunds
+            // For ERC20s, accumulate all (multi-deposit scenario)
             let totalAmount = 0;
             let latestTxForReturn = null;
             const transfers = [];
+            let foundNativeTransfer = false;
             
             for (const tx of data.result) {
               const txSenderLower = tx.from.toLowerCase();
@@ -351,6 +353,20 @@ class EVMHandler {
               const shouldAccept = isCorrectToken || shouldAcceptWrongToken || isNativeTransfer;
               
               if (isValidSender && isAfterFlipCreation && shouldAccept) {
+                // CRITICAL FIX: For native transfers (wrong token from this flip), only take the MOST RECENT
+                // Skip this transfer if we already found a native transfer (since results are sorted desc by timestamp)
+                if (isNativeTransfer && foundNativeTransfer) {
+                  console.log('[getRecentDepositSender] Skipping older native transfer (already have most recent)', {
+                    currentHash: tx.hash,
+                    txTimestamp,
+                    latestHash: latestTxForReturn?.hash,
+                  });
+                  continue; // Skip this older native transfer
+                }
+                
+                // Mark that we found a native transfer
+                if (isNativeTransfer) foundNativeTransfer = true;
+                
                 // For native transfers, use decimals 18; for token transfers use provided decimals
                 const transferDecimals = isNativeTransfer ? 18 : decimals;
                 const txAmount = parseFloat(ethers.formatUnits(tx.value, transferDecimals));
@@ -504,7 +520,8 @@ class EVMHandler {
                     })),
                   });
                   
-                  // Try to find native transfers from target sender (MUST be from knownSender if provided)
+                  // Try to find MOST RECENT native transfer from target sender (native transfers sorted desc by timestamp)
+                  // Only take the first (most recent) one to avoid duplicate refunds
                   if (nativeData.status === '1' && nativeData.result && nativeData.result.length > 0) {
                     for (const tx of nativeData.result) {
                       const txSenderLower = tx.from.toLowerCase();
@@ -516,7 +533,7 @@ class EVMHandler {
                       
                       if (isValidSender && isAfterFlipCreation) {
                         const txAmount = parseFloat(ethers.formatUnits(tx.value, 18)); // Native transfers use 18 decimals
-                        totalAmount += txAmount;
+                        totalAmount = txAmount; // CRITICAL: Set to this amount (not accumulate), this is the only one we want
                         if (!latestTxForReturn) latestTxForReturn = tx;
                         transfers.push({
                           amount: txAmount,
@@ -528,12 +545,16 @@ class EVMHandler {
                           wrongToken: 'NATIVE', // Native PAX is "wrong" when SID was expected
                         });
                         
-                        console.log('[getRecentDepositSender] Found native transfer from sender', {
+                        console.log('[getRecentDepositSender] Found most recent native transfer from sender', {
                           sender: txSenderLower,
                           amount: txAmount,
                           txHash: tx.hash,
                           fromTargetSender: true,
                         });
+                        
+                        // CRITICAL: Break after finding the first (most recent) native transfer
+                        // Don't continue accumulating older native transfers
+                        break;
                       }
                     }
                   }
@@ -862,12 +883,14 @@ class EVMHandler {
         const nativeRefunds = [];
 
         if (nativeData.status === '1' && nativeData.result && nativeData.result.length > 0) {
+          // CRITICAL: Only refund the MOST RECENT native transfer (results are sorted desc by timestamp)
+          // This prevents duplicate refunds for older transfers from previous flip attempts
           for (const tx of nativeData.result) {
             const txSenderLower = tx.from.toLowerCase();
             const txRecipientLower = tx.to?.toLowerCase() || '';
             const txTimestamp = parseInt(tx.timeStamp, 10);
             
-            // Find native transfers TO the bot FROM the user (any native transfer is "wrong" if token was expected)
+            // Find FIRST matching native transfer TO the bot FROM the user (any native transfer is "wrong" if token was expected)
             const isFromSender = txSenderLower === senderLower;
             const isToBotWallet = txRecipientLower === botWalletLower;
             const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
@@ -878,6 +901,10 @@ class EVMHandler {
                 txHash: tx.hash,
                 sender: txSenderLower,
               });
+              
+              // CRITICAL: Break after finding the FIRST (most recent) native transfer
+              // Don't accumulate multiple old transfers from previous attempts
+              break;
             }
           }
         }
