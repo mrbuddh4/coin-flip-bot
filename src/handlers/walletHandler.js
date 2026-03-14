@@ -46,7 +46,7 @@ class WalletHandler {
         solDeposit: solDepositWallet,
       });
 
-      await ctx.reply(
+      await ctx.editMessageText(
         `<b>💳 Your Wallet Addresses</b>\n\n` +
         `<b>Paxeer Network - Receive Winnings:</b>\n<code>${evmAddress}</code>\n\n` +
         `<b>Paxeer Network - Send Deposits:</b>\n<code>${evmDepositWallet}</code>\n\n` +
@@ -292,16 +292,8 @@ class WalletHandler {
           where: { id: session.id },
         });
 
-        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
-
-        await ctx.reply(
-          `✅ Paxeer wallet address updated!\n\n` +
-          `<code>${message}</code>`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-          }
-        );
+        // Show wallet menu again instead of confirmation
+        await this.handleWalletCommand(ctx);
 
         // Find and continue any pending flip
         await this.continueFlipAfterWallet(ctx, userId, models, 'EVM');
@@ -325,16 +317,8 @@ class WalletHandler {
           where: { id: session.id },
         });
 
-        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];
-
-        await ctx.reply(
-          `✅ Solana wallet address updated!\n\n` +
-          `<code>${message}</code>`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-          }
-        );
+        // Show wallet menu again instead of confirmation
+        await this.handleWalletCommand(ctx);
 
         // Find and continue any pending flip
         await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');
@@ -374,17 +358,8 @@ class WalletHandler {
           where: { id: session.id },
         });
         
-        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];  
-
-        await ctx.reply(
-          `✅ Paxeer sending wallet set!\n\n` +
-          `<code>${message}</code>\n\n` +
-          `You'll send coin flip deposits FROM this wallet.`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-          }
-        );
+        // Show wallet menu again instead of confirmation
+        await this.handleWalletCommand(ctx);
 
         // Find and continue any pending flip
         await this.continueFlipAfterWallet(ctx, userId, models, 'EVM');
@@ -424,17 +399,8 @@ class WalletHandler {
           where: { id: session.id },
         });
         
-        const buttons = [[Markup.button.callback('💳 Back to Wallets', 'back_to_wallets')]];  
-
-        await ctx.reply(
-          `✅ Solana sending wallet set!\n\n` +
-          `<code>${message}</code>\n\n` +
-          `You'll send coin flip deposits FROM this wallet.`,
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
-          }
-        );
+        // Show wallet menu again instead of confirmation
+        await this.handleWalletCommand(ctx);
 
         // Find and continue any pending flip
         await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');

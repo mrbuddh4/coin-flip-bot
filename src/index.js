@@ -2353,6 +2353,7 @@ async function initBot() {
       try {
         ctx.state.models = getDB().models;
         await WalletHandler.handleWalletCommand(ctx);
+        await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error opening wallet menu', { error: error.message });
         await ctx.answerCbQuery('❌ Error opening wallet menu');
@@ -2391,6 +2392,7 @@ async function initBot() {
               ]).reply_markup,
             }
           );
+          await ctx.answerCbQuery();
           return;
         }
 
@@ -2423,6 +2425,7 @@ async function initBot() {
             [Markup.button.callback('🏠 Home', 'back_to_home')],
           ]).reply_markup,
         });
+        await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error showing stats', error);
         await ctx.answerCbQuery('❌ Error loading statistics');
@@ -2455,6 +2458,7 @@ async function initBot() {
               ]).reply_markup,
             }
           );
+          await ctx.answerCbQuery('Please configure your wallets');
           return;
         }
 
@@ -2470,6 +2474,7 @@ async function initBot() {
               ]).reply_markup,
             }
           );
+          await ctx.answerCbQuery();
           return;
         }
 
@@ -2498,6 +2503,7 @@ async function initBot() {
             ]).reply_markup,
           }
         );
+        await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error starting flip action', error);
         await ctx.answerCbQuery('❌ Error starting flip');
@@ -2548,6 +2554,7 @@ async function initBot() {
             ]).reply_markup,
           }
         );
+        await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error selecting token for DM flip', error);
         await ctx.answerCbQuery('❌ Error selecting token');
@@ -2593,6 +2600,7 @@ async function initBot() {
             ]).reply_markup,
           }
         );
+        await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error going back to home', error);
         await ctx.answerCbQuery('❌ Error returning home');
