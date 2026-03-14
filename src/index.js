@@ -2452,32 +2452,25 @@ const handlers = {
 
           logger.info('[start] Accepted flip via deeplink', { flipId, userId, groupChatId: flip.groupChatId, groupMessageId: flip.groupMessageId });
 
-          // Delete the original challenge message
-          logger.info('[accept_deeplink] Attempting to delete challenge message', {
-            flipId,
-            hasGroupChatId: !!flip.groupChatId,
-            hasGroupMessageId: !!flip.groupMessageId,
-            groupChatId: flip.groupChatId,
-            groupMessageId: flip.groupMessageId
-          });
-          
-          try {
-            if (!flip.groupChatId) {
-              logger.error('[accept_deeplink] ❌ Missing groupChatId when trying to delete', { flipId });
-            } else if (!flip.groupMessageId) {
-              logger.error('[accept_deeplink] ❌ Missing groupMessageId when trying to delete', { flipId });
-            } else {
-              await ctx.telegram.deleteMessage(flip.groupChatId, flip.groupMessageId);
-              logger.info('[accept_deeplink] ✅ Deleted original challenge message', { flipId, messageId: flip.groupMessageId, groupId: flip.groupChatId });
-            }
-          } catch (delErr) {
-            logger.error('[accept_deeplink] ❌ Failed to delete original challenge message', { 
-              error: delErr.message, 
+          // Delete the original challenge message and any expired notice
+          if (flip.groupChatId && ctx.telegram) {
+            // Check both old and new storage formats
+            const groupMsgId = flip.data?.groupMessageId || flip.groupMessageId;
+            const expiredMsgId = flip.data?.expiredNoticeMessageId;
+            
+            logger.info('[accept_deeplink] Attempting to delete challenge messages', { 
               flipId, 
-              messageId: flip.groupMessageId,
-              groupId: flip.groupChatId,
-              errorCode: delErr.code
+              groupChatId: flip.groupChatId,
+              groupMsgId,
+              expiredMsgId
             });
+            
+            if (groupMsgId) {
+              await deleteGroupMessage(ctx.telegram, flip.groupChatId, groupMsgId);
+            }
+            if (expiredMsgId) {
+              await deleteGroupMessage(ctx.telegram, flip.groupChatId, expiredMsgId);
+            }
           }
 
           // Send new "Challenger Found!" message
