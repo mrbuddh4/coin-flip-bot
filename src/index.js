@@ -2371,6 +2371,102 @@ async function initBot() {
       }
     });
 
+    // Handle stats button from dashboard
+    bot.action('show_stats', async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+        
+        const stats = await DatabaseUtils.getEnhancedUserStats(userId);
+
+        if (stats.totalFlips === 0) {
+          await ctx.answerCbQuery();
+          await ctx.reply(
+            `📊 <b>Your Stats</b>\n\n` +
+            `You haven't completed any flips yet!\n` +
+            `Start a flip to begin building your stats.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        // Format the stats message
+        let message = `📊 <b>Your Game Statistics</b>\n\n`;
+        message += `<b>Overall Performance:</b>\n`;
+        message += `🎮 Total Flips: <b>${stats.totalFlips}</b>\n`;
+        message += `✅ Wins: <b>${stats.wins}</b>\n`;
+        message += `❌ Losses: <b>${stats.losses}</b>\n`;
+        message += `📈 Win Rate: <b>${stats.winRate}%</b>\n\n`;
+        
+        message += `<b>Financial Summary:</b>\n`;
+        message += `💰 Total Earnings: <b>${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n`;
+        message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n\n`;
+
+        // Add per-token breakdown if available
+        if (Object.keys(stats.perTokenStats).length > 0) {
+          message += `<b>Per-Token Breakdown:</b>\n`;
+          Object.values(stats.perTokenStats).forEach(tokenStat => {
+            message += `\n🪙 <b>${tokenStat.symbol}</b> (${tokenStat.network})\n`;
+            message += `   Flips: ${tokenStat.flips} | Win Rate: ${tokenStat.winRate}%\n`;
+            message += `   Wagered: ${tokenStat.wagered.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
+            message += `   Earned: ${tokenStat.earned.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
+          });
+        }
+
+        await ctx.answerCbQuery();
+        await ctx.reply(message, { parse_mode: 'HTML' });
+      } catch (error) {
+        logger.error('Error showing stats', error);
+        await ctx.answerCbQuery('❌ Error loading statistics');
+      }
+    });
+
+    // Handle start flip button from dashboard
+    bot.action('start_flip_action', async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+        
+        // Check if user has wallets configured
+        const userProfile = await models.UserProfile.findByPk(userId);
+        const hasReceiveWallet = userProfile?.evmWalletAddress || userProfile?.solanaWalletAddress;
+        const hasDepositWallet = userProfile?.evmDepositWalletAddress || userProfile?.solanaDepositWalletAddress;
+        
+        if (!hasReceiveWallet || !hasDepositWallet) {
+          await ctx.answerCbQuery();
+          await ctx.reply(
+            `❌ <b>Complete Your Wallet Setup First</b>\n\n` +
+            `You need both a receive wallet and a deposit wallet to play!\n\n` +
+            `${hasReceiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where winnings go\n` +
+            `${hasDepositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
+            `Configure your wallets:`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
+              ]).reply_markup,
+            }
+          );
+          return;
+        }
+
+        // User has wallets - guide them to group chat
+        await ctx.answerCbQuery();
+        await ctx.reply(
+          `🪙 <b>Ready to Flip!</b>\n\n` +
+          `To start a coin flip:\n\n` +
+          `1️⃣ Go to a group chat\n` +
+          `2️⃣ Use /flip command\n` +
+          `3️⃣ Follow the prompts in this DM\n\n` +
+          `Or create a new group with your friends and use /flip there!`,
+          { parse_mode: 'HTML' }
+        );
+      } catch (error) {
+        logger.error('Error starting flip action', error);
+        await ctx.answerCbQuery('❌ Error starting flip');
+      }
+    });
+
     logger.info('Bot initialized successfully');
     console.log('✅ Bot ready!');
   } catch (error) {
@@ -2775,20 +2871,46 @@ const handlers = {
         return;
       }
       
-      // User already has wallets - show welcome message
+      // User already has wallets - show dashboard
+      // userProfile is already loaded from the check above
+      if (!userProfile) {
+        const newProfile = await models.UserProfile.create({ userId });
+        await ctx.reply('✅ Wallet profile created!', { parse_mode: 'HTML' });
+      }
+
+      // Get user stats for quick display
+      const stats = await DatabaseUtils.getEnhancedUserStats(userId);
+      
+      // Build dashboard message
+      let dashboardMsg = `🏠 <b>Coin Flip Dashboard</b>\n\n`;
+      
+      if (stats.totalFlips > 0) {
+        dashboardMsg += `<b>Quick Stats:</b>\n`;
+        dashboardMsg += `📊 Flips: ${stats.totalFlips} | Win Rate: ${stats.winRate}%\n`;
+        dashboardMsg += `💰 Earnings: ${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 4 })}\n\n`;
+      } else {
+        dashboardMsg += `Welcome! Ready to start flipping? 🪙\n\n`;
+      }
+
+      dashboardMsg += `🌐 <b>Wallets Configured:</b>\n`;
+      dashboardMsg += userProfile.evmWalletAddress ? `✅ EVM Receive Wallet\n` : `❌ EVM Receive Wallet\n`;
+      dashboardMsg += userProfile.solanaWalletAddress ? `✅ Solana Receive Wallet\n` : `❌ Solana Receive Wallet\n`;
+      dashboardMsg += `\n<b>Ready to play?</b> Use the buttons below to get started!`;
+
       await ctx.reply(
-        `🪙 <b>Welcome to Coin Flip Bot!</b>\n\n` +
-        `Start a coin flip game from any group chat by using the buttons that appear.\n\n` +
-        `<b>How it works:</b>\n` +
-        `1️⃣ Click "Start Flip" button in group\n` +
-        `2️⃣ Enter wager amount in DM\n` +
-        `3️⃣ Send tokens to provided address\n` +
-        `4️⃣ Wait for challenger\n` +
-        `5️⃣ Bot flips a coin\n` +
-        `6️⃣ Winner claims prizes!\n\n` +
-        `<b>Supported Networks:</b> EVM (Ethereum, BSC, etc.), Solana\n\n` +
-        `/help for more info`,
-        { parse_mode: 'HTML' }
+        dashboardMsg,
+        {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [
+              Markup.button.callback('💳 Wallets', 'open_wallet_menu'),
+              Markup.button.callback('📊 My Stats', 'show_stats'),
+            ],
+            [
+              Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
+            ],
+          ]).reply_markup,
+        }
       );
     } else {
       // In group chat
@@ -2847,16 +2969,42 @@ const handlers = {
   stats: async (ctx) => {
     try {
       const userId = ctx.from.id;
-      const stats = await DatabaseUtils.getUserStats(userId);
+      const stats = await DatabaseUtils.getEnhancedUserStats(userId);
 
-      await ctx.reply(
-        `📊 <b>Your Stats</b>\n\n` +
-        `Total Games: ${stats.totalGames}\n` +
-        `Wins: ${stats.wins}\n` +
-        `Losses: ${stats.losses}\n` +
-        `Win Rate: ${stats.winRate}%`,
-        { parse_mode: 'HTML' }
-      );
+      if (stats.totalFlips === 0) {
+        await ctx.reply(
+          `📊 <b>Your Stats</b>\n\n` +
+          `You haven't completed any flips yet!\n` +
+          `Start a flip to begin building your stats.`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
+
+      // Format the main stats message
+      let message = `📊 <b>Your Game Statistics</b>\n\n`;
+      message += `<b>Overall Performance:</b>\n`;
+      message += `🎮 Total Flips: <b>${stats.totalFlips}</b>\n`;
+      message += `✅ Wins: <b>${stats.wins}</b>\n`;
+      message += `❌ Losses: <b>${stats.losses}</b>\n`;
+      message += `📈 Win Rate: <b>${stats.winRate}%</b>\n\n`;
+      
+      message += `<b>Financial Summary:</b>\n`;
+      message += `💰 Total Earnings: <b>${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 6 })} USD</b>\n`;
+      message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })} USD</b>\n\n`;
+
+      // Add per-token breakdown if available
+      if (Object.keys(stats.perTokenStats).length > 0) {
+        message += `<b>Per-Token Breakdown:</b>\n`;
+        Object.values(stats.perTokenStats).forEach(tokenStat => {
+          message += `\n🪙 <b>${tokenStat.symbol}</b> (${tokenStat.network})\n`;
+          message += `   Flips: ${tokenStat.flips} | Win Rate: ${tokenStat.winRate}%\n`;
+          message += `   Wagered: ${tokenStat.wagered.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
+          message += `   Earned: ${tokenStat.earned.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
+        });
+      }
+
+      await ctx.reply(message, { parse_mode: 'HTML' });
     } catch (error) {
       logger.error('Error getting user stats', error);
       await ctx.reply('❌ Error retrieving statistics.');

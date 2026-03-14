@@ -103,6 +103,109 @@ class DatabaseUtils {
   }
 
   /**
+   * Get detailed stats for user including earnings, losses, and per-token breakdown
+   */
+  static async getEnhancedUserStats(userId) {
+    const { models } = await this.getDB();
+    
+    // Get all completed games where user participated
+    const games = await models.CoinFlip.findAll({
+      where: {
+        [Op.or]: [{ creatorId: userId }, { challengerId: userId }],
+        status: 'COMPLETED',
+      },
+      raw: true,
+    });
+
+    if (games.length === 0) {
+      return {
+        totalFlips: 0,
+        wins: 0,
+        losses: 0,
+        winRate: '0.00',
+        totalEarnings: '0.00',
+        totalLosses: '0.00',
+        perTokenStats: {},
+      };
+    }
+
+    // Calculate basic stats
+    const wins = games.filter(g => g.winnerId === userId).length;
+    const losses = games.length - wins;
+    const winRate = ((wins / games.length) * 100).toFixed(2);
+
+    // Get all payouts to calculate earnings
+    const payouts = await models.Transaction.findAll({
+      where: {
+        userId,
+        type: 'PAYOUT',
+        status: 'CONFIRMED',
+      },
+      raw: true,
+    });
+
+    // Get all deposits to calculate total wagered
+    const deposits = await models.Transaction.findAll({
+      where: {
+        userId,
+        type: 'DEPOSIT',
+        status: 'CONFIRMED',
+      },
+      raw: true,
+    });
+
+    // Calculate totals
+    const totalEarnings = payouts.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+    const totalWagered = deposits.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+    const totalLosses = totalWagered - totalEarnings; // What was wagered but not won back
+
+    // Build per-token stats
+    const perTokenStats = {};
+    games.forEach(game => {
+      const token = game.tokenSymbol;
+      if (!perTokenStats[token]) {
+        perTokenStats[token] = {
+          symbol: token,
+          network: game.tokenNetwork,
+          flips: 0,
+          wins: 0,
+          losses: 0,
+          winRate: '0.00',
+          wagered: 0,
+          earned: 0,
+        };
+      }
+      perTokenStats[token].flips += 1;
+      if (game.winnerId === userId) {
+        perTokenStats[token].wins += 1;
+      } else {
+        perTokenStats[token].losses += 1;
+      }
+      const wagerAmount = parseFloat(game.wagerAmount || 0);
+      perTokenStats[token].wagered += wagerAmount;
+      if (game.winnerId === userId) {
+        perTokenStats[token].earned += wagerAmount * 2; // Winner gets 2x their wager
+      }
+    });
+
+    // Calculate per-token win rates
+    Object.keys(perTokenStats).forEach(token => {
+      const stats = perTokenStats[token];
+      stats.winRate = stats.flips > 0 ? ((stats.wins / stats.flips) * 100).toFixed(2) : '0.00';
+    });
+
+    return {
+      totalFlips: games.length,
+      wins,
+      losses,
+      winRate,
+      totalEarnings: totalEarnings.toFixed(6),
+      totalLosses: totalLosses.toFixed(6),
+      perTokenStats,
+    };
+  }
+
+  /**
    * Close expired sessions
    */
   static async closeExpiredSessions() {
