@@ -2714,24 +2714,7 @@ const handlers = {
             });
             
             if (session.data?.initialGroupMessageId && session.data?.groupId) {
-              try {
-                await ctx.telegram.deleteMessage(
-                  session.data.groupId,
-                  session.data.initialGroupMessageId
-                );
-                logger.info('[flip_deeplink] ✅ Deleted initial Start Flip message from group', { 
-                  sessionId, 
-                  messageId: session.data.initialGroupMessageId,
-                  groupId: session.data.groupId
-                });
-              } catch (delErr) {
-                logger.error('[flip_deeplink] ❌ Failed to delete initial Start Flip message', { 
-                  error: delErr.message,
-                  messageId: session.data.initialGroupMessageId,
-                  groupId: session.data.groupId,
-                  errorCode: delErr.code
-                });
-              }
+              await deleteGroupMessage(ctx.telegram, session.data.groupId, session.data.initialGroupMessageId);
             } else {
               logger.warn('[flip_deeplink] ⚠️ Could not delete initial message - missing IDs', { 
                 hasMessageId: !!session.data?.initialGroupMessageId,
@@ -3053,6 +3036,7 @@ const handlers = {
         // Store the message ID and group ID so we can delete it later
         session.data.initialGroupMessageId = groupMsg.message_id;
         session.data.groupId = ctx.chat.id; // Explicitly preserve groupId
+        session.changed('data', true); // Mark JSON field as changed for Sequelize
         await session.save();
         logger.info('[flip] Stored initial message for deletion', { sessionId: session.id, messageId: groupMsg.message_id, groupId: ctx.chat.id });
       } else {
