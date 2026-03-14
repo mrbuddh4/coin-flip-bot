@@ -581,6 +581,7 @@ class EVMHandler {
                   transferCount: transfers.length,
                   hasWrongTokens: transfers.some(t => t.wrongToken),
                   wrongToken: transfers.find(t => t.wrongToken)?.wrongToken || null,
+                  amountIsDisplayFormat: true, // EVM amounts are already formatted by ethers.formatUnits()
                 };
               }
               
@@ -687,6 +688,7 @@ class EVMHandler {
                     transactionHash: tx.hash,
                     blockNumber: tx.blockNumber,
                     wrongToken: wrongTokenAddress, // Flag this as wrong token for refund handling
+                    amountIsDisplayFormat: true, // EVM amounts are already formatted by ethers.formatUnits()
                   };
                 }
               }
@@ -712,6 +714,7 @@ class EVMHandler {
               transferCount: transfers.length,
               hasWrongTokens: transfers.some(t => t.wrongToken), // Include flag in return
               wrongToken: transfers.find(t => t.wrongToken)?.wrongToken || null, // Include the actual wrong token info
+              amountIsDisplayFormat: true, // EVM amounts are already formatted by ethers.formatUnits()
             };
           } else {
             console.warn('[getRecentDepositSender] No transfers found via Paxscan API', {
