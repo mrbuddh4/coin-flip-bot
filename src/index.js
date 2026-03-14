@@ -1477,9 +1477,15 @@ async function initBot() {
         const receivedAmountDisplay = parseFloat(verification.amount) / Math.pow(10, tokenDecimals);
         const wagerAmountDisplay = parseFloat(flip.wagerAmount);
 
+        // Use pre-calculated amountDisplay from manager if available, otherwise calculate
+        // amountDisplay already accounts for token decimals and native token special cases
+        const receivedAmountDisplayFinal = verification.amountDisplay !== undefined ? 
+          verification.amountDisplay : 
+          receivedAmountDisplay;
+
         // Ensure accumulated deposit is set for overpayment check (store in display units for consistency)
-        if (parseFloat(flip.challengerAccumulatedDeposit || 0) < receivedAmountDisplay) {
-          flip.challengerAccumulatedDeposit = receivedAmountDisplay.toString();
+        if (parseFloat(flip.challengerAccumulatedDeposit || 0) < receivedAmountDisplayFinal) {
+          flip.challengerAccumulatedDeposit = receivedAmountDisplayFinal.toString();
           // CRITICAL: Also update wallet address when updating accumulated deposit
           // This ensures refund goes to the wallet that sent the current verified amount
           flip.challengerDepositWalletAddress = verification.depositSender;
@@ -1488,14 +1494,14 @@ async function initBot() {
         logger.info('[deposit_confirmed] Starting overpayment check', {
           flipId,
           receivedRawAmount: verification.amount,
-          receivedDisplayAmount: receivedAmountDisplay,
+          receivedDisplayAmount: receivedAmountDisplayFinal,
           wagerAmount: wagerAmountDisplay,
           tokenDecimals,
         });
 
         // If they sent more than the wager, refund the excess (both in display units)
         // Use accumulated deposit if available, otherwise use wager as fallback
-        const receivedAmount = flip.challengerAccumulatedDeposit ? parseFloat(flip.challengerAccumulatedDeposit) : wagerAmountDisplay;
+        const receivedAmount = flip.challengerAccumulatedDeposit ? parseFloat(flip.challengerAccumulatedDeposit) : receivedAmountDisplayFinal;
         const wagerAmount = wagerAmountDisplay;
         let overpaymentDetected = false;
         
@@ -1997,24 +2003,28 @@ async function initBot() {
 
         // Convert received amount from raw units to display units for comparison
         const creatorTokenDecimals = flip.tokenDecimals || 18;
-        const creatorReceivedAmountDisplay = parseFloat(verification.amount) / Math.pow(10, creatorTokenDecimals);
+        // Use pre-calculated amountDisplay from manager if available, otherwise calculate
+        // amountDisplay already accounts for token decimals and native token special cases
+        const creatorReceivedAmountDisplayFinal = verification.amountDisplay !== undefined ? 
+          verification.amountDisplay : 
+          (parseFloat(verification.amount) / Math.pow(10, creatorTokenDecimals));
         const creatorWagerAmountDisplay = parseFloat(flip.wagerAmount);
 
         // Ensure accumulated deposit is set for overpayment check (store in display units for consistency)
-        if (parseFloat(flip.creatorAccumulatedDeposit || 0) < creatorReceivedAmountDisplay) {
-          flip.creatorAccumulatedDeposit = creatorReceivedAmountDisplay.toString();
+        if (parseFloat(flip.creatorAccumulatedDeposit || 0) < creatorReceivedAmountDisplayFinal) {
+          flip.creatorAccumulatedDeposit = creatorReceivedAmountDisplayFinal.toString();
         }
 
         logger.info('[creator_deposit_confirmed] Starting overpayment check', {
           flipId,
           receivedRawAmount: verification.amount,
-          receivedDisplayAmount: creatorReceivedAmountDisplay,
+          receivedDisplayAmount: creatorReceivedAmountDisplayFinal,
           wagerAmount: creatorWagerAmountDisplay,
           tokenDecimals: creatorTokenDecimals,
         });
 
         // Check if creator sent more than the wager (overpayment) - both in display units
-        const creatorReceivedAmount = parseFloat(flip.creatorAccumulatedDeposit || creatorWagerAmountDisplay);
+        const creatorReceivedAmount = parseFloat(flip.creatorAccumulatedDeposit || creatorReceivedAmountDisplayFinal);
         const creatorWagerAmount = creatorWagerAmountDisplay;
         let creatorOverpaymentDetected = false;
         
