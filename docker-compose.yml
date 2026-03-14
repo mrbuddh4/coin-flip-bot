@@ -49,6 +49,8 @@ services:
       start_period: 5s
     networks:
       - bot-network
+    deploy:
+      replicas: 1  # CRITICAL: Only allow ONE instance to prevent Telegram conflicts
 
 volumes:
   postgres_data:
