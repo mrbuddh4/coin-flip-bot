@@ -2380,12 +2380,16 @@ async function initBot() {
         const stats = await DatabaseUtils.getEnhancedUserStats(userId);
 
         if (stats.totalFlips === 0) {
-          await ctx.answerCbQuery();
-          await ctx.reply(
+          await ctx.editMessageText(
             `📊 <b>Your Stats</b>\n\n` +
             `You haven't completed any flips yet!\n` +
             `Start a flip to begin building your stats.`,
-            { parse_mode: 'HTML' }
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('🏠 Home', 'back_to_home')],
+              ]).reply_markup,
+            }
           );
           return;
         }
@@ -2413,8 +2417,12 @@ async function initBot() {
           });
         }
 
-        await ctx.answerCbQuery();
-        await ctx.reply(message, { parse_mode: 'HTML' });
+        await ctx.editMessageText(message, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🏠 Home', 'back_to_home')],
+          ]).reply_markup,
+        });
       } catch (error) {
         logger.error('Error showing stats', error);
         await ctx.answerCbQuery('❌ Error loading statistics');
@@ -2433,8 +2441,7 @@ async function initBot() {
         const hasDepositWallet = userProfile?.evmDepositWalletAddress || userProfile?.solanaDepositWalletAddress;
         
         if (!hasReceiveWallet || !hasDepositWallet) {
-          await ctx.answerCbQuery();
-          await ctx.reply(
+          await ctx.editMessageText(
             `❌ <b>Complete Your Wallet Setup First</b>\n\n` +
             `You need both a receive wallet and a deposit wallet to play!\n\n` +
             `${hasReceiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where winnings go\n` +
@@ -2444,26 +2451,151 @@ async function initBot() {
               parse_mode: 'HTML',
               reply_markup: Markup.inlineKeyboard([
                 [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
+                [Markup.button.callback('🏠 Home', 'back_to_home')],
               ]).reply_markup,
             }
           );
           return;
         }
 
-        // User has wallets - guide them to group chat
-        await ctx.answerCbQuery();
-        await ctx.reply(
-          `🪙 <b>Ready to Flip!</b>\n\n` +
-          `To start a coin flip:\n\n` +
-          `1️⃣ Go to a group chat\n` +
-          `2️⃣ Use /flip command\n` +
-          `3️⃣ Follow the prompts in this DM\n\n` +
-          `Or create a new group with your friends and use /flip there!`,
-          { parse_mode: 'HTML' }
+        // User has wallets - show token selection
+        const supportedTokens = await getSupportedTokensList();
+        
+        if (supportedTokens.length === 0) {
+          await ctx.editMessageText(
+            '⚠️ No tokens configured yet.',
+            {
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('🏠 Home', 'back_to_home')],
+              ]).reply_markup,
+            }
+          );
+          return;
+        }
+
+        // Store session for DM flip
+        const session = await models.BotSession.create({
+          userId,
+          sessionType: 'INITIATING_DM_FLIP',
+          currentStep: 'SELECTING_TOKEN',
+        });
+
+        const tokenButtons = supportedTokens.map((token, idx) => [
+          Markup.button.callback(
+            `${token.symbol} (${token.network})`,
+            `dm_flip_token_${session.id}_${idx}`
+          ),
+        ]);
+
+        await ctx.editMessageText(
+          '🪙 <b>Select a Token</b>\n\n' +
+          'Choose which token to flip:',
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              ...tokenButtons,
+              [Markup.button.callback('🏠 Home', 'back_to_home')],
+            ]).reply_markup,
+          }
         );
       } catch (error) {
         logger.error('Error starting flip action', error);
         await ctx.answerCbQuery('❌ Error starting flip');
+      }
+    });
+
+    // Handle token selection for DM flip
+    bot.action(/^dm_flip_token_(.+)_(\d+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+        const sessionId = ctx.match[1];
+        const tokenIdx = parseInt(ctx.match[2]);
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || session.userId !== userId) {
+          await ctx.answerCbQuery('❌ Session expired');
+          return;
+        }
+
+        // Get token
+        const supportedTokens = await getSupportedTokensList();
+        const selectedToken = supportedTokens[tokenIdx];
+        if (!selectedToken) {
+          await ctx.answerCbQuery('❌ Token not found');
+          return;
+        }
+
+        // Update session with token info
+        session.currentStep = 'AWAITING_WAGER';
+        session.data = {
+          tokenId: selectedToken.id,
+          tokenSymbol: selectedToken.symbol,
+          tokenNetwork: selectedToken.network,
+          isDMFlip: true,
+        };
+        await session.save();
+
+        await ctx.editMessageText(
+          `💰 <b>Enter Your Wager</b>\n\n` +
+          `<b>Token:</b> ${selectedToken.symbol}\n` +
+          `<b>Network:</b> ${selectedToken.network}\n\n` +
+          `Send the amount you want to wager (in ${selectedToken.symbol}):`,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [Markup.button.callback('🏠 Home', 'back_to_home')],
+            ]).reply_markup,
+          }
+        );
+      } catch (error) {
+        logger.error('Error selecting token for DM flip', error);
+        await ctx.answerCbQuery('❌ Error selecting token');
+      }
+    });
+
+    // Handle back to home button
+    bot.action('back_to_home', async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+
+        const userProfile = await models.UserProfile.findByPk(userId);
+        const stats = await DatabaseUtils.getEnhancedUserStats(userId);
+        
+        let dashboardMsg = `🏠 <b>Coin Flip Dashboard</b>\n\n`;
+        
+        if (stats.totalFlips > 0) {
+          dashboardMsg += `<b>Quick Stats:</b>\n`;
+          dashboardMsg += `📊 Flips: ${stats.totalFlips} | Win Rate: ${stats.winRate}%\n`;
+          dashboardMsg += `💰 Earnings: ${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 4 })}\n\n`;
+        } else {
+          dashboardMsg += `Welcome! Ready to start flipping? 🪙\n\n`;
+        }
+
+        dashboardMsg += `🌐 <b>Wallets Configured:</b>\n`;
+        dashboardMsg += userProfile?.evmWalletAddress ? `✅ EVM Receive Wallet\n` : `❌ EVM Receive Wallet\n`;
+        dashboardMsg += userProfile?.solanaWalletAddress ? `✅ Solana Receive Wallet\n` : `❌ Solana Receive Wallet\n`;
+        dashboardMsg += `\n<b>Ready to play?</b> Use the buttons below to get started!`;
+
+        await ctx.editMessageText(
+          dashboardMsg,
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([
+              [
+                Markup.button.callback('💳 Wallets', 'open_wallet_menu'),
+                Markup.button.callback('📊 My Stats', 'show_stats'),
+              ],
+              [
+                Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
+              ],
+            ]).reply_markup,
+          }
+        );
+      } catch (error) {
+        logger.error('Error going back to home', error);
+        await ctx.answerCbQuery('❌ Error returning home');
       }
     });
 

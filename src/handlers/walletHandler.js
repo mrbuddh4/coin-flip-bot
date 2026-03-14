@@ -61,6 +61,7 @@ class WalletHandler {
             [Markup.button.callback('✏️ Update Solana Receive Wallet', 'update_solana_wallet')],
             [Markup.button.callback('✏️ Update Solana Sending Wallet', 'update_solana_deposit_wallet')],
             [Markup.button.callback('❌ Remove All', 'remove_all_wallets')],
+            [Markup.button.callback('🏠 Home', 'back_to_home')],
           ]).reply_markup,
         }
       );

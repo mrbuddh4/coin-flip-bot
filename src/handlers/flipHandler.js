@@ -725,8 +725,49 @@ class FlipHandler {
         return;
       }
 
-      const token = session.data.tokenInfo;
-      const groupChatId = session.data.groupChatId;
+      // Handle both group-based and DM-initiated flips
+      let token = session.data.tokenInfo;
+      let groupChatId = session.data.groupChatId;
+
+      // If this is a DM-initiated flip, we need to get the token info and group
+      if (session.data.isDMFlip) {
+        // Get full token info from supported tokens
+        const supportedTokensMap = Array.from(
+          new Map(
+            Object.entries(config.supportedTokens).map(([key, val]) => [val.id, val])
+          ).values()
+        );
+        const selectedToken = supportedTokensMap.find(t => t.id === session.data.tokenId);
+        if (!selectedToken) {
+          await ctx.reply('❌ Selected token not found.');
+          return;
+        }
+        token = selectedToken;
+
+        // Try to use last group activity
+        const lastGroupSession = await models.BotSession.findOne({
+          where: {
+            userId,
+            sessionType: 'LAST_GROUP_ACTIVITY',
+          },
+        });
+
+        if (!lastGroupSession || !lastGroupSession.data?.groupId) {
+          await ctx.reply(
+            `❌ <b>Need a Group to Start Flip</b>\n\n` +
+            `To start a flip, you first need to use /flip in a group to set up your group context.\n\n` +
+            `Try this:\n` +
+            `1️⃣ Go to a group chat\n` +
+            `2️⃣ Use /flip command\n` +
+            `3️⃣ Follow the prompts\n\n` +
+            `Then you'll be able to start flips from this dashboard!`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+
+        groupChatId = lastGroupSession.data.groupId;
+      }
 
       // Check for active flip in this group (any flip not completed or cancelled)
       const activeFlip = await models.CoinFlip.findOne({
