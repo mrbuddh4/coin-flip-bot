@@ -100,14 +100,14 @@ class BlockchainManager {
         const receivedAmountRaw = parseFloat(depositInfo.amount); // Amount returned from handler
         const expectedAmountNum = parseFloat(expectedAmount);      // Amount in display units
         
-        // SPECIAL CASE: For native SOL tokens, amount is already in display units (SOL)
-        // For SPL tokens, amount is in raw units and needs conversion
+        // SPECIAL CASE: For native tokens (SOL on Solana, PAX on EVM), amount is already in display units
+        // For contract tokens (SPL/ERC20), amount is in raw units and needs conversion
         let receivedAmountDisplay;
-        if (depositInfo.tokenMint === 'NATIVE') {
-          // Native SOL - amount is already in display units (SOL)
+        if (depositInfo.tokenMint === 'NATIVE' || depositInfo.wrongToken === 'NATIVE') {
+          // Native tokens (SOL/PAX) - amount is already in display units
           receivedAmountDisplay = receivedAmountRaw;
         } else {
-          // SPL token - convert from raw units to display units
+          // Contract token - convert from raw units to display units
           receivedAmountDisplay = receivedAmountRaw / Math.pow(10, tokenDecimals);
         }
         

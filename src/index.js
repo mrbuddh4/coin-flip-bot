@@ -1253,7 +1253,8 @@ async function initBot() {
             if (!flip.challengerAccumulatedDeposit) {
               // CRITICAL: Store in DISPLAY units, not raw units
               const tokenDecimals = flip.tokenDecimals || 18;
-              const receivedDisplay = parseFloat(verification.amount || 0) / Math.pow(10, tokenDecimals);
+              // Use pre-calculated amountDisplay if available, otherwise calculate
+              const receivedDisplay = verification.amountDisplay !== undefined ? verification.amountDisplay : (verification.isWrongToken && verification.wrongToken === 'NATIVE' ? parseFloat(verification.amount || 0) : (parseFloat(verification.amount || 0) / Math.pow(10, tokenDecimals)));
               flip.challengerAccumulatedDeposit = receivedDisplay.toString();
               logger.info('[deposit_confirmed] Initial deposit detected', { 
                 flipId, 
@@ -1826,7 +1827,8 @@ async function initBot() {
             if (!flip.creatorAccumulatedDeposit) {
               // CRITICAL: Store in DISPLAY units, not raw units
               const tokenDecimals = flip.tokenDecimals || 18;
-              const receivedDisplay = parseFloat(verification.amount || 0) / Math.pow(10, tokenDecimals);
+              // Use pre-calculated amountDisplay if available, otherwise calculate
+              const receivedDisplay = verification.amountDisplay !== undefined ? verification.amountDisplay : (verification.isWrongToken && verification.wrongToken === 'NATIVE' ? parseFloat(verification.amount || 0) : (parseFloat(verification.amount || 0) / Math.pow(10, tokenDecimals)));
               flip.creatorAccumulatedDeposit = receivedDisplay.toString();
               logger.info('[creator_deposit_confirmed] Initial deposit detected', { 
                 flipId, 
