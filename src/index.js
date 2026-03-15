@@ -3065,16 +3065,16 @@ const handlers = {
       // Format EVM wallets
       if (userProfile.evmWalletAddress) {
         const evmReceive = userProfile.evmWalletAddress.substring(0, 6) + '...' + userProfile.evmWalletAddress.substring(userProfile.evmWalletAddress.length - 4);
-        dashboardMsg += `✅ <b>EVM Receive:</b> <code>${evmReceive}</code>\n`;
+        dashboardMsg += `✅ <b>Paxeer Receive:</b> <code>${evmReceive}</code>\n`;
       } else {
-        dashboardMsg += `❌ <b>EVM Receive:</b> Not set\n`;
+        dashboardMsg += `❌ <b>Paxeer Receive:</b> Not set\n`;
       }
       
       if (userProfile.evmDepositWalletAddress) {
         const evmDeposit = userProfile.evmDepositWalletAddress.substring(0, 6) + '...' + userProfile.evmDepositWalletAddress.substring(userProfile.evmDepositWalletAddress.length - 4);
-        dashboardMsg += `✅ <b>EVM Send:</b> <code>${evmDeposit}</code>\n`;
+        dashboardMsg += `✅ <b>Paxeer Send:</b> <code>${evmDeposit}</code>\n`;
       } else {
-        dashboardMsg += `❌ <b>EVM Send:</b> Not set\n`;
+        dashboardMsg += `❌ <b>Paxeer Send:</b> Not set\n`;
       }
 
       dashboardMsg += `\n`;

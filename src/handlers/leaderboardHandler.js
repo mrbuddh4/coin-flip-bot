@@ -131,7 +131,7 @@ class LeaderboardHandler {
           });
           burnedText += `${amount} ${token.symbol}`;
           if (token.network) {
-            burnedText += ` (${token.network})`;
+            burnedText += ` (${token.network === 'EVM' ? 'Paxeer' : token.network})`;
           }
           burnedText += '\n';
         });
@@ -147,7 +147,7 @@ class LeaderboardHandler {
         volumeList.forEach(token => {
           const amount = token.amount.toLocaleString('en-US', { maximumFractionDigits: 6, minimumFractionDigits: 0 });
           volumeText += `${amount} ${token.symbol}`;
-          if (token.network) volumeText += ` (${token.network})`;
+          if (token.network) volumeText += ` (${token.network === 'EVM' ? 'Paxeer' : token.network})`;
           volumeText += '\n';
         });
         volumeText += '\n';
