@@ -2442,118 +2442,11 @@ async function initBot() {
     // Handle start flip button from dashboard
     bot.action('start_flip_action', async (ctx) => {
       try {
-        const { models } = getDB();
-        const userId = ctx.from.id;
-        
-        // Check if user has wallets configured
-        const userProfile = await models.UserProfile.findByPk(userId);
-        const hasReceiveWallet = userProfile?.evmWalletAddress || userProfile?.solanaWalletAddress;
-        const hasDepositWallet = userProfile?.evmDepositWalletAddress || userProfile?.solanaDepositWalletAddress;
-        
-        if (!hasReceiveWallet || !hasDepositWallet) {
-          await ctx.editMessageText(
-            `❌ <b>Complete Your Wallet Setup First</b>\n\n` +
-            `You need both a receive wallet and a deposit wallet to play!\n\n` +
-            `${hasReceiveWallet ? '✅' : '❌'} <b>Receive Wallet:</b> Where winnings go\n` +
-            `${hasDepositWallet ? '✅' : '❌'} <b>Deposit Wallet:</b> Where you send deposits from\n\n` +
-            `Configure your wallets:`,
-            {
-              parse_mode: 'HTML',
-              reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('💳 Configure Wallets', 'open_wallet_menu')],
-                [Markup.button.callback('🏠 Home', 'back_to_home')],
-              ]).reply_markup,
-            }
-          );
-          await ctx.answerCbQuery('Please configure your wallets');
-          return;
-        }
-
-        // User has wallets - show token selection
-        const supportedTokens = await getSupportedTokensList();
-        
-        if (supportedTokens.length === 0) {
-          await ctx.editMessageText(
-            '⚠️ No tokens configured yet.',
-            {
-              reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('🏠 Home', 'back_to_home')],
-              ]).reply_markup,
-            }
-          );
-          await ctx.answerCbQuery();
-          return;
-        }
-
-        // Store session for DM flip
-        const session = await models.BotSession.create({
-          userId,
-          sessionType: 'INITIATING_DM_FLIP',
-          currentStep: 'SELECTING_TOKEN',
-        });
-
-        const tokenButtons = supportedTokens.map((token, idx) => [
-          Markup.button.callback(
-            `${token.symbol} (${token.network})`,
-            `dm_flip_token_${session.id}_${idx}`
-          ),
-        ]);
-
         await ctx.editMessageText(
-          '🪙 <b>Select a Token</b>\n\n' +
-          'Choose which token to flip:',
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard([
-              ...tokenButtons,
-              [Markup.button.callback('🏠 Home', 'back_to_home')],
-            ]).reply_markup,
-          }
-        );
-        await ctx.answerCbQuery();
-      } catch (error) {
-        logger.error('Error starting flip action', error);
-        await ctx.answerCbQuery('❌ Error starting flip');
-      }
-    });
-
-    // Handle token selection for DM flip
-    bot.action(/^dm_flip_token_(.+)_(\d+)$/, async (ctx) => {
-      try {
-        const { models } = getDB();
-        const userId = ctx.from.id;
-        const sessionId = ctx.match[1];
-        const tokenIdx = parseInt(ctx.match[2]);
-
-        const session = await models.BotSession.findByPk(sessionId);
-        if (!session || session.userId !== userId) {
-          await ctx.answerCbQuery('❌ Session expired');
-          return;
-        }
-
-        // Get token
-        const supportedTokens = await getSupportedTokensList();
-        const selectedToken = supportedTokens[tokenIdx];
-        if (!selectedToken) {
-          await ctx.answerCbQuery('❌ Token not found');
-          return;
-        }
-
-        // Update session with token info
-        session.currentStep = 'AWAITING_WAGER';
-        session.data = {
-          tokenId: selectedToken.id,
-          tokenSymbol: selectedToken.symbol,
-          tokenNetwork: selectedToken.network,
-          isDMFlip: true,
-        };
-        await session.save();
-
-        await ctx.editMessageText(
-          `💰 <b>Enter Your Wager</b>\n\n` +
-          `<b>Token:</b> ${selectedToken.symbol}\n` +
-          `<b>Network:</b> ${selectedToken.network}\n\n` +
-          `Send the amount you want to wager (in ${selectedToken.symbol}):`,
+          `ℹ️ <b>Start a Flip in a Group</b>\n\n` +
+          `Coin flips can only be initiated in groups.\n\n` +
+          `Create or find a group and use /flip to start a game!\n\n` +
+          `Once you post a flip in a group, other members can challenge you.`,
           {
             parse_mode: 'HTML',
             reply_markup: Markup.inlineKeyboard([
@@ -2563,10 +2456,12 @@ async function initBot() {
         );
         await ctx.answerCbQuery();
       } catch (error) {
-        logger.error('Error selecting token for DM flip', error);
-        await ctx.answerCbQuery('❌ Error selecting token');
+        logger.error('Error in start flip action', error);
+        await ctx.answerCbQuery('❌ Error');
       }
     });
+
+
 
     // Handle back to home button
     bot.action('back_to_home', async (ctx) => {
@@ -3095,18 +2990,13 @@ const handlers = {
       await ctx.reply(
         `<b>🪙 Coin Flip Bot Help</b>\n\n` +
         `<b>How to Play:</b>\n` +
-        `<b>Group Flips:</b>\n` +
-        `1. Click "Start Flip" in a group (or use /start)\n` +
+        `1. Use /flip in a group to start a challenge\n` +
         `2. Select your token and wager amount in DM\n` +
         `3. Bot sends you a deposit address\n` +
         `4. Send your wager to that address\n` +
-        `5. Wait for a challenger to join\n` +
+        `5. Other members can accept your challenge\n` +
         `6. Challenger deposits their wager\n` +
         `7. Bot flips a coin - winner takes all!\n\n` +
-        `<b>DM Flips:</b>\n` +
-        `1. Click "Start Flip" in DM (uses your last group as context)\n` +
-        `2. Select token and enter wager amount\n` +
-        `3. Same deposit and challenge process\n\n` +
         `<b>Wallet Setup:</b>\n` +
         `For each network (Paxeer & Solana) you need:\n` +
         `💰 <b>Receive Wallet</b> - Where your winnings are sent\n` +
@@ -3227,11 +3117,6 @@ const handlers = {
           await ctx.reply('⬆️ Please click the button above when you\'ve sent the tokens.');
         } else {
           logger.warn('INITIATING session but unexpected currentStep', { currentStep: activeSession.currentStep });
-        }
-      } else if (activeSession.sessionType === 'INITIATING_DM_FLIP') {
-        if (activeSession.currentStep === 'AWAITING_WAGER') {
-          logger.info('Processing DM wager for INITIATING_DM_FLIP session');
-          await FlipHandler.processDMWagerAmount(ctx, activeSession);
         }
       } else if (activeSession.sessionType === 'CONFIRMING_DEPOSIT') {
         logger.warn('CONFIRMING_DEPOSIT session: user should click button, not send text message');
