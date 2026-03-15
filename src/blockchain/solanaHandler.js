@@ -14,6 +14,7 @@ const {
   getAccount,
   createAssociatedTokenAccountInstruction,
   createTransferInstruction,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const { Buffer } = require('buffer');
@@ -122,6 +123,7 @@ class SolanaHandler {
       
       // For Token-2022, query the destination user's token accounts to find their SID account
       let toATA;
+      let createAtaInstruction = null;
       if (isToken2022) {
         console.error('TRANSFERTOKEN_QUERYING_DESTINATION_ACCOUNTS_TOKEN2022');
         try {
@@ -131,12 +133,34 @@ class SolanaHandler {
           });
           
           if (tokenAccounts.value.length === 0) {
-            throw new Error(`Destination wallet has no token account for SID token`);
+            console.error('TRANSFERTOKEN_NO_ACCOUNT_FOUND_CREATING_ATA');
+            // No token account exists - we need to create one
+            // Get the ATA address (derived from mint and owner)
+            toATA = await getAssociatedTokenAddress(mint, toPublicKey, false, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID);
+            console.error('TRANSFERTOKEN_ATA_DERIVED:', toATA.toBase58());
+            
+            // Check if the ATA actually exists on-chain
+            try {
+              await getAccount(this.connection, toATA, 'confirmed', TOKEN_2022_PROGRAM_ID);
+              console.error('TRANSFERTOKEN_ATA_EXISTS_ON_CHAIN');
+            } catch (accountError) {
+              console.error('TRANSFERTOKEN_ATA_DOES_NOT_EXIST_CREATING_INSTRUCTION');
+              // Account doesn't exist, create instruction to create it
+              createAtaInstruction = createAssociatedTokenAccountInstruction(
+                fromKeypair.publicKey,  // payer
+                toATA,                   // ATA address
+                toPublicKey,             // owner
+                mint,                    // mint
+                TOKEN_2022_PROGRAM_ID,   // token program
+                ASSOCIATED_TOKEN_PROGRAM_ID  // associated token program
+              );
+              console.error('TRANSFERTOKEN_CREATE_ATA_INSTRUCTION_CREATED');
+            }
+          } else {
+            // Use the first (and typically only) token account for this mint
+            toATA = tokenAccounts.value[0].pubkey;
+            console.error('TRANSFERTOKEN_DESTINATION_ATA_FOUND:', toATA.toBase58());
           }
-          
-          // Use the first (and typically only) token account for this mint
-          toATA = tokenAccounts.value[0].pubkey;
-          console.error('TRANSFERTOKEN_DESTINATION_ATA_FOUND:', toATA.toBase58());
         } catch (queryError) {
           console.error('TRANSFERTOKEN_ACCOUNT_QUERY_ERROR:', queryError?.message);
           throw queryError;
@@ -203,8 +227,15 @@ class SolanaHandler {
 
       console.error('TRANSFERTOKEN_INSTRUCTION_CREATED');
 
-      // Build transaction with ONLY the transfer instruction
-      const transaction = new Transaction().add(transferInstruction);
+      // Build transaction with create ATA instruction first (if needed), then transfer
+      const transaction = new Transaction();
+      
+      if (createAtaInstruction) {
+        console.error('TRANSFERTOKEN_ADDING_CREATE_ATA_INSTRUCTION');
+        transaction.add(createAtaInstruction);
+      }
+      
+      transaction.add(transferInstruction);
       
       const { blockhash } = await this.connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
