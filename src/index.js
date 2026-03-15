@@ -2633,7 +2633,9 @@ const handlers = {
               flipId, 
               groupChatId: flip.groupChatId,
               groupMsgId,
-              expiredMsgId
+              expiredMsgId,
+              flipDataField: flip.data,
+              flipGroupMessageId: flip.groupMessageId
             });
             
             if (groupMsgId) {

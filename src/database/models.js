@@ -86,6 +86,10 @@ const defineModels = (sequelize) => {
     },
     messageId: DataTypes.INTEGER,
     messageIdGroupChat: DataTypes.INTEGER,
+    data: {
+      type: DataTypes.JSON,
+      defaultValue: {},
+    },
     createdAt: DataTypes.DATE,
     updatedAt: DataTypes.DATE,
   }, {
