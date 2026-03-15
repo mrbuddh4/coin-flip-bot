@@ -3052,63 +3052,37 @@ const handlers = {
   help: async (ctx) => {
     console.log('[HANDLER] /help called');
     try {
-      const helpText = 
-        `<b>🪙 Coin Flip Bot Help</b>
+      const helpText = `<b>🪙 Coin Flip Bot Help</b>
 
-` +
-        `<b>How to Play:</b>
-` +
-        `1. Use /flip in a group to start a challenge
-` +
-        `2. Select your token and wager amount in DM
-` +
-        `3. Bot sends you a deposit address
-` +
-        `4. Send your wager to that address
-` +
-        `5. Other members can accept your challenge
-` +
-        `6. Challenger deposits their wager
-` +
-        `7. Bot flips a coin - winner takes 90% of the pot!
+<b>How to Play:</b>
+1. Use /flip in a group to start a challenge
+2. Select your token and wager amount in DM
+3. Bot sends you a deposit address
+4. Send your wager to that address
+5. Other members can accept your challenge
+6. Challenger deposits their wager
+7. Bot flips a coin - winner takes 90% of the pot!
 
-` +
-        `<b>Fee Distribution:</b>
-` +
-        `🔥 Burn: 5% of pool
-` +
-        `👨‍💼 Dev: 5% of pool
+<b>Fee Distribution:</b>
+🔥 Burn: 5% of pool
+👨‍💼 Dev: 5% of pool
 
-` +
-        `<b>Supported Tokens:</b>
-` +
-        `🌐 <b>Paxeer Network:</b> PAX (Native), SID
-` +
-        `◎ <b>Solana Network:</b> SID
+<b>Supported Tokens:</b>
+🌐 <b>Paxeer Network:</b> PAX (Native), SID
+◎ <b>Solana Network:</b> SID
 
-` +
-        `<b>Wallet Setup:</b>
-` +
-        `For each network (Paxeer & Solana) you need:
-` +
-        `💰 <b>Receive Wallet</b> - Where your winnings are sent
-` +
-        `🏦 <b>Sending Wallet</b> - Address you send deposits from
-` +
-        `(You only need to configure networks you plan to use)
+<b>Wallet Setup:</b>
+For each network (Paxeer & Solana) you need:
+💰 <b>Receive Wallet</b> - Where your winnings are sent
+🏦 <b>Sending Wallet</b> - Address you send deposits from
+(You only need to configure networks you plan to use)
 
-` +
-        `<b>Rules:</b>
-` +
-        `⏱️ 3 minutes to confirm each deposit
-` +
-        `👥 Both players need complete wallet setup
-` +
-        `💎 Winner receives 1.8x their wager amount
-` +
-        `⏳ Wager refunded to the creator if challenge times out
-` +
-        `🔒 All transactions are recorded on-chain`;
+<b>Rules:</b>
+⏱️ 3 minutes to confirm each deposit
+👥 Both players need complete wallet setup
+💎 Winner receives 1.8x their wager amount
+⏳ Wager refunded to the creator if challenge times out
+🔒 All transactions are recorded on-chain`;
 
       const replyMarkup = Markup.inlineKeyboard([
         [Markup.button.callback('🏠 Home', 'back_to_home')],
