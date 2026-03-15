@@ -3018,42 +3018,84 @@ const handlers = {
     }
   },
 
-  help: async (ctx) => {
+    help: async (ctx) => {
     console.log('[HANDLER] /help called');
     try {
-      await ctx.reply(
-        `<b>🪙 Coin Flip Bot Help</b>\n\n` +
-        `<b>How to Play:</b>\n` +
-        `1. Use /flip in a group to start a challenge\n` +
-        `2. Select your token and wager amount in DM\n` +
-        `3. Bot sends you a deposit address\n` +
-        `4. Send your wager to that address\n` +
-        `5. Other members can accept your challenge\n` +
-        `6. Challenger deposits their wager\n` +
-        `7. Bot flips a coin - winner takes 90% of the pot!\n\n` +
-        `<b>Fee Distribution:</b>\n` +
-        `🔥 Burn: 5% of pool\n` +
-        `👨‍💼 Dev: 5% of pool\n\n` +
-        `<b>Wallet Setup:</b>\n` +
-        `For each network (Paxeer & Solana) you need:\n` +
-        `💰 <b>Receive Wallet</b> - Where your winnings are sent\n` +
-        `🏦 <b>Sending Wallet</b> - Address you send deposits from\n` +
-        `(You only need to configure networks you plan to use)\n\n` +
-        `<b>Rules:</b>\n` +
-        `⏱️ 3 minutes to confirm each deposit\n` +
-        `👥 Both players need complete wallet setup\n` +
-        `💎 Winner receives 1.8x their wager amount\n` +
-        `� Wager refunded to the creator if challenge times out\n` +
-        `�🔒 All transactions are recorded on-chain`,
-        { parse_mode: 'HTML' }
-      );
+      const helpText = 
+        `<b>🪙 Coin Flip Bot Help</b>
+
+` +
+        `<b>How to Play:</b>
+` +
+        `1. Use /flip in a group to start a challenge
+` +
+        `2. Select your token and wager amount in DM
+` +
+        `3. Bot sends you a deposit address
+` +
+        `4. Send your wager to that address
+` +
+        `5. Other members can accept your challenge
+` +
+        `6. Challenger deposits their wager
+` +
+        `7. Bot flips a coin - winner takes 90% of the pot!
+
+` +
+        `<b>Fee Distribution:</b>
+` +
+        `🔥 Burn: 5% of pool
+` +
+        `👨‍💼 Dev: 5% of pool
+
+` +
+        `<b>Wallet Setup:</b>
+` +
+        `For each network (Paxeer & Solana) you need:
+` +
+        `💰 <b>Receive Wallet</b> - Where your winnings are sent
+` +
+        `🏦 <b>Sending Wallet</b> - Address you send deposits from
+` +
+        `(You only need to configure networks you plan to use)
+
+` +
+        `<b>Rules:</b>
+` +
+        `⏱️ 3 minutes to confirm each deposit
+` +
+        `👥 Both players need complete wallet setup
+` +
+        `💎 Winner receives 1.8x their wager amount
+` +
+        `⏳ Wager refunded to the creator if challenge times out
+` +
+        `🔒 All transactions are recorded on-chain`;
+
+      const replyMarkup = Markup.inlineKeyboard([
+        [Markup.button.callback('🏠 Home', 'back_to_home')],
+      ]).reply_markup;
+
+      // If called from callback button, edit existing message
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(helpText, {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      } else {
+        // If called as command, reply with new message
+        await ctx.reply(helpText, {
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup,
+        });
+      }
     } catch (error) {
       logger.error('Error in help command', error);
       await ctx.reply('❌ Error displaying help.');
     }
   },
 
-  stats: async (ctx) => {
+stats: async (ctx) => {
     console.log('[HANDLER] /stats called');
     try {
       const userId = ctx.from.id;
