@@ -105,7 +105,7 @@ class ExecutionHandler {
       // Burn addresses for each network
       const burnAddress = flip.tokenNetwork === 'EVM'
         ? '0x0000000000000000000000000000000000000000' // EVM burn address (null address)
-        : 'zzz111111111111111111111111111111111111111Y5H7d'; // Solana burn address
+        : '1nc1nerator11111111111111111111111111111111'; // Solana SPL incinerator address
       
       logger.info('[executeFlip] Fee distribution starting', { 
         flipId, 
