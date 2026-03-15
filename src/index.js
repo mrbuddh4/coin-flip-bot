@@ -3133,7 +3133,7 @@ const handlers = {
     }
   },
 
-stats: async (ctx) => {
+  stats: async (ctx) => {
     console.log('[HANDLER] /stats called');
     try {
       const userId = ctx.from.id;
