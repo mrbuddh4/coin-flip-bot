@@ -455,14 +455,21 @@ async function initBot() {
     // Middleware setup
     console.log('Setting up middleware...');
     bot.use(middleware.errorHandler);
+    console.log('[MW] Error handler middleware registered');
 
     // Commands
     console.log('Registering commands...');
+    console.log('[CMD] Registering /start');
     bot.start(handlers.start);
+    console.log('[CMD] Registering /help');
     bot.command('help', handlers.help);
+    console.log('[CMD] Registering /stats');
     bot.command('stats', handlers.stats);
+    console.log('[CMD] Registering /flip');
     bot.command('flip', handlers.flip);
+    console.log('[CMD] Registering /wallet');
     bot.command('wallet', handlers.wallet);
+    console.log('[CMD] Registering /leaderboard');
     bot.command('leaderboard', handlers.leaderboard);
     console.log('✅ Commands registered successfully');
 
@@ -666,8 +673,10 @@ async function initBot() {
 
     // Message handlers for DMs
     bot.on('text', async (ctx) => {
+      console.log('[TEXT_HANDLER] Message received:', { text: ctx.message.text, userId: ctx.from.id, chatType: ctx.chat.type });
       // Skip if this is a command - let command handlers process it
       if (ctx.message.text.startsWith('/')) {
+        console.log('[TEXT_HANDLER] Skipping command, letting command handler process');
         return;
       }
       
