@@ -13,17 +13,25 @@ class LeaderboardHandler {
 
       logger.info('[leaderboard] Fetching top 5 winners and losers', { userId: ctx.from.id });
 
-      // Get top 5 winners (by totalWon)
-      const topWinners = await models.User.findAll({
+      // Get top 5 winners by net profit (totalWon - totalWagered)
+      const allWinners = await models.User.findAll({
         attributes: ['telegramId', 'firstName', 'username', 'totalWon', 'totalWagered'],
         where: {
           totalWon: {
             [Op.gt]: 0,
           },
         },
-        order: [['totalWon', 'DESC']],
-        limit: 5,
+        raw: true,
       });
+
+      const topWinners = allWinners
+        .map(user => ({
+          ...user,
+          profit: parseFloat(user.totalWon) - parseFloat(user.totalWagered),
+        }))
+        .filter(user => user.profit > 0)
+        .sort((a, b) => b.profit - a.profit)
+        .slice(0, 5);
 
       // Get top 5 biggest losers (by losses = totalWagered - totalWon)
       const allUsers = await models.User.findAll({
@@ -36,15 +44,15 @@ class LeaderboardHandler {
         raw: true,
       });
 
-      // Calculate losses for each user and sort
-      const usersWithLosses = allUsers
+      // Calculate losses for each user — sort ascending, take 5 biggest, display smallest→biggest
+      const losersDisplay = allUsers
         .map(user => ({
           ...user,
           losses: parseFloat(user.totalWagered) - parseFloat(user.totalWon),
         }))
-        .filter(user => user.losses > 0) // Only show users with actual losses
-        .sort((a, b) => b.losses - a.losses)
-        .slice(0, 5);
+        .filter(user => user.losses > 0)
+        .sort((a, b) => a.losses - b.losses)  // ASC: smallest loss first
+        .slice(-5);                             // keep top 5 biggest, still ASC order
 
       // Calculate total burned by token across all completed flips
       const allFlipsWithTokens = await models.CoinFlip.findAll({
@@ -62,7 +70,7 @@ class LeaderboardHandler {
       } else {
         topWinners.forEach((winner, index) => {
           const displayName = winner.username ? `@${winner.username}` : winner.firstName;
-          const amount = parseFloat(winner.totalWon).toLocaleString('en-US', {
+          const amount = parseFloat(winner.profit).toLocaleString('en-US', {
             maximumFractionDigits: 6,
             minimumFractionDigits: 0,
           });
@@ -71,12 +79,12 @@ class LeaderboardHandler {
         winnersText += '\n';
       }
 
-      // Format losers section
+      // Format losers section (ascending: least loss = #1, most loss = last)
       let losersText = '📉 <b>TOP LOSERS</b>\n';
-      if (usersWithLosses.length === 0) {
+      if (losersDisplay.length === 0) {
         losersText += 'No losers yet\n\n';
       } else {
-        usersWithLosses.forEach((loser, index) => {
+        losersDisplay.forEach((loser, index) => {
           const displayName = loser.username ? `@${loser.username}` : loser.firstName;
           const losses = parseFloat(loser.losses).toLocaleString('en-US', {
             maximumFractionDigits: 6,
