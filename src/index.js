@@ -3080,6 +3080,13 @@ const handlers = {
         `👨‍💼 Dev: 5% of pool
 
 ` +
+        `<b>Supported Tokens:</b>
+` +
+        `🌐 <b>Paxeer Network:</b> PAX (Native), SID
+` +
+        `◎ <b>Solana Network:</b> SID
+
+` +
         `<b>Wallet Setup:</b>
 ` +
         `For each network (Paxeer & Solana) you need:
