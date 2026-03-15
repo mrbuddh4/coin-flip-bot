@@ -108,8 +108,9 @@ class DatabaseUtils {
    */
   static async getEnhancedUserStats(userId) {
     const { models } = await this.getDB();
+    const uid = String(userId);
     
-    // Get all completed games where user participated
+    // Get all completed games where user participated.
     const games = await models.CoinFlip.findAll({
       where: {
         [Op.or]: [{ creatorId: userId }, { challengerId: userId }],
@@ -131,40 +132,23 @@ class DatabaseUtils {
     }
 
     // Calculate basic stats
-    const uid = String(userId);
     const wins = games.filter(g => String(g.winnerId) === uid).length;
     const losses = games.length - wins;
     const winRate = ((wins / games.length) * 100).toFixed(2);
 
-    // Get all payouts to calculate earnings
-    const payouts = await models.Transaction.findAll({
-      where: {
-        userId,
-        type: 'PAYOUT',
-        status: 'CONFIRMED',
-      },
-      raw: true,
-    });
-
-    // Get all deposits to calculate total wagered
-    const deposits = await models.Transaction.findAll({
-      where: {
-        userId,
-        type: 'DEPOSIT',
-        status: 'CONFIRMED',
-      },
-      raw: true,
-    });
-
-    // Calculate totals
-    const totalEarnings = payouts.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
-    const totalWagered = deposits.reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
-    const totalLosses = totalWagered - totalEarnings; // What was wagered but not won back
+    // Financial summary is derived from completed games so it remains accurate even if
+    // transaction history is incomplete or older user aggregates are missing.
+    let totalEarnings = 0;
+    let totalLosses = 0;
 
     // Build per-token stats
     const perTokenStats = {};
     games.forEach(game => {
       const token = game.tokenSymbol;
+      const wagerAmount = parseFloat(game.wagerAmount || 0);
+      const payoutAmount = parseFloat(((wagerAmount * 2) * 0.9).toFixed(game.tokenDecimals || 6));
+      const isWin = String(game.winnerId) === uid;
+
       if (!perTokenStats[token]) {
         perTokenStats[token] = {
           symbol: token,
@@ -177,17 +161,18 @@ class DatabaseUtils {
           earned: 0,
         };
       }
+
       perTokenStats[token].flips += 1;
-      if (String(game.winnerId) === uid) {
+      if (isWin) {
         perTokenStats[token].wins += 1;
+        perTokenStats[token].earned += payoutAmount;
+        totalEarnings += payoutAmount;
       } else {
         perTokenStats[token].losses += 1;
+        totalLosses += wagerAmount;
       }
-      const wagerAmount = parseFloat(game.wagerAmount || 0);
+
       perTokenStats[token].wagered += wagerAmount;
-      if (String(game.winnerId) === uid) {
-        perTokenStats[token].earned += wagerAmount * 2; // Winner gets 2x their wager
-      }
     });
 
     // Calculate per-token win rates
