@@ -91,7 +91,7 @@ class LeaderboardHandler {
       const burnedByToken = {};
       allFlipsWithTokens.forEach(flip => {
         const tokenKey = `${flip.tokenSymbol}_${flip.tokenNetwork}`;
-        const burned = parseFloat(flip.wagerAmount) * 0.05;
+        const burned = parseFloat(flip.wagerAmount) * 0.10; // 5% of total pool (both sides)
         if (!burnedByToken[tokenKey]) {
           burnedByToken[tokenKey] = {
             symbol: flip.tokenSymbol,
