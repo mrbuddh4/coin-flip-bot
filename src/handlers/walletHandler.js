@@ -486,6 +486,23 @@ class WalletHandler {
         return;
       }
 
+      // Flip must still be waiting for challenger deposit - it may have been cancelled by timeout
+      if (flip.status !== 'WAITING_CHALLENGER_DEPOSIT') {
+        logger.info('[continueFlipAfterWallet] Flip is no longer waiting for challenger deposit, aborting', {
+          flipId: flip.id,
+          status: flip.status,
+        });
+        if (flip.status === 'CANCELLED') {
+          await ctx.reply(
+            `⏰ <b>Flip Timed Out</b>\n\n` +
+            `The flip was cancelled while you were setting up your wallets. ` +
+            `The creator's deposit has been refunded.`,
+            { parse_mode: 'HTML' }
+          );
+        }
+        return;
+      }
+
       // Check if this is the right network
       if (flip.tokenNetwork !== network) {
         logger.info('[continueFlipAfterWallet] Flip network mismatch, skipping auto-continue', { 
