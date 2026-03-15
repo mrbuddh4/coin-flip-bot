@@ -666,6 +666,11 @@ async function initBot() {
 
     // Message handlers for DMs
     bot.on('text', async (ctx) => {
+      // Skip if this is a command - let command handlers process it
+      if (ctx.message.text.startsWith('/')) {
+        return;
+      }
+      
       if (ctx.chat.type === 'private') {
         await handlers.dmMessageHandler(ctx);
       }
