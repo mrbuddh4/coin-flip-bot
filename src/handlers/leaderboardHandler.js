@@ -87,10 +87,17 @@ class LeaderboardHandler {
         losersText += '\n';
       }
 
-      // Group burned amounts by token (symbol + network for uniqueness)
+      // Group volume and burned amounts by token (symbol + network for uniqueness)
+      const volumeByToken = {};
       const burnedByToken = {};
       allFlipsWithTokens.forEach(flip => {
         const tokenKey = `${flip.tokenSymbol}_${flip.tokenNetwork}`;
+        const volume = parseFloat(flip.wagerAmount) * 2; // both sides
+        if (!volumeByToken[tokenKey]) {
+          volumeByToken[tokenKey] = { symbol: flip.tokenSymbol, network: flip.tokenNetwork, amount: 0 };
+        }
+        volumeByToken[tokenKey].amount += volume;
+
         const burned = parseFloat(flip.wagerAmount) * 0.10; // 5% of total pool (both sides)
         if (!burnedByToken[tokenKey]) {
           burnedByToken[tokenKey] = {
@@ -122,7 +129,22 @@ class LeaderboardHandler {
         burnedText += '\n';
       }
 
-      const leaderboardMessage = winnersText + losersText + burnedText;
+      // Format total volume section
+      let volumeText = '📊 <b>TOTAL VOLUME</b>\n';
+      const volumeList = Object.values(volumeByToken);
+      if (volumeList.length === 0) {
+        volumeText += 'None yet\n\n';
+      } else {
+        volumeList.forEach(token => {
+          const amount = token.amount.toLocaleString('en-US', { maximumFractionDigits: 6, minimumFractionDigits: 0 });
+          volumeText += `${amount} ${token.symbol}`;
+          if (token.network) volumeText += ` (${token.network})`;
+          volumeText += '\n';
+        });
+        volumeText += '\n';
+      }
+
+      const leaderboardMessage = winnersText + losersText + burnedText + volumeText;
 
       // Try to send with image
       const fs = require('fs');

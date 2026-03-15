@@ -181,6 +181,8 @@ class DatabaseUtils {
       stats.winRate = stats.flips > 0 ? ((stats.wins / stats.flips) * 100).toFixed(2) : '0.00';
     });
 
+    const totalVolume = Object.values(perTokenStats).reduce((sum, t) => sum + t.wagered, 0);
+
     return {
       totalFlips: games.length,
       wins,
@@ -188,6 +190,7 @@ class DatabaseUtils {
       winRate,
       totalEarnings: totalEarnings.toFixed(6),
       totalLosses: totalLosses.toFixed(6),
+      totalVolume: totalVolume.toFixed(6),
       perTokenStats,
     };
   }

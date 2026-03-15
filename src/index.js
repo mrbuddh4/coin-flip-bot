@@ -2511,7 +2511,8 @@ async function initBot() {
         
         message += `<b>Financial Summary:</b>\n`;
         message += `💰 Total Earnings: <b>${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n`;
-        message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n\n`;
+        message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n`;
+        message += `📊 Volume Wagered: <b>${parseFloat(stats.totalVolume).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n\n`;
 
         // Add per-token breakdown if available
         if (Object.keys(stats.perTokenStats).length > 0) {
@@ -3224,7 +3225,8 @@ For each network (Paxeer & Solana) you need:
       
       message += `<b>Financial Summary:</b>\n`;
       message += `💰 Total Earnings: <b>${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 6 })} USD</b>\n`;
-      message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })} USD</b>\n\n`;
+      message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })} USD</b>\n`;
+      message += `📊 Volume Wagered: <b>${parseFloat(stats.totalVolume).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n\n`;
 
       // Add per-token breakdown if available
       if (Object.keys(stats.perTokenStats).length > 0) {
