@@ -2984,7 +2984,7 @@ const handlers = {
             ],
             [
               Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
-              Markup.button.command('help'),
+              Markup.button.callback('❓ Help', 'show_help_action'),
             ],
           ]).reply_markup,
         }
