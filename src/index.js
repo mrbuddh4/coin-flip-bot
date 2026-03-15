@@ -1091,6 +1091,9 @@ async function initBot() {
           );
 
           await ctx.answerCbQuery('✅ Challenge confirmed! Please set up your wallets.');
+
+            // Start deposit timeout even while user sets up wallets
+            setDepositTimeout(flipId, ctx.telegram);
         }
 
         logger.info('Flip challenge confirmed', { userId, flipId });
@@ -2803,6 +2806,9 @@ const handlers = {
                 ]).reply_markup,
               }
             );
+
+            // Start deposit timeout even while user sets up wallets
+            setDepositTimeout(flipId, ctx.telegram);
           }
           return;
         } catch (error) {
@@ -2896,6 +2902,9 @@ const handlers = {
                   ]).reply_markup,
                 }
               );
+
+              // Start deposit timeout even while user sets up wallets
+              setDepositTimeout(flip.id, ctx.telegram);
             }
             return;
           } else if (session) {
