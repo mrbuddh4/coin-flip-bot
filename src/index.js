@@ -439,18 +439,30 @@ async function initBot() {
 
     // Create bot instance
     console.log('Creating Telegraf instance...');
-    bot = new Telegraf(config.telegram.token);
+    try {
+      bot = new Telegraf(config.telegram.token);
+      console.log('✅ Telegraf instance created');
+    } catch (err) {
+      console.error('❌ Failed to create Telegraf instance:', err);
+      throw err;
+    }
 
     // Set up bot commands menu
     console.log('Setting up commands menu...');
-    await bot.telegram.setMyCommands([
-      { command: 'start', description: '🎲 Start the bot' },
-      { command: 'help', description: '❓ How to play' },
-      { command: 'stats', description: '📊 Your game statistics' },
-      { command: 'flip', description: '🪙 Start a coin flip' },
-      { command: 'wallet', description: '💳 Manage wallet addresses' },
-      { command: 'leaderboard', description: '🏆 Top winners and losers' },
-    ]);
+    try {
+      await bot.telegram.setMyCommands([
+        { command: 'start', description: '🎲 Start the bot' },
+        { command: 'help', description: '❓ How to play' },
+        { command: 'stats', description: '📊 Your game statistics' },
+        { command: 'flip', description: '🪙 Start a coin flip' },
+        { command: 'wallet', description: '💳 Manage wallet addresses' },
+        { command: 'leaderboard', description: '🏆 Top winners and losers' },
+      ]);
+      console.log('✅ Commands menu set');
+    } catch (err) {
+      console.error('❌ Failed to set commands menu:', err);
+      throw err;
+    }
 
     // Middleware setup
     console.log('Setting up middleware...');
