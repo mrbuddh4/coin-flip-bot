@@ -3084,24 +3084,39 @@ const handlers = {
   help: async (ctx) => {
     await ctx.reply(
       `<b>🪙 Coin Flip Bot Help</b>\n\n` +
-      `<b>Commands:</b>\n` +
-      `/start - Welcome message\n` +
-      `/help - This message\n` +
-      `/stats - Your statistics\n` +
-      `/deposit - Deposit tokens to your wallet\n\n` +
+      `<b>Getting Started:</b>\n` +
+      `/start - Open your dashboard\n` +
+      `/help - This message\n\n` +
+      `<b>Dashboard Features:</b>\n` +
+      `💳 <b>Wallets</b> - Configure receive & deposit wallets for EVM & Solana\n` +
+      `📊 <b>My Stats</b> - View your game statistics and per-token breakdown\n` +
+      `🪙 <b>Start Flip</b> - Initiate a coin flip (works in DM or group)\n\n` +
       `<b>How to Play:</b>\n` +
-      `1. Start a flip with /start in a group\n` +
-      `2. Specify your wager in DM\n` +
-      `3. Send tokens to the provided address\n` +
-      `4. Wait for a challenger\n` +
-      `5. Challenger follows same process\n` +
-      `6. Bot flips a coin\n` +
-      `7. Winner claims their prizes\n\n` +
+      `<b>Group Flips:</b>\n` +
+      `1. Click "Start Flip" in a group (or use /start)\n` +
+      `2. Select your token and wager amount in DM\n` +
+      `3. Send tokens to the deposit address\n` +
+      `4. Wait for a challenger to join\n` +
+      `5. Challenger deposits their wager\n` +
+      `6. Bot flips a coin - winner takes all!\n\n` +
+      `<b>DM Flips:</b>\n` +
+      `1. Click "Start Flip" in DM (uses your last group as context)\n` +
+      `2. Select token and enter wager amount\n` +
+      `3. Same deposit and challenge process\n\n` +
+      `<b>Wallet Setup:</b>\n` +
+      `You need <b>two types of wallets</b> to play:\n` +
+      `💰 <b>Receive Wallet</b> - Where your winnings are sent\n` +
+      `🏦 <b>Deposit Wallet</b> - Where you send wagers from\n` +
+      `Supports: EVM networks (Ethereum, Polygon, etc.) & Solana\n\n` +
+      `<b>Supported Tokens:</b>\n` +
+      `Bitcoin, Ethereum, Polygon, Solana, and more coming soon!\n\n` +
       `<b>Rules:</b>\n` +
-      `⏱️ 3 minutes to confirm each step\n` +
-      `🚫 Only one active flip per group\n` +
-      `👤 Creator can cancel if no challenger\n` +
-      `💰 Winnings = 2x wager amount`,
+      `⏱️ 5 minutes to confirm deposit\n` +
+      `👥 Both players need wallets configured\n` +
+      `💎 Winner gets 2x their wager\n` +
+      `🔄 Flips are provably fair\n\n` +
+      `<b>Need Help?</b>\n` +
+      `Click the 🏠 Home button anytime to return to your dashboard!`,
       { parse_mode: 'HTML' }
     );
   },
