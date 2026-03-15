@@ -13,6 +13,7 @@ const LeaderboardHandler = require('./handlers/leaderboardHandler');
 const DatabaseUtils = require('./database/utils');
 const logger = require('./utils/logger');
 const { validateConfig, formatNetworkName, getVideoDuration } = require('./utils/helpers');
+const { setDepositTimeout, clearDepositTimeout, depositTimeouts } = require('./utils/depositTimeout');
 
 // Known token symbols for common Solana tokens
 const KNOWN_TOKENS = {
@@ -646,6 +647,73 @@ async function initBot() {
     }
 
     logger.info('[startup] Restored timeouts for waiting challenges', { count: waitingChallenges.length });
+
+    // Restore deposit timeouts for flips waiting on challenger deposit
+    const waitingDeposits = await models.CoinFlip.findAll({
+      where: { status: 'WAITING_CHALLENGER_DEPOSIT', challengerDepositConfirmed: false },
+    });
+
+    const DEPOSIT_TIMEOUT = 3 * 60 * 1000; // 3 minutes
+
+    for (const flip of waitingDeposits) {
+      const elapsedTime = now - flip.updatedAt.getTime();
+
+      if (elapsedTime > DEPOSIT_TIMEOUT) {
+        // Already expired — cancel immediately
+        logger.info('[startup] Auto-cancelling expired challenger deposit', { flipId: flip.id, elapsedSeconds: Math.round(elapsedTime / 1000) });
+        flip.challengerTimedOut = true;
+        flip.status = 'CANCELLED';
+        flip.data = { ...flip.data, cancelReason: 'Challenger deposit expired on bot startup' };
+        await flip.save();
+
+        // Refund creator deposit
+        if (flip.creatorDepositConfirmed && flip.creatorDepositWalletAddress) {
+          try {
+            const blockchainManager = getBlockchainManager();
+            const supportedTokens = config.supportedTokens;
+            let tokenAddress = 'NATIVE';
+            let tokenDecimals = 18;
+            for (const key in supportedTokens) {
+              if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
+                tokenAddress = supportedTokens[key].address || 'NATIVE';
+                tokenDecimals = supportedTokens[key].decimals || 18;
+                break;
+              }
+            }
+            await blockchainManager.sendWinnings(flip.tokenNetwork, tokenAddress, flip.creatorDepositWalletAddress, parseFloat(flip.wagerAmount), tokenDecimals);
+            logger.info('[startup] Refunded creator deposit for expired challenger', { flipId: flip.id });
+          } catch (refundErr) {
+            logger.error('[startup] Failed to refund creator deposit', { flipId: flip.id, error: refundErr.message });
+          }
+        }
+
+        // Notify users
+        try {
+          const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          if (flip.creatorId) {
+            await bot.telegram.sendMessage(flip.creatorId,
+              `⏰ <b>Challenge Cancelled</b>\n\nThe challenger didn't deposit in time. The <b>${formattedWager} ${flip.tokenSymbol}</b> challenge has been cancelled.\n\n💸 Your deposit is being refunded.`,
+              { parse_mode: 'HTML' }
+            ).catch(() => {});
+          }
+          if (flip.challengerId) {
+            await bot.telegram.sendMessage(flip.challengerId,
+              `⏰ <b>Deposit Timeout</b>\n\nYou didn't deposit in time. The <b>${formattedWager} ${flip.tokenSymbol}</b> challenge has been cancelled.`,
+              { parse_mode: 'HTML' }
+            ).catch(() => {});
+          }
+        } catch (err) {
+          logger.warn('[startup] Failed to notify users about expired deposit', { flipId: flip.id, error: err.message });
+        }
+      } else {
+        // Still within timeout window — restore the remaining timeout
+        const remainingTime = DEPOSIT_TIMEOUT - elapsedTime;
+        logger.info('[startup] Restoring challenger deposit timeout', { flipId: flip.id, remainingMs: Math.round(remainingTime) });
+        setDepositTimeout(flip.id, bot.telegram, remainingTime);
+      }
+    }
+
+    logger.info('[startup] Restored deposit timeouts for waiting challenger deposits', { count: waitingDeposits.length });
     
     // Mark bot as successfully initialized to prevent re-init on retries
     botInitialized = true;
@@ -993,10 +1061,13 @@ async function initBot() {
             {
               parse_mode: 'HTML',
               reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${session.id}`)],
+                [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${flipId}`)],
               ]).reply_markup,
             }
           );
+
+          // Set 3-minute deposit timeout for challenger
+          setDepositTimeout(flipId, ctx.telegram);
 
           await ctx.answerCbQuery('✅ Challenge confirmed! Deposit address ready.');
         } else {
@@ -1629,6 +1700,9 @@ async function initBot() {
         // Mark challenger deposit as confirmed
         flip.challengerDepositConfirmed = true;
         await flip.save();
+
+        // Clear the challenger deposit timeout since deposit is confirmed
+        clearDepositTimeout(flipId);
 
         // Only show confirmation message if no overpayment (overpayment message already shown)
         if (!overpaymentDetected) {
@@ -2706,6 +2780,9 @@ const handlers = {
                 ]).reply_markup,
               }
             );
+
+            // Set 3-minute deposit timeout for challenger
+            setDepositTimeout(flipId, ctx.telegram);
           } else {
             // Missing one or both wallets - ask user to set them up
             confirmSession.currentStep = 'AWAITING_WALLET_ADDRESS';
@@ -2792,10 +2869,13 @@ const handlers = {
                 {
                   parse_mode: 'HTML',
                   reply_markup: Markup.inlineKeyboard([
-                    [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${session.id}`)],
+                    [Markup.button.callback('✅ I Sent the Deposit', `deposit_confirmed_${flip.id}`)],
                   ]).reply_markup,
                 }
               );
+
+              // Set 3-minute deposit timeout for challenger
+              setDepositTimeout(flip.id, ctx.telegram);
             } else {
               // Missing one or both wallets - ask user to set them up
               session.currentStep = 'AWAITING_WALLET_ADDRESS';

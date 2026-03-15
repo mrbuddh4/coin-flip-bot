@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const logger = require('../utils/logger');
 const { Op } = require('sequelize');
+const { setDepositTimeout } = require('../utils/depositTimeout');
 
 class WalletHandler {
   static async handleWalletCommand(ctx) {
@@ -559,6 +560,11 @@ class WalletHandler {
           ]).reply_markup,
         }
       );
+
+      // Set 3-minute deposit timeout for challenger (creator already has one from flipHandler)
+      if (flipSession.sessionType === 'CONFIRMING_DEPOSIT') {
+        setDepositTimeout(flip.id, ctx.telegram);
+      }
     } catch (error) {
       logger.error('Error continuing flip after wallet update:', error);
     }
