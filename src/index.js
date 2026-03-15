@@ -2980,9 +2980,9 @@ const handlers = {
       
       if (userProfile.evmDepositWalletAddress) {
         const evmDeposit = userProfile.evmDepositWalletAddress.substring(0, 6) + '...' + userProfile.evmDepositWalletAddress.substring(userProfile.evmDepositWalletAddress.length - 4);
-        dashboardMsg += `✅ <b>EVM Sending:</b> <code>${evmDeposit}</code>\n`;
+        dashboardMsg += `✅ <b>EVM Send:</b> <code>${evmDeposit}</code>\n`;
       } else {
-        dashboardMsg += `❌ <b>EVM Sending:</b> Not set\n`;
+        dashboardMsg += `❌ <b>EVM Send:</b> Not set\n`;
       }
 
       dashboardMsg += `\n`;
@@ -2997,9 +2997,9 @@ const handlers = {
       
       if (userProfile.solanaDepositWalletAddress) {
         const solDeposit = userProfile.solanaDepositWalletAddress.substring(0, 6) + '...' + userProfile.solanaDepositWalletAddress.substring(userProfile.solanaDepositWalletAddress.length - 4);
-        dashboardMsg += `✅ <b>Solana Sending:</b> <code>${solDeposit}</code>\n`;
+        dashboardMsg += `✅ <b>Solana Send:</b> <code>${solDeposit}</code>\n`;
       } else {
-        dashboardMsg += `❌ <b>Solana Sending:</b> Not set\n`;
+        dashboardMsg += `❌ <b>Solana Send:</b> Not set\n`;
       }
 
       dashboardMsg += `\n<b>Ready to play?</b> Use the buttons below to get started!`;
