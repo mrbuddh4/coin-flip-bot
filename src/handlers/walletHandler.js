@@ -76,6 +76,16 @@ class WalletHandler {
     const models = ctx.state.models;
 
     try {
+      // Ensure user exists before creating session
+      const [user] = await models.User.findOrCreate({
+        where: { telegramId: userId },
+        defaults: {
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        },
+      });
+
       // Create session to prompt for EVM address
       await models.BotSession.destroy({
         where: { userId, sessionType: 'UPDATING_WALLET' },
@@ -107,6 +117,16 @@ class WalletHandler {
     const models = ctx.state.models;
 
     try {
+      // Ensure user exists before creating session
+      await models.User.findOrCreate({
+        where: { telegramId: userId },
+        defaults: {
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        },
+      });
+
       // Create session to prompt for Solana address
       await models.BotSession.destroy({
         where: { userId, sessionType: 'UPDATING_WALLET' },
@@ -138,6 +158,16 @@ class WalletHandler {
     const models = ctx.state.models;
 
     try {
+      // Ensure user exists before creating session
+      await models.User.findOrCreate({
+        where: { telegramId: userId },
+        defaults: {
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        },
+      });
+
       // Create session to prompt for EVM deposit address
       await models.BotSession.destroy({
         where: { userId, sessionType: 'UPDATING_WALLET' },
@@ -170,6 +200,16 @@ class WalletHandler {
     const models = ctx.state.models;
 
     try {
+      // Ensure user exists before creating session
+      await models.User.findOrCreate({
+        where: { telegramId: userId },
+        defaults: {
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        },
+      });
+
       // Create session to prompt for Solana deposit address
       await models.BotSession.destroy({
         where: { userId, sessionType: 'UPDATING_WALLET' },
@@ -496,18 +536,8 @@ class WalletHandler {
 
       // Show deposit instructions
       const blockchainManager = require('../blockchain/manager').getBlockchainManager();
-      let botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
+      const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
       const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
-
-      // For Solana SPL tokens (SID), use the pre-computed ATA instead of main wallet
-      if (flip.tokenNetwork === 'Solana' && flip.tokenAddress) {
-        const config = require('../config');
-        botWalletAddress = config.solana.sidTokenATA;
-        
-        console.log('[continueFlipAfterWallet] Using pre-computed SID ATA for Solana deposit', {
-          ata: botWalletAddress,
-        });
-      }
 
       // UserProfile is source of truth for wallet addresses - don't cache on flip
 
