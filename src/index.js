@@ -2519,6 +2519,7 @@ async function initBot() {
               ],
               [
                 Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
+                Markup.button.command('help'),
               ],
             ]).reply_markup,
           }
@@ -2972,6 +2973,7 @@ const handlers = {
             ],
             [
               Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
+              Markup.button.command('help'),
             ],
           ]).reply_markup,
         }
@@ -3017,7 +3019,12 @@ const handlers = {
         `4. Send your wager to that address\n` +
         `5. Other members can accept your challenge\n` +
         `6. Challenger deposits their wager\n` +
-        `7. Bot flips a coin - winner takes all!\n\n` +
+        `7. Bot flips a coin - winner takes 90% of the pot! 5% burned 5% to dev!\n\n` +
+        `<b>Fee Distribution:</b>\n` +
+        `💎 Winner: 90% of pool\n` +
+        `🔥 Burn: 5% of pool\n` +
+        `👨‍💼 Dev: 5% of pool\n\n` +
+        `👨‍💼 Dev: 5% of total wager amount\n\n` +
         `<b>Wallet Setup:</b>\n` +
         `For each network (Paxeer & Solana) you need:\n` +
         `💰 <b>Receive Wallet</b> - Where your winnings are sent\n` +
@@ -3026,10 +3033,8 @@ const handlers = {
         `<b>Rules:</b>\n` +
         `⏱️ 3 minutes to confirm each deposit\n` +
         `👥 Both players need complete wallet setup\n` +
-        `💎 Winner receives 2x their wager amount\n` +
-        `🔒 All transactions are recorded on-chain\n\n` +
-        `<b>Need Help?</b>\n` +
-        `Click the 🏠 Home button anytime to return to your dashboard!`,
+        `💎 Winner receives 1.8x their wager amount\n` +
+        `🔒 All transactions are recorded on-chain`,
         { parse_mode: 'HTML' }
       );
     } catch (error) {
