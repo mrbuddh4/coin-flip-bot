@@ -104,7 +104,7 @@ class ExecutionHandler {
       
       // Burn addresses for each network
       const burnAddress = flip.tokenNetwork === 'EVM'
-        ? '0x0000000000000000000000000000000000000000' // EVM burn address (null address)
+        ? '0x000000000000000000000000000000000000dEaD' // EVM burn address (dead address)
         : '1nc1nerator11111111111111111111111111111111'; // Solana SPL incinerator address
       
       logger.info('[executeFlip] Fee distribution starting', { 
@@ -482,7 +482,7 @@ class ExecutionHandler {
       // Get dev wallet and burn address for this network
       const devWallet = flip.tokenNetwork === 'EVM' ? config.evm.devWallet : config.solana.devWallet;
       const burnAddress = flip.tokenNetwork === 'EVM'
-        ? '0x0000000000000000000000000000000000000000' // EVM burn address (null address)
+        ? '0x000000000000000000000000000000000000dEaD' // EVM burn address (dead address)
         : '1nc1nerator11111111111111111111111111111111'; // Solana SPL incinerator address
 
       // Send winner payout (90%)
