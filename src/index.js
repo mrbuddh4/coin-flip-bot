@@ -458,7 +458,7 @@ async function initBot() {
     // Commands
     console.log('Registering commands...');
     bot.start(handlers.start);
-    bot.help(handlers.help);
+    bot.command('help', handlers.help);
     bot.command('stats', handlers.stats);
     bot.command('flip', handlers.flip);
     bot.command('wallet', handlers.wallet);
