@@ -2510,7 +2510,7 @@ async function initBot() {
         message += `📈 Win Rate: <b>${stats.winRate}%</b>\n\n`;
         
         message += `<b>Financial Summary:</b>\n`;
-        message += `💰 Total Earnings: <b>${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n`;
+        message += `💰 Total Profit: <b>${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n`;
         message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n`;
         message += `📊 Volume Wagered: <b>${parseFloat(stats.totalVolume).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n\n`;
 
@@ -2521,7 +2521,7 @@ async function initBot() {
             message += `\n🪙 <b>${tokenStat.symbol}</b> (${tokenStat.network})\n`;
             message += `   Flips: ${tokenStat.flips} | Win Rate: ${tokenStat.winRate}%\n`;
             message += `   Wagered: ${tokenStat.wagered.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
-            message += `   Earned: ${tokenStat.earned.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
+            message += `   Profit: ${tokenStat.earned.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
           });
         }
 
@@ -3224,8 +3224,8 @@ For each network (Paxeer & Solana) you need:
       message += `📈 Win Rate: <b>${stats.winRate}%</b>\n\n`;
       
       message += `<b>Financial Summary:</b>\n`;
-      message += `💰 Total Earnings: <b>${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 6 })} USD</b>\n`;
-      message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })} USD</b>\n`;
+      message += `💰 Total Profit: <b>${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n`;
+      message += `📉 Total Losses: <b>${parseFloat(stats.totalLosses).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n`;
       message += `📊 Volume Wagered: <b>${parseFloat(stats.totalVolume).toLocaleString('en-US', { maximumFractionDigits: 6 })}</b>\n\n`;
 
       // Add per-token breakdown if available
@@ -3235,7 +3235,7 @@ For each network (Paxeer & Solana) you need:
           message += `\n🪙 <b>${tokenStat.symbol}</b> (${tokenStat.network})\n`;
           message += `   Flips: ${tokenStat.flips} | Win Rate: ${tokenStat.winRate}%\n`;
           message += `   Wagered: ${tokenStat.wagered.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
-          message += `   Earned: ${tokenStat.earned.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
+          message += `   Profit: ${tokenStat.earned.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
         });
       }
 

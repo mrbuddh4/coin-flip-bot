@@ -164,9 +164,10 @@ class DatabaseUtils {
 
       perTokenStats[token].flips += 1;
       if (isWin) {
+        const profit = payoutAmount - wagerAmount; // net profit: payout minus stake put in
         perTokenStats[token].wins += 1;
-        perTokenStats[token].earned += payoutAmount;
-        totalEarnings += payoutAmount;
+        perTokenStats[token].earned += profit;
+        totalEarnings += profit;
       } else {
         perTokenStats[token].losses += 1;
         totalLosses += wagerAmount;
