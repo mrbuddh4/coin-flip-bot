@@ -3084,13 +3084,6 @@ const handlers = {
   help: async (ctx) => {
     await ctx.reply(
       `<b>🪙 Coin Flip Bot Help</b>\n\n` +
-      `<b>Getting Started:</b>\n` +
-      `/start - Open your dashboard\n` +
-      `/help - This message\n\n` +
-      `<b>Dashboard Features:</b>\n` +
-      `💳 <b>Wallets</b> - Configure wallets for Paxeer Network & Solana\n` +
-      `📊 <b>My Stats</b> - View your game statistics and per-token breakdown\n` +
-      `🪙 <b>Start Flip</b> - Initiate a coin flip (works in DM or group)\n\n` +
       `<b>How to Play:</b>\n` +
       `<b>Group Flips:</b>\n` +
       `1. Click "Start Flip" in a group (or use /start)\n` +
