@@ -144,6 +144,11 @@ class ExecutionHandler {
       }
       
       // Send 5% to burn address
+      // Add delay before burn to avoid Solana RPC rate limiting (429)
+      if (flip.tokenNetwork === 'Solana') {
+        logger.info('[executeFlip] Waiting 5s before burn fee to avoid RPC rate limit', { flipId });
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
       try {
         logger.info('[executeFlip] Sending burn fee', { flipId, burnAddress, burnFeeAmount, tokenAddress: flip.tokenAddress, tokenDecimals: flip.tokenDecimals });
         console.log(`[executeFlip] BURN FEE - Amount: ${burnFeeAmount}, To: ${burnAddress}, Token: ${flip.tokenAddress}`);
