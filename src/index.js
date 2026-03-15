@@ -397,6 +397,7 @@ async function deleteOldFlipMessage(groupId, telegram) {
  */
 async function initBot() {
   try {
+    console.log('[INIT_BOT] Starting bot initialization...');
     // Skip re-initialization if bot already initialized (prevents duplicate from retry)
     if (botInitialized && bot) {
       logger.info('Bot already initialized, skipping re-init');
@@ -463,6 +464,7 @@ async function initBot() {
     bot.command('flip', handlers.flip);
     bot.command('wallet', handlers.wallet);
     bot.command('leaderboard', handlers.leaderboard);
+    console.log('✅ Commands registered successfully');
 
     // Admin commands
     AdminHandler.registerCommands(bot);
@@ -2622,6 +2624,7 @@ async function initBot() {
  */
 const handlers = {
   start: async (ctx) => {
+    console.log('[HANDLER] /start called');
     if (ctx.chat.type === 'private') {
       const { models } = getDB();
       const userId = ctx.from.id;
@@ -3082,6 +3085,7 @@ const handlers = {
   },
 
   help: async (ctx) => {
+    console.log('[HANDLER] /help called');
     try {
       await ctx.reply(
         `<b>🪙 Coin Flip Bot Help</b>\n\n` +
@@ -3119,6 +3123,7 @@ const handlers = {
   },
 
   stats: async (ctx) => {
+    console.log('[HANDLER] /stats called');
     try {
       const userId = ctx.from.id;
       const stats = await DatabaseUtils.getEnhancedUserStats(userId);
@@ -3164,11 +3169,13 @@ const handlers = {
   },
 
   wallet: async (ctx) => {
+    console.log('[HANDLER] /wallet called');
     ctx.state.models = getDB().models;
     await WalletHandler.handleWalletCommand(ctx);
   },
 
   leaderboard: async (ctx) => {
+    console.log('[HANDLER] /leaderboard called');
     await LeaderboardHandler.showLeaderboard(ctx);
   },
 
@@ -3237,6 +3244,7 @@ const handlers = {
   },
 
   flip: async (ctx) => {
+    console.log('[HANDLER] /flip called');
     try {
       const { models } = getDB();
       const userId = ctx.from.id;
