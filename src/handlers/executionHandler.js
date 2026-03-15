@@ -464,34 +464,46 @@ class ExecutionHandler {
         ? '0x0000000000000000000000000000000000000000' // EVM burn address (null address)
         : '1nc1nerator11111111111111111111111111111111'; // Solana SPL incinerator address
 
-      try {
-        // Send winner payout (90%)
-        const winnerTx = await blockchainManager.sendWinnings(
-          flip.tokenNetwork,
-          flip.tokenAddress,
-          walletAddress,
-          winnerAmount,
-          flip.tokenDecimals
-        );
+      // Send winner payout (90%)
+      const winnerTx = await blockchainManager.sendWinnings(
+        flip.tokenNetwork,
+        flip.tokenAddress,
+        walletAddress,
+        winnerAmount,
+        flip.tokenDecimals
+      );
 
-        // Send dev fee (5%)
-        const devTx = await blockchainManager.sendWinnings(
+      // Send dev fee (5%)
+      let devTx = null;
+      try {
+        if (flip.tokenNetwork === 'Solana') await new Promise(r => setTimeout(r, 5000));
+        devTx = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
           flip.tokenAddress,
           devWallet,
           devAmount,
           flip.tokenDecimals
         );
+      } catch (devFeeError) {
+        logger.error('[confirmPayoutAddress] ERROR SENDING DEV FEE', { flipId, devWallet, devAmount, error: devFeeError.message });
+      }
 
-        // Send burn fee (5%)
-        const burnTx = await blockchainManager.sendWinnings(
+      // Send burn fee (5%)
+      let burnTx = null;
+      try {
+        if (flip.tokenNetwork === 'Solana') await new Promise(r => setTimeout(r, 5000));
+        burnTx = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
           flip.tokenAddress,
           burnAddress,
           burnAmount,
           flip.tokenDecimals
         );
+      } catch (burnFeeError) {
+        logger.error('[confirmPayoutAddress] ERROR SENDING BURN FEE', { flipId, burnAddress, burnAmount, error: burnFeeError.message });
+      }
 
+      try {
         // Record transactions
         await models.Transaction.create({
           coinFlipId: flip.id,
@@ -507,33 +519,37 @@ class ExecutionHandler {
           status: 'CONFIRMED',
         });
 
-        await models.Transaction.create({
-          coinFlipId: flip.id,
-          userId: null,
-          type: 'FEE_DEV',
-          network: flip.tokenNetwork,
-          tokenAddress: flip.tokenAddress,
-          tokenSymbol: flip.tokenSymbol,
-          amount: devAmount,
-          fromAddress: botWalletAddress,
-          toAddress: devWallet,
-          txHash: devTx.txHash,
-          status: 'CONFIRMED',
-        });
+        if (devTx) {
+          await models.Transaction.create({
+            coinFlipId: flip.id,
+            userId: null,
+            type: 'FEE_DEV',
+            network: flip.tokenNetwork,
+            tokenAddress: flip.tokenAddress,
+            tokenSymbol: flip.tokenSymbol,
+            amount: devAmount,
+            fromAddress: botWalletAddress,
+            toAddress: devWallet,
+            txHash: devTx.txHash,
+            status: 'CONFIRMED',
+          });
+        }
 
-        await models.Transaction.create({
-          coinFlipId: flip.id,
-          userId: null,
-          type: 'FEE_BURN',
-          network: flip.tokenNetwork,
-          tokenAddress: flip.tokenAddress,
-          tokenSymbol: flip.tokenSymbol,
-          amount: burnAmount,
-          fromAddress: botWalletAddress,
-          toAddress: burnAddress,
-          txHash: burnTx.txHash,
-          status: 'CONFIRMED',
-        });
+        if (burnTx) {
+          await models.Transaction.create({
+            coinFlipId: flip.id,
+            userId: null,
+            type: 'FEE_BURN',
+            network: flip.tokenNetwork,
+            tokenAddress: flip.tokenAddress,
+            tokenSymbol: flip.tokenSymbol,
+            amount: burnAmount,
+            fromAddress: botWalletAddress,
+            toAddress: burnAddress,
+            txHash: burnTx.txHash,
+            status: 'CONFIRMED',
+          });
+        }
 
         // Mark as claimed
         flip.claimedByWinner = true;
