@@ -146,8 +146,8 @@ class ExecutionHandler {
       // Send 5% to burn address
       // Add delay before burn to avoid Solana RPC rate limiting (429)
       if (flip.tokenNetwork === 'Solana') {
-        logger.info('[executeFlip] Waiting 5s before burn fee to avoid RPC rate limit', { flipId });
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        logger.info('[executeFlip] Waiting 15s before burn fee to avoid RPC rate limit', { flipId });
+        await new Promise(resolve => setTimeout(resolve, 15000));
       }
       try {
         logger.info('[executeFlip] Sending burn fee', { flipId, burnAddress, burnFeeAmount, tokenAddress: flip.tokenAddress, tokenDecimals: flip.tokenDecimals });
@@ -164,8 +164,29 @@ class ExecutionHandler {
         logger.info('[executeFlip] Burn fee SENT', { flipId, burnAddress: `${burnAddress.substring(0, 10)}...`, txHash: burnResult.txHash, amount: burnFeeAmount });
         console.log(`[SUCCESS] Burn fee sent with txHash: ${burnResult.txHash}`);
       } catch (burnFeeError) {
-        logger.error('[executeFlip] ERROR SENDING BURN FEE', { flipId, burnAddress, burnFeeAmount, error: burnFeeError.message, stack: burnFeeError.stack });
-        console.error(`[ERROR] Burn fee failed:`, burnFeeError.message, burnFeeError.stack);
+        logger.error('[executeFlip] ERROR SENDING BURN FEE (attempt 1)', { flipId, burnAddress, burnFeeAmount, error: burnFeeError.message });
+        // Retry once after a longer delay
+        if (flip.tokenNetwork === 'Solana') {
+          logger.info('[executeFlip] Retrying burn fee after 20s', { flipId });
+          await new Promise(resolve => setTimeout(resolve, 20000));
+          try {
+            const blockchainManager = getBlockchainManager();
+            const burnRetry = await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              flip.tokenAddress,
+              burnAddress,
+              burnFeeAmount.toString(),
+              flip.tokenDecimals
+            );
+            logger.info('[executeFlip] Burn fee SENT (retry)', { flipId, txHash: burnRetry.txHash, amount: burnFeeAmount });
+            console.log(`[SUCCESS] Burn fee sent on retry with txHash: ${burnRetry.txHash}`);
+          } catch (burnRetryError) {
+            logger.error('[executeFlip] ERROR SENDING BURN FEE (retry failed)', { flipId, burnAddress, burnFeeAmount, error: burnRetryError.message });
+            console.error(`[ERROR] Burn fee retry failed:`, burnRetryError.message);
+          }
+        } else {
+          console.error(`[ERROR] Burn fee failed:`, burnFeeError.message);
+        }
       }
 
       // Update flip record with result
@@ -491,7 +512,7 @@ class ExecutionHandler {
       // Send burn fee (5%)
       let burnTx = null;
       try {
-        if (flip.tokenNetwork === 'Solana') await new Promise(r => setTimeout(r, 5000));
+        if (flip.tokenNetwork === 'Solana') await new Promise(r => setTimeout(r, 15000));
         burnTx = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
           flip.tokenAddress,
@@ -500,7 +521,23 @@ class ExecutionHandler {
           flip.tokenDecimals
         );
       } catch (burnFeeError) {
-        logger.error('[confirmPayoutAddress] ERROR SENDING BURN FEE', { flipId, burnAddress, burnAmount, error: burnFeeError.message });
+        logger.error('[confirmPayoutAddress] ERROR SENDING BURN FEE (attempt 1)', { flipId, burnAddress, burnAmount, error: burnFeeError.message });
+        // Retry once after a longer delay
+        if (flip.tokenNetwork === 'Solana') {
+          logger.info('[confirmPayoutAddress] Retrying burn fee after 20s', { flipId });
+          await new Promise(r => setTimeout(r, 20000));
+          try {
+            burnTx = await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              flip.tokenAddress,
+              burnAddress,
+              burnAmount,
+              flip.tokenDecimals
+            );
+          } catch (burnRetryError) {
+            logger.error('[confirmPayoutAddress] ERROR SENDING BURN FEE (retry failed)', { flipId, burnAddress, burnAmount, error: burnRetryError.message });
+          }
+        }
       }
 
       try {
