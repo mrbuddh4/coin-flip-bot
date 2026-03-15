@@ -3049,7 +3049,7 @@ const handlers = {
     }
   },
 
-    help: async (ctx) => {
+  help: async (ctx) => {
     console.log('[HANDLER] /help called');
     try {
       const helpText = 
