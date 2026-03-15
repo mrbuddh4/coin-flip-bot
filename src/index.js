@@ -3088,33 +3088,32 @@ const handlers = {
       `/start - Open your dashboard\n` +
       `/help - This message\n\n` +
       `<b>Dashboard Features:</b>\n` +
-      `💳 <b>Wallets</b> - Configure receive & deposit wallets for EVM & Solana\n` +
+      `💳 <b>Wallets</b> - Configure wallets for Paxeer Network & Solana\n` +
       `📊 <b>My Stats</b> - View your game statistics and per-token breakdown\n` +
       `🪙 <b>Start Flip</b> - Initiate a coin flip (works in DM or group)\n\n` +
       `<b>How to Play:</b>\n` +
       `<b>Group Flips:</b>\n` +
       `1. Click "Start Flip" in a group (or use /start)\n` +
       `2. Select your token and wager amount in DM\n` +
-      `3. Send tokens to the deposit address\n` +
-      `4. Wait for a challenger to join\n` +
-      `5. Challenger deposits their wager\n` +
-      `6. Bot flips a coin - winner takes all!\n\n` +
+      `3. Bot sends you a deposit address\n` +
+      `4. Send your wager to that address\n` +
+      `5. Wait for a challenger to join\n` +
+      `6. Challenger deposits their wager\n` +
+      `7. Bot flips a coin - winner takes all!\n\n` +
       `<b>DM Flips:</b>\n` +
       `1. Click "Start Flip" in DM (uses your last group as context)\n` +
       `2. Select token and enter wager amount\n` +
       `3. Same deposit and challenge process\n\n` +
       `<b>Wallet Setup:</b>\n` +
-      `You need <b>two types of wallets</b> to play:\n` +
+      `For each network (Paxeer & Solana) you need:\n` +
       `💰 <b>Receive Wallet</b> - Where your winnings are sent\n` +
-      `🏦 <b>Deposit Wallet</b> - Where you send wagers from\n` +
-      `Supports: EVM networks (Ethereum, Polygon, etc.) & Solana\n\n` +
-      `<b>Supported Tokens:</b>\n` +
-      `Bitcoin, Ethereum, Polygon, Solana, and more coming soon!\n\n` +
+      `🏦 <b>Sending Wallet</b> - Address you send deposits from\n` +
+      `(You only need to configure networks you plan to use)\n\n` +
       `<b>Rules:</b>\n` +
-      `⏱️ 5 minutes to confirm deposit\n` +
-      `👥 Both players need wallets configured\n` +
-      `💎 Winner gets 2x their wager\n` +
-      `🔄 Flips are provably fair\n\n` +
+      `⏱️ 3 minutes to confirm each deposit\n` +
+      `👥 Both players need complete wallet setup\n` +
+      `💎 Winner receives 2x their wager amount\n` +
+      `🔒 All transactions are recorded on-chain\n\n` +
       `<b>Need Help?</b>\n` +
       `Click the 🏠 Home button anytime to return to your dashboard!`,
       { parse_mode: 'HTML' }
