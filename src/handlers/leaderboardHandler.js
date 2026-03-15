@@ -85,12 +85,13 @@ class LeaderboardHandler {
         losersText += 'No losers yet\n\n';
       } else {
         losersDisplay.forEach((loser, index) => {
+          const rank = losersDisplay.length - index; // 5 at top, 1 at bottom (losingest)
           const displayName = loser.username ? `@${loser.username}` : loser.firstName;
           const losses = parseFloat(loser.losses).toLocaleString('en-US', {
             maximumFractionDigits: 6,
             minimumFractionDigits: 0,
           });
-          losersText += `${index + 1}. ${displayName} - ${losses}\n`;
+          losersText += `${rank}. ${displayName} - ${losses}\n`;
         });
         losersText += '\n';
       }
