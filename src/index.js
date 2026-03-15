@@ -2519,7 +2519,7 @@ async function initBot() {
               ],
               [
                 Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
-                Markup.button.command('help'),
+                Markup.button.callback('❓ Help', 'show_help_action'),
               ],
             ]).reply_markup,
           }
@@ -2528,6 +2528,17 @@ async function initBot() {
       } catch (error) {
         logger.error('Error going back to home', error);
         await ctx.answerCbQuery('❌ Error returning home');
+      }
+    });
+
+    // Handle help button callback
+    bot.action('show_help_action', async (ctx) => {
+      try {
+        await handlers.help(ctx);
+        await ctx.answerCbQuery();
+      } catch (error) {
+        logger.error('Error showing help from button', error);
+        await ctx.answerCbQuery('❌ Error loading help');
       }
     });
 
