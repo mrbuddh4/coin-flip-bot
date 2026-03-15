@@ -187,10 +187,16 @@ class LeaderboardHandler {
    */
   static async refreshLeaderboard(ctx) {
     try {
-      await ctx.editMessageText(
-        '⏳ Refreshing leaderboard...',
-        { parse_mode: 'HTML' }
-      );
+      // Photo messages use editMessageCaption; text messages use editMessageText
+      try {
+        if (ctx.callbackQuery.message.photo) {
+          await ctx.editMessageCaption('⏳ Refreshing leaderboard...', { parse_mode: 'HTML' });
+        } else {
+          await ctx.editMessageText('⏳ Refreshing leaderboard...', { parse_mode: 'HTML' });
+        }
+      } catch (editErr) {
+        // Ignore — proceed with delete + resend regardless
+      }
 
       // Delete and resend to avoid edit limitations
       await ctx.deleteMessage().catch(() => {});
