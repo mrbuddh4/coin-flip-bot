@@ -3082,35 +3082,40 @@ const handlers = {
   },
 
   help: async (ctx) => {
-    await ctx.reply(
-      `<b>🪙 Coin Flip Bot Help</b>\n\n` +
-      `<b>How to Play:</b>\n` +
-      `<b>Group Flips:</b>\n` +
-      `1. Click "Start Flip" in a group (or use /start)\n` +
-      `2. Select your token and wager amount in DM\n` +
-      `3. Bot sends you a deposit address\n` +
-      `4. Send your wager to that address\n` +
-      `5. Wait for a challenger to join\n` +
-      `6. Challenger deposits their wager\n` +
-      `7. Bot flips a coin - winner takes all!\n\n` +
-      `<b>DM Flips:</b>\n` +
-      `1. Click "Start Flip" in DM (uses your last group as context)\n` +
-      `2. Select token and enter wager amount\n` +
-      `3. Same deposit and challenge process\n\n` +
-      `<b>Wallet Setup:</b>\n` +
-      `For each network (Paxeer & Solana) you need:\n` +
-      `💰 <b>Receive Wallet</b> - Where your winnings are sent\n` +
-      `🏦 <b>Sending Wallet</b> - Address you send deposits from\n` +
-      `(You only need to configure networks you plan to use)\n\n` +
-      `<b>Rules:</b>\n` +
-      `⏱️ 3 minutes to confirm each deposit\n` +
-      `👥 Both players need complete wallet setup\n` +
-      `💎 Winner receives 2x their wager amount\n` +
-      `🔒 All transactions are recorded on-chain\n\n` +
-      `<b>Need Help?</b>\n` +
-      `Click the 🏠 Home button anytime to return to your dashboard!`,
-      { parse_mode: 'HTML' }
-    );
+    try {
+      await ctx.reply(
+        `<b>🪙 Coin Flip Bot Help</b>\n\n` +
+        `<b>How to Play:</b>\n` +
+        `<b>Group Flips:</b>\n` +
+        `1. Click "Start Flip" in a group (or use /start)\n` +
+        `2. Select your token and wager amount in DM\n` +
+        `3. Bot sends you a deposit address\n` +
+        `4. Send your wager to that address\n` +
+        `5. Wait for a challenger to join\n` +
+        `6. Challenger deposits their wager\n` +
+        `7. Bot flips a coin - winner takes all!\n\n` +
+        `<b>DM Flips:</b>\n` +
+        `1. Click "Start Flip" in DM (uses your last group as context)\n` +
+        `2. Select token and enter wager amount\n` +
+        `3. Same deposit and challenge process\n\n` +
+        `<b>Wallet Setup:</b>\n` +
+        `For each network (Paxeer & Solana) you need:\n` +
+        `💰 <b>Receive Wallet</b> - Where your winnings are sent\n` +
+        `🏦 <b>Sending Wallet</b> - Address you send deposits from\n` +
+        `(You only need to configure networks you plan to use)\n\n` +
+        `<b>Rules:</b>\n` +
+        `⏱️ 3 minutes to confirm each deposit\n` +
+        `👥 Both players need complete wallet setup\n` +
+        `💎 Winner receives 2x their wager amount\n` +
+        `🔒 All transactions are recorded on-chain\n\n` +
+        `<b>Need Help?</b>\n` +
+        `Click the 🏠 Home button anytime to return to your dashboard!`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      logger.error('Error in help command', error);
+      await ctx.reply('❌ Error displaying help.');
+    }
   },
 
   stats: async (ctx) => {
