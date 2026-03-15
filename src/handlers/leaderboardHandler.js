@@ -203,7 +203,7 @@ class LeaderboardHandler {
       logger.info('[leaderboard] Leaderboard displayed', {
         userId: ctx.from.id,
         winnersCount: topWinners.length,
-        losersCount: usersWithLosses.length,
+        losersCount: losersDisplay.length,
         tokensBurned: Object.keys(burnedByToken).length,
       });
     } catch (error) {
