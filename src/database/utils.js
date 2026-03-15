@@ -91,7 +91,8 @@ class DatabaseUtils {
       },
     });
 
-    const wins = games.filter(g => g.winnerId === userId).length;
+    const uid = String(userId);
+    const wins = games.filter(g => String(g.winnerId) === uid).length;
     const losses = games.length - wins;
 
     return {
@@ -130,7 +131,8 @@ class DatabaseUtils {
     }
 
     // Calculate basic stats
-    const wins = games.filter(g => g.winnerId === userId).length;
+    const uid = String(userId);
+    const wins = games.filter(g => String(g.winnerId) === uid).length;
     const losses = games.length - wins;
     const winRate = ((wins / games.length) * 100).toFixed(2);
 
@@ -176,14 +178,14 @@ class DatabaseUtils {
         };
       }
       perTokenStats[token].flips += 1;
-      if (game.winnerId === userId) {
+      if (String(game.winnerId) === uid) {
         perTokenStats[token].wins += 1;
       } else {
         perTokenStats[token].losses += 1;
       }
       const wagerAmount = parseFloat(game.wagerAmount || 0);
       perTokenStats[token].wagered += wagerAmount;
-      if (game.winnerId === userId) {
+      if (String(game.winnerId) === uid) {
         perTokenStats[token].earned += wagerAmount * 2; // Winner gets 2x their wager
       }
     });
