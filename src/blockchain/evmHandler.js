@@ -725,6 +725,84 @@ class EVMHandler {
         } catch (paxscanErr) {
           console.error('[getRecentDepositSender] Paxscan API query failed', { error: paxscanErr.message });
         }
+      } else if (tokenAddress === 'NATIVE') {
+        // Handle native PAX token deposits via txlist API
+        try {
+          const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+          console.log('[getRecentDepositSender] Querying Paxscan API for native token transfers', { url: paxscanUrl });
+
+          const response = await fetch(paxscanUrl);
+          const data = await response.json();
+
+          console.log('[getRecentDepositSender] Paxscan API response (native transfers)', {
+            status: data.status,
+            message: data.message,
+            resultCount: data.result?.length || 0,
+          });
+
+          if (data.status === '1' && data.result && data.result.length > 0) {
+            const targetSender = knownSender ? knownSender.toLowerCase() : null;
+
+            console.log('[getRecentDepositSender] Filtering native transfers', {
+              targetSender,
+              totalTransactions: data.result.length,
+              flipCreatedAtSeconds,
+              first5Transactions: data.result.slice(0, 5).map(tx => ({
+                from: tx.from,
+                to: tx.to,
+                value: tx.value,
+                timeStamp: tx.timeStamp,
+                hash: tx.hash,
+              })),
+            });
+
+            for (const tx of data.result) {
+              const txSenderLower = tx.from.toLowerCase();
+              const txRecipientLower = tx.to?.toLowerCase() || '';
+              const txTimestamp = parseInt(tx.timeStamp, 10);
+
+              const isToBot = txRecipientLower === botWalletAddress.toLowerCase();
+              const isFromTarget = !targetSender || txSenderLower === targetSender;
+              const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+
+              if (isToBot && isFromTarget && isAfterFlipCreation) {
+                const txAmount = parseFloat(ethers.formatUnits(tx.value, 18));
+
+                console.log('[getRecentDepositSender] Matched native transfer', {
+                  from: txSenderLower,
+                  to: txRecipientLower,
+                  amount: txAmount,
+                  txHash: tx.hash,
+                  timestamp: txTimestamp,
+                  isAfterFlipCreation,
+                });
+
+                return {
+                  sender: txSenderLower,
+                  amount: txAmount.toString(),
+                  transactionHash: tx.hash,
+                  blockNumber: tx.blockNumber,
+                  transferCount: 1,
+                  hasWrongTokens: false,
+                  wrongToken: null,
+                  amountIsDisplayFormat: true,
+                };
+              }
+            }
+
+            console.warn('[getRecentDepositSender] No native transfers from target sender', {
+              targetSender,
+              totalChecked: data.result.length,
+            });
+          } else {
+            console.warn('[getRecentDepositSender] No native transfers found via txlist', {
+              status: data.status,
+              message: data.message,
+            });
+          }
+        } catch (nativeErr) {
+          console.error('[getRecentDepositSender] Native transfer query failed', { error: nativeErr.message });
+        }
       }
 
       return null;
