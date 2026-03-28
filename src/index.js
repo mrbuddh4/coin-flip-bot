@@ -2596,8 +2596,37 @@ async function initBot() {
         }
 
         dashboardMsg += `🌐 <b>Wallets Configured:</b>\n`;
-        dashboardMsg += userProfile?.evmWalletAddress ? `✅ EVM Receive Wallet\n` : `❌ EVM Receive Wallet\n`;
-        dashboardMsg += userProfile?.solanaWalletAddress ? `✅ Solana Receive Wallet\n` : `❌ Solana Receive Wallet\n`;
+
+        if (userProfile?.evmWalletAddress) {
+          const evmReceive = userProfile.evmWalletAddress.substring(0, 6) + '...' + userProfile.evmWalletAddress.substring(userProfile.evmWalletAddress.length - 4);
+          dashboardMsg += `✅ <b>Paxeer Receive:</b> <code>${evmReceive}</code>\n`;
+        } else {
+          dashboardMsg += `❌ <b>Paxeer Receive:</b> Not set\n`;
+        }
+
+        if (userProfile?.evmDepositWalletAddress) {
+          const evmDeposit = userProfile.evmDepositWalletAddress.substring(0, 6) + '...' + userProfile.evmDepositWalletAddress.substring(userProfile.evmDepositWalletAddress.length - 4);
+          dashboardMsg += `✅ <b>Paxeer Send:</b> <code>${evmDeposit}</code>\n`;
+        } else {
+          dashboardMsg += `❌ <b>Paxeer Send:</b> Not set\n`;
+        }
+
+        dashboardMsg += `\n`;
+
+        if (userProfile?.solanaWalletAddress) {
+          const solReceive = userProfile.solanaWalletAddress.substring(0, 6) + '...' + userProfile.solanaWalletAddress.substring(userProfile.solanaWalletAddress.length - 4);
+          dashboardMsg += `✅ <b>Solana Receive:</b> <code>${solReceive}</code>\n`;
+        } else {
+          dashboardMsg += `❌ <b>Solana Receive:</b> Not set\n`;
+        }
+
+        if (userProfile?.solanaDepositWalletAddress) {
+          const solDeposit = userProfile.solanaDepositWalletAddress.substring(0, 6) + '...' + userProfile.solanaDepositWalletAddress.substring(userProfile.solanaDepositWalletAddress.length - 4);
+          dashboardMsg += `✅ <b>Solana Send:</b> <code>${solDeposit}</code>\n`;
+        } else {
+          dashboardMsg += `❌ <b>Solana Send:</b> Not set\n`;
+        }
+
         dashboardMsg += `\n<b>Ready to play?</b> Use the buttons below to get started!`;
 
         await ctx.editMessageText(
