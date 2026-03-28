@@ -53,7 +53,7 @@ class WalletHandler {
         solDeposit: solDepositWallet,
       });
 
-      await ctx.editMessageText(
+      const text =
         `<b>💳 Your Wallet Addresses</b>\n\n` +
         `<b>Paxeer Network - Receive Winnings:</b>\n<code>${evmAddress}</code>\n\n` +
         `<b>Paxeer Network - Send Deposits:</b>\n<code>${evmDepositWallet}</code>\n\n` +
@@ -61,20 +61,24 @@ class WalletHandler {
         `<b>Solana Network - Send Deposits:</b>\n<code>${solDepositWallet}</code>\n\n` +
         `<b>$FLIP Holding Wallet (profit share):</b>\n<code>${flipHoldingWallet}</code>\n` +
         `<i>The EVM wallet where you hold $FLIP. Leave unset to use your Paxeer receive wallet.</i>\n\n` +
-        `Choose what you'd like to do:`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('✏️ Update Paxeer Receive Wallet', 'update_evm_wallet')],
-            [Markup.button.callback('✏️ Update Paxeer Sending Wallet', 'update_evm_deposit_wallet')],
-            [Markup.button.callback('✏️ Update Solana Receive Wallet', 'update_solana_wallet')],
-            [Markup.button.callback('✏️ Update Solana Sending Wallet', 'update_solana_deposit_wallet')],
-            [Markup.button.callback('✏️ Update $FLIP Holding Wallet', 'update_flip_holding_wallet')],
-            [Markup.button.callback('❌ Remove All', 'remove_all_wallets')],
-            [Markup.button.callback('🏠 Home', 'back_to_home')],
-          ]).reply_markup,
-        }
-      );
+        `Choose what you'd like to do:`;
+
+      const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback('✏️ Update Paxeer Receive Wallet', 'update_evm_wallet')],
+        [Markup.button.callback('✏️ Update Paxeer Sending Wallet', 'update_evm_deposit_wallet')],
+        [Markup.button.callback('✏️ Update Solana Receive Wallet', 'update_solana_wallet')],
+        [Markup.button.callback('✏️ Update Solana Sending Wallet', 'update_solana_deposit_wallet')],
+        [Markup.button.callback('✏️ Update $FLIP Holding Wallet', 'update_flip_holding_wallet')],
+        [Markup.button.callback('❌ Remove All', 'remove_all_wallets')],
+        [Markup.button.callback('🏠 Home', 'back_to_home')],
+      ]);
+
+      try {
+        await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+      } catch (editErr) {
+        // Message can't be edited (e.g. /wallet typed as a command, not from a button)
+        await ctx.reply(text, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+      }
     } catch (error) {
       logger.error(`[WALLET] Error in handleWalletCommand for user ${userId}:`, error);
       await ctx.reply('❌ Error loading wallet profile. Please try again.');
