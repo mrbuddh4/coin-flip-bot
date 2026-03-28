@@ -4,9 +4,11 @@ const { Op } = require('sequelize');
 const { setDepositTimeout } = require('../utils/depositTimeout');
 
 class WalletHandler {
-  static async handleWalletCommand(ctx) {
+  static async handleWalletCommand(ctx, models) {
     const userId = ctx.from.id;
-    const models = ctx.state.models;
+    // models can be passed directly (e.g. from processWalletAddressInput on a text-message ctx
+    // where ctx.state.models is not set) or derived from ctx.state for callback query contexts.
+    models = models || ctx.state.models;
     logger.info(`[WALLET] Command received from user ${userId}`);
 
     try {
@@ -390,10 +392,7 @@ class WalletHandler {
           where: { id: session.id },
         });
 
-        // Show wallet menu again instead of confirmation
-        await this.handleWalletCommand(ctx);
-
-        // Find and continue any pending flip
+        await this.handleWalletCommand(ctx, models);
         await this.continueFlipAfterWallet(ctx, userId, models, 'EVM');
 
         return true;
@@ -415,10 +414,7 @@ class WalletHandler {
           where: { id: session.id },
         });
 
-        // Show wallet menu again instead of confirmation
-        await this.handleWalletCommand(ctx);
-
-        // Find and continue any pending flip
+        await this.handleWalletCommand(ctx, models);
         await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');
 
         return true;
@@ -440,7 +436,7 @@ class WalletHandler {
           where: { id: session.id },
         });
 
-        await this.handleWalletCommand(ctx);
+        await this.handleWalletCommand(ctx, models);
         return true;
       } else if (session.currentStep === 'AWAITING_EVM_DEPOSIT_ADDRESS') {
         // Basic validation for Paxeer address
@@ -477,7 +473,7 @@ class WalletHandler {
         });
         
         // Show wallet menu again instead of confirmation
-        await this.handleWalletCommand(ctx);
+        await this.handleWalletCommand(ctx, models);
 
         // Find and continue any pending flip
         await this.continueFlipAfterWallet(ctx, userId, models, 'EVM');
@@ -518,7 +514,7 @@ class WalletHandler {
         });
         
         // Show wallet menu again instead of confirmation
-        await this.handleWalletCommand(ctx);
+        await this.handleWalletCommand(ctx, models);
 
         // Find and continue any pending flip
         await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');
