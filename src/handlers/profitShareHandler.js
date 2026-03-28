@@ -75,11 +75,13 @@ class ProfitShareHandler {
     return effectiveSupply;
   }
   /**
-   * Accumulate an EVM flip dev fee into the profit share pool instead of
-   * sending it to the dev wallet. Called from executionHandler after each
-   * completed EVM flip.
+   * Accumulate a flip dev fee into the profit share pool instead of sending
+   * it to the dev wallet. Called from executionHandler after each completed flip.
+   *
+   * @param {string} network  'EVM' or 'Solana' — determines which distribution
+   *                          path is used at payout time.
    */
-  static async accumulateFee(tokenAddress, tokenSymbol, tokenDecimals, amount) {
+  static async accumulateFee(tokenAddress, tokenSymbol, tokenDecimals, amount, network = 'EVM') {
     try {
       const { models } = getDB();
       const amountNum = parseFloat(amount);
@@ -88,8 +90,9 @@ class ProfitShareHandler {
       const normalizedAddress = tokenAddress === 'NATIVE' ? 'native' : tokenAddress.toLowerCase();
 
       const [pool] = await models.ProfitSharePool.findOrCreate({
-        where: { tokenAddress: normalizedAddress },
+        where: { network, tokenAddress: normalizedAddress },
         defaults: {
+          network,
           tokenAddress: normalizedAddress,
           tokenSymbol,
           tokenDecimals,
@@ -102,6 +105,7 @@ class ProfitShareHandler {
       await pool.save();
 
       logger.info('[ProfitShare] Fee accumulated', {
+        network,
         tokenSymbol,
         amount: amountNum,
         newPending: pool.pendingAmount,
@@ -109,6 +113,105 @@ class ProfitShareHandler {
     } catch (err) {
       logger.error('[ProfitShare] Failed to accumulate fee', { error: err.message });
     }
+  }
+
+  /**
+   * Distribute a Solana fee pool to bot users who have registered both an EVM
+   * wallet (used to look up their $FLIP balance) and a Solana wallet (where
+   * they receive the payout).
+   *
+   * Users who have not registered both wallets do not receive a payout for
+   * this cycle — their share carries over in the pool for the next cycle.
+   *
+   * @param {object} pool             ProfitSharePool record (Solana network)
+   * @param {BigInt} effectiveSupply  Pre-computed effective $FLIP supply
+   * @returns {{ totalSent: number, successCount: number, failCount: number }}
+   */
+  static async distributeToRegisteredSolanaHolders(pool, effectiveSupply) {
+    const { models } = getDB();
+    const { Op } = require('sequelize');
+    const pending = parseFloat(pool.pendingAmount);
+
+    // Find bot users who have saved both an EVM wallet (for FLIP balance check)
+    // and a Solana wallet (to receive the Solana token payout)
+    const profiles = await models.UserProfile.findAll({
+      where: {
+        evmWalletAddress: { [Op.not]: null },
+        solanaWalletAddress: { [Op.not]: null },
+      },
+    });
+
+    if (profiles.length === 0) {
+      logger.info('[ProfitShare] No users with both wallets registered — Solana pool carries over', {
+        symbol: pool.tokenSymbol,
+      });
+      return { totalSent: 0, successCount: 0, failCount: 0 };
+    }
+
+    logger.info('[ProfitShare] Solana pool distribution: querying $FLIP balances for registered users', {
+      symbol: pool.tokenSymbol,
+      pending,
+      registeredUsers: profiles.length,
+    });
+
+    // Query each registered user's on-chain $FLIP balance to determine their share
+    const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
+    const flipContract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_ABI, provider);
+    const blockchainManager = getBlockchainManager();
+    const sendTokenAddress = pool.tokenAddress === 'native' ? 'NATIVE' : pool.tokenAddress;
+
+    let totalSent = 0;
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const profile of profiles) {
+      const evmAddr = (profile.evmWalletAddress || '').toLowerCase();
+      if (EXCLUDED_ADDRESSES.has(evmAddr)) continue;
+
+      let flipBalance;
+      try {
+        flipBalance = await flipContract.balanceOf(profile.evmWalletAddress);
+      } catch (_) { continue; }
+
+      if (flipBalance === 0n) continue;
+
+      // Share = their FLIP balance / total effective supply (same denominator as EVM payouts)
+      const share = Number(flipBalance) / Number(effectiveSupply);
+      const amount = pending * share;
+      if (amount < MIN_PER_HOLDER) continue;
+
+      try {
+        await sleep(1200);
+        const result = await blockchainManager.sendWinnings(
+          'Solana',
+          sendTokenAddress,
+          profile.solanaWalletAddress,
+          amount.toString(),
+          pool.tokenDecimals
+        );
+        totalSent += amount;
+        successCount++;
+        logger.info('[ProfitShare] Sent Solana share to registered user', {
+          userId: profile.userId,
+          evmWallet: profile.evmWalletAddress,
+          solanaWallet: profile.solanaWalletAddress,
+          flipBalance: flipBalance.toString(),
+          amount,
+          symbol: pool.tokenSymbol,
+          txHash: result.txHash,
+        });
+      } catch (err) {
+        failCount++;
+        logger.error('[ProfitShare] Failed to send Solana share to user', {
+          userId: profile.userId,
+          solanaWallet: profile.solanaWalletAddress,
+          amount,
+          error: err.message,
+        });
+      }
+    }
+
+    return { totalSent, successCount, failCount };
   }
 
   /**
@@ -158,8 +261,15 @@ class ProfitShareHandler {
 
   /**
    * Run one full distribution cycle.
-   * Distributes all pending EVM token fees to $FLIP holders proportionally
-   * to their $FLIP holdings.
+   *
+   * EVM pools  → distribute to ALL on-chain $FLIP holders (via Paxscan).
+   * Solana pools → distribute only to bot users who have registered both an
+   *   EVM wallet (used to look up their $FLIP balance) and a Solana wallet
+   *   (where they receive the payout). Unregistered holders retain their
+   *   share in the pool until the next cycle.
+   *
+   * Both pool types use the same effective-supply denominator, so every user
+   * receives exactly (their_FLIP / effective_supply) * pool_amount.
    *
    * @param {object|null} bot   Telegraf bot instance for admin notifications, or null
    * @param {string} triggeredBy  'scheduler' | 'admin' | 'startup-catchup'
@@ -182,16 +292,19 @@ class ProfitShareHandler {
       return { distributed: false, reason: 'No pending fees' };
     }
 
-    // Fetch $FLIP holders once — used proportionally for every token pool
-    const holders = await this.getFlipHolders();
-    if (holders.length === 0) {
-      logger.warn('[ProfitShare] No $FLIP holders found, skipping distribution');
-      return { distributed: false, reason: 'No $FLIP holders found' };
+    const evmPools = pools.filter(p => p.network !== 'Solana');
+    const solanaPools = pools.filter(p => p.network === 'Solana');
+
+    // Fetch Paxscan holders only when there are EVM pools to distribute
+    let holders = [];
+    if (evmPools.length > 0) {
+      holders = await this.getFlipHolders();
+      if (holders.length === 0) {
+        logger.warn('[ProfitShare] No $FLIP holders found from Paxscan — EVM pools will carry over');
+      }
     }
 
-    // Effective supply = totalSupply minus exchange pool + burn + other excluded addresses.
-    // Each holder receives (their_balance / effectiveSupply) * fees, which equals
-    // their exact % of the supply held outside excluded addresses.
+    // Effective supply is the shared denominator for both EVM and Solana distributions
     let effectiveSupply;
     try {
       effectiveSupply = await this.getFlipEffectiveSupply();
@@ -204,18 +317,21 @@ class ProfitShareHandler {
     }
 
     logger.info('[ProfitShare] Distribution parameters', {
-      holderCount: holders.length,
+      evmPoolCount: evmPools.length,
+      solanaPoolCount: solanaPools.length,
+      evmHolderCount: holders.length,
       effectiveSupply: effectiveSupply.toString(),
     });
 
     const blockchainManager = getBlockchainManager();
     const results = [];
 
-    for (const pool of pools) {
+    // ── EVM pools: send to every on-chain $FLIP holder via Paxscan ────────────
+    for (const pool of evmPools) {
       const pending = parseFloat(pool.pendingAmount);
-      if (pending < MIN_PER_HOLDER) continue;
+      if (pending < MIN_PER_HOLDER || holders.length === 0) continue;
 
-      logger.info('[ProfitShare] Distributing pool', {
+      logger.info('[ProfitShare] Distributing EVM pool', {
         symbol: pool.tokenSymbol,
         pending,
         holderCount: holders.length,
@@ -243,7 +359,7 @@ class ProfitShareHandler {
           );
           totalSent += amount;
           successCount++;
-          logger.info('[ProfitShare] Sent share to holder', {
+          logger.info('[ProfitShare] Sent EVM share to holder', {
             holder: holder.address,
             amount,
             symbol: pool.tokenSymbol,
@@ -251,7 +367,7 @@ class ProfitShareHandler {
           });
         } catch (err) {
           failCount++;
-          logger.error('[ProfitShare] Failed to send share to holder', {
+          logger.error('[ProfitShare] Failed to send EVM share to holder', {
             holder: holder.address,
             amount,
             symbol: pool.tokenSymbol,
@@ -260,29 +376,51 @@ class ProfitShareHandler {
         }
       }
 
-      // Preserve any unsent amounts (from failed sends) for the next cycle
       const remaining = Math.max(0, pending - totalSent);
       pool.pendingAmount = remaining < MIN_PER_HOLDER ? '0' : remaining.toString();
       pool.totalDistributed = (parseFloat(pool.totalDistributed) + totalSent).toString();
       pool.lastDistributedAt = new Date();
       await pool.save();
 
-      results.push({ symbol: pool.tokenSymbol, totalSent, successCount, failCount });
-
-      logger.info('[ProfitShare] Pool distribution complete', {
-        symbol: pool.tokenSymbol,
-        totalSent,
-        successCount,
-        failCount,
+      results.push({ symbol: pool.tokenSymbol, network: 'EVM', totalSent, successCount, failCount });
+      logger.info('[ProfitShare] EVM pool distribution complete', {
+        symbol: pool.tokenSymbol, totalSent, successCount, failCount,
         remainingPending: pool.pendingAmount,
       });
+    }
+
+    // ── Solana pools: send to bot users with registered EVM+Solana wallets ────
+    for (const pool of solanaPools) {
+      const pending = parseFloat(pool.pendingAmount);
+      if (pending < MIN_PER_HOLDER) continue;
+
+      logger.info('[ProfitShare] Distributing Solana pool', { symbol: pool.tokenSymbol, pending });
+
+      const { totalSent, successCount, failCount } =
+        await this.distributeToRegisteredSolanaHolders(pool, effectiveSupply);
+
+      const remaining = Math.max(0, pending - totalSent);
+      pool.pendingAmount = remaining < MIN_PER_HOLDER ? '0' : remaining.toString();
+      pool.totalDistributed = (parseFloat(pool.totalDistributed) + totalSent).toString();
+      pool.lastDistributedAt = new Date();
+      await pool.save();
+
+      results.push({ symbol: pool.tokenSymbol, network: 'Solana', totalSent, successCount, failCount });
+      logger.info('[ProfitShare] Solana pool distribution complete', {
+        symbol: pool.tokenSymbol, totalSent, successCount, failCount,
+        remainingPending: pool.pendingAmount,
+      });
+    }
+
+    if (results.length === 0) {
+      return { distributed: false, reason: 'All pools skipped (no holders found or below minimum)' };
     }
 
     // Notify admins via Telegram
     if (bot) {
       const adminIds = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
       const summary = results
-        .map(r => `• ${r.totalSent.toFixed(4)} ${r.symbol} → ${r.successCount} holders (${r.failCount} failed)`)
+        .map(r => `• [${r.network}] ${r.totalSent.toFixed(4)} ${r.symbol} → ${r.successCount} recipients (${r.failCount} failed)`)
         .join('\n');
 
       for (const adminId of adminIds) {
@@ -291,14 +429,14 @@ class ProfitShareHandler {
             adminId,
             `💰 <b>$FLIP Profit Share Distributed</b>\n\n` +
             `Triggered by: ${triggeredBy}\n` +
-            `$FLIP holders reached: ${holders.length}\n\n${summary}`,
+            `EVM holders reached: ${holders.length}\n\n${summary}`,
             { parse_mode: 'HTML' }
           );
         } catch (_) { /* ignore failed DM to admin */ }
       }
     }
 
-    return { distributed: true, results, holderCount: holders.length };
+    return { distributed: true, results, evmHolderCount: holders.length };
   }
 
   /**

@@ -120,34 +120,21 @@ class ExecutionHandler {
         burnAddress: `${burnAddress.substring(0, 10)}...`,
       });
       
-      // EVM flips: accumulate 5% into profit share pool for $FLIP holder distribution
-      // Solana flips: send 5% to dev wallet as before
+      // All networks: accumulate 5% into profit share pool for $FLIP holder distribution
+      // EVM pools → paid out to all on-chain $FLIP holders (via Paxscan)
+      // Solana pools → paid out to bot users who have registered both wallets
       if (flip.tokenNetwork === 'EVM') {
         await ProfitShareHandler.accumulateFee(
           flip.tokenAddress, flip.tokenSymbol, flip.tokenDecimals, devFeeAmount.toString()
         );
         logger.info('[executeFlip] EVM dev fee accumulated to profit share pool', { flipId, devFeeAmount, token: flip.tokenSymbol });
-        console.log(`[executeFlip] PROFIT SHARE ACCUMULATED - Amount: ${devFeeAmount} ${flip.tokenSymbol}`);
-      } else if (devWallet) {
-        try {
-          logger.info('[executeFlip] Sending dev fee', { flipId, devWallet, devFeeAmount, tokenAddress: flip.tokenAddress, tokenDecimals: flip.tokenDecimals });
-          console.log(`[executeFlip] DEV FEE - Amount: ${devFeeAmount}, To: ${devWallet}, Token: ${flip.tokenAddress}`);
-          const blockchainManager = getBlockchainManager();
-          const devResult = await blockchainManager.sendWinnings(
-            flip.tokenNetwork,
-            flip.tokenAddress,
-            devWallet,
-            devFeeAmount.toString(),
-            flip.tokenDecimals
-          );
-          logger.info('[executeFlip] Dev fee SENT', { flipId, devWallet: `${devWallet.substring(0, 10)}...`, txHash: devResult.txHash, amount: devFeeAmount });
-          console.log(`[SUCCESS] Dev fee sent with txHash: ${devResult.txHash}`);
-        } catch (devFeeError) {
-          logger.error('[executeFlip] ERROR SENDING DEV FEE', { flipId, devWallet, devFeeAmount, error: devFeeError.message, stack: devFeeError.stack });
-          console.error(`[ERROR] Dev fee failed:`, devFeeError.message);
-        }
+        console.log(`[executeFlip] PROFIT SHARE ACCUMULATED (EVM) - Amount: ${devFeeAmount} ${flip.tokenSymbol}`);
       } else {
-        logger.warn('[executeFlip] Solana DEV WALLET NOT CONFIGURED', { network: flip.tokenNetwork, envVarSolana: 'SOL_DEV_WALLET' });
+        await ProfitShareHandler.accumulateFee(
+          flip.tokenAddress, flip.tokenSymbol, flip.tokenDecimals, devFeeAmount.toString(), 'Solana'
+        );
+        logger.info('[executeFlip] Solana dev fee accumulated to profit share pool', { flipId, devFeeAmount, token: flip.tokenSymbol });
+        console.log(`[executeFlip] PROFIT SHARE ACCUMULATED (Solana) - Amount: ${devFeeAmount} ${flip.tokenSymbol}`);
       }
       
       // Send 5% to burn address
@@ -501,25 +488,17 @@ class ExecutionHandler {
         flip.tokenDecimals
       );
 
-      // Send dev fee (5%) - EVM: accumulate for $FLIP holder distribution; Solana: send to dev wallet
+      // Send dev fee (5%) - all networks: accumulate for $FLIP holder profit share distribution
+      // EVM pools → paid out to all on-chain $FLIP holders; Solana pools → paid out to registered users
       let devTx = null;
       if (flip.tokenNetwork === 'EVM') {
         await ProfitShareHandler.accumulateFee(
           flip.tokenAddress, flip.tokenSymbol, flip.tokenDecimals, devAmount
         );
       } else {
-        try {
-          await new Promise(r => setTimeout(r, 5000));
-          devTx = await blockchainManager.sendWinnings(
-            flip.tokenNetwork,
-            flip.tokenAddress,
-            devWallet,
-            devAmount,
-            flip.tokenDecimals
-          );
-        } catch (devFeeError) {
-          logger.error('[confirmPayoutAddress] ERROR SENDING DEV FEE', { flipId, devWallet, devAmount, error: devFeeError.message });
-        }
+        await ProfitShareHandler.accumulateFee(
+          flip.tokenAddress, flip.tokenSymbol, flip.tokenDecimals, devAmount, 'Solana'
+        );
       }
 
       // Send burn fee (5%)

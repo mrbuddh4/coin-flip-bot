@@ -160,17 +160,23 @@ const defineModels = (sequelize) => {
     updatedAt: DataTypes.DATE,
   });
 
-  // ProfitSharePool Model - tracks accumulated EVM flip fees for $FLIP holder distribution
+  // ProfitSharePool Model - tracks accumulated flip fees for $FLIP holder distribution
+  // EVM pools distribute to all on-chain $FLIP holders; Solana pools distribute to bot
+  // users who have registered both an EVM wallet (FLIP balance check) and a Solana wallet.
   const ProfitSharePool = sequelize.define('ProfitSharePool', {
     id: {
       type: DataTypes.UUID,
       primaryKey: true,
       defaultValue: DataTypes.UUIDV4,
     },
+    network: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: 'EVM', // 'EVM' or 'Solana'
+    },
     tokenAddress: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
     },
     tokenSymbol: {
       type: DataTypes.STRING,
@@ -193,7 +199,11 @@ const defineModels = (sequelize) => {
       type: DataTypes.DATE,
       allowNull: true,
     },
-  }, { timestamps: true });
+  }, {
+    timestamps: true,
+    // Unique per network+token so 'native' can exist for both EVM (PAX) and Solana (SOL)
+    indexes: [{ unique: true, fields: ['network', 'tokenAddress'] }],
+  });
 
   return {
     User,
