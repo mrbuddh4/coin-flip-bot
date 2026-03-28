@@ -11,13 +11,26 @@ const PAXSCAN_BASE = 'https://paxscan.paxeer.app/api';
 const DISTRIBUTION_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MIN_PER_HOLDER = 0.001; // Skip sending dust amounts below this
 
-const ERC20_TOTAL_SUPPLY_ABI = ['function totalSupply() view returns (uint256)'];
+const ERC20_ABI = [
+  'function totalSupply() view returns (uint256)',
+  'function balanceOf(address account) view returns (uint256)',
+];
 
-// Addresses that must never receive profit share distributions
+// Addresses excluded from both receiving distributions AND from the supply denominator.
+// Includes burn address, zero address, token contract itself, the Sidiora.fun exchange
+// pool, and any extras supplied via FLIP_EXCLUDED_ADDRESSES env var.
+const _extraExclusions = (process.env.FLIP_EXCLUDED_ADDRESSES || '')
+  .split(',')
+  .map(a => a.trim().toLowerCase())
+  .filter(Boolean);
+
 const EXCLUDED_ADDRESSES = new Set([
   '0x000000000000000000000000000000000000dead',
   '0x0000000000000000000000000000000000000000',
   FLIP_TOKEN_ADDRESS.toLowerCase(),
+  // Sidiora.fun exchange pool — holds liquidity, not a real holder
+  (process.env.SIDIORA_EXCHANGE_ADDRESS || '0xA0Cd0F92f12f881aeBaFF9e0fb3144511c9ebF6c').toLowerCase(),
+  ..._extraExclusions,
 ]);
 
 function sleep(ms) {
@@ -26,16 +39,40 @@ function sleep(ms) {
 
 class ProfitShareHandler {
   /**
-   * Query the $FLIP ERC-20 contract for its total supply (raw BigInt).
-   * This is used as the denominator so each holder's share =
-   * holder_balance / total_supply — not relative to circulating supply.
+   * Compute the effective $FLIP supply — i.e. totalSupply minus the balance
+   * held by every excluded address (burn, zero, token contract, exchange pool).
+   *
+   * This is the denominator for profit share calculations, so each holder
+   * receives exactly (their_balance / effective_supply) * pool_amount, which
+   * equals their % of the supply held *outside* the excluded addresses.
    */
-  static async getFlipTotalSupply() {
+  static async getFlipEffectiveSupply() {
     const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
-    const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_TOTAL_SUPPLY_ABI, provider);
-    const raw = await contract.totalSupply();
-    logger.info('[ProfitShare] $FLIP total supply fetched', { totalSupply: raw.toString() });
-    return raw; // BigInt
+    const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_ABI, provider);
+
+    const totalSupply = await contract.totalSupply();
+
+    // Sum balances held by all excluded addresses and subtract from total
+    let excludedTotal = 0n;
+    for (const addr of EXCLUDED_ADDRESSES) {
+      try {
+        const bal = await contract.balanceOf(addr);
+        if (bal > 0n) {
+          excludedTotal += bal;
+          logger.info('[ProfitShare] Excluded address balance', { addr, balance: bal.toString() });
+        }
+      } catch (_) { /* address may not exist on-chain, skip gracefully */ }
+    }
+
+    const effectiveSupply = totalSupply > excludedTotal ? totalSupply - excludedTotal : 0n;
+
+    logger.info('[ProfitShare] $FLIP effective supply computed', {
+      totalSupply: totalSupply.toString(),
+      excludedTotal: excludedTotal.toString(),
+      effectiveSupply: effectiveSupply.toString(),
+    });
+
+    return effectiveSupply;
   }
   /**
    * Accumulate an EVM flip dev fee into the profit share pool instead of
@@ -152,24 +189,23 @@ class ProfitShareHandler {
       return { distributed: false, reason: 'No $FLIP holders found' };
     }
 
-    // Use the actual contract total supply as denominator so that each holder
-    // receives exactly (their_balance / total_supply) * pool_amount.
-    // Fees corresponding to burned/excluded tokens are NOT distributed and
-    // remain in the pool for the next cycle.
-    let totalSupply;
+    // Effective supply = totalSupply minus exchange pool + burn + other excluded addresses.
+    // Each holder receives (their_balance / effectiveSupply) * fees, which equals
+    // their exact % of the supply held outside excluded addresses.
+    let effectiveSupply;
     try {
-      totalSupply = await this.getFlipTotalSupply();
+      effectiveSupply = await this.getFlipEffectiveSupply();
     } catch (err) {
-      logger.error('[ProfitShare] Failed to fetch $FLIP total supply, aborting distribution', { error: err.message });
-      return { distributed: false, reason: `Could not fetch $FLIP total supply: ${err.message}` };
+      logger.error('[ProfitShare] Failed to compute $FLIP effective supply, aborting distribution', { error: err.message });
+      return { distributed: false, reason: `Could not compute $FLIP effective supply: ${err.message}` };
     }
-    if (totalSupply === 0n) {
-      return { distributed: false, reason: 'Total $FLIP supply is zero' };
+    if (effectiveSupply === 0n) {
+      return { distributed: false, reason: 'Effective $FLIP supply is zero (all tokens excluded or burned)' };
     }
 
     logger.info('[ProfitShare] Distribution parameters', {
       holderCount: holders.length,
-      totalSupply: totalSupply.toString(),
+      effectiveSupply: effectiveSupply.toString(),
     });
 
     const blockchainManager = getBlockchainManager();
@@ -191,7 +227,7 @@ class ProfitShareHandler {
       let failCount = 0;
 
       for (const holder of holders) {
-        const share = Number(holder.balance) / Number(totalSupply);
+        const share = Number(holder.balance) / Number(effectiveSupply);
         const amount = pending * share;
 
         if (amount < MIN_PER_HOLDER) continue;
