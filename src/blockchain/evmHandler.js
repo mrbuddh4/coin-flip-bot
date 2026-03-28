@@ -586,21 +586,20 @@ class EVMHandler {
                 };
               }
               
-              // If knownSender and still no transfers found, log but DON'T reject yet
-              // The user might be using a different wallet in THIS session
-              // Fall through to the final fallback below which accepts ANY sender
+              // If knownSender is specified but no transfers found from that wallet, return null.
+              // Do NOT fall through to the any-sender fallback — that would pick up other parties'
+              // deposits (e.g. the creator's deposit) and falsely attribute them to this depositor.
               if (transfers.length === 0 && knownSender) {
-                console.warn('[getRecentDepositSender] Known sender specified but NO deposits found from that wallet', {
+                console.warn('[getRecentDepositSender] Known sender specified but NO deposits found from that wallet - returning null', {
                   knownSender,
                   botWalletAddress,
                   expectedToken: tokenAddress.toLowerCase(),
-                  message: 'User may be using a different wallet - will accept deposits from ANY sender below',
                 });
+                return null;
               }
               
-              // Fallback: accumulate ALL recent incoming transfers to bot wallet that are after flip creation
-              // This handles multi-deposit scenarios where user sends from same wallet in succession
-              // ONLY used when knownSender is NOT specified (i.e., we don't know who should deposit)
+              // Fallback: accumulate ALL recent incoming transfers to bot wallet that are after flip creation.
+              // Only reached when knownSender is NOT specified (i.e., we don't know who should deposit).
               let fallbackTotal = 0;
               let fallbackLatestTx = null;
               let fallbackSender = null;
@@ -654,6 +653,7 @@ class EVMHandler {
                   transactionHash: fallbackLatestTx.hash,
                   blockNumber: fallbackLatestTx.blockNumber,
                   transferCount: fallbackTransfers.length,
+                  amountIsDisplayFormat: true, // EVM amounts already formatted by ethers.formatUnits()
                 };
               }
               
