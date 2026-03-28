@@ -152,9 +152,10 @@ const defineModels = (sequelize) => {
       primaryKey: true,
       allowNull: false,
     },
-    evmWalletAddress: DataTypes.STRING,
-    solanaWalletAddress: DataTypes.STRING,
-    evmDepositWalletAddress: DataTypes.STRING, // User's wallet for sending deposits
+    evmWalletAddress: DataTypes.STRING,         // Paxeer address to receive winnings & profit share
+    solanaWalletAddress: DataTypes.STRING,      // Solana address to receive winnings & Solana profit share
+    flipHoldingWalletAddress: DataTypes.STRING, // EVM wallet where user holds $FLIP (used for profit share share calculation); defaults to evmWalletAddress if not set
+    evmDepositWalletAddress: DataTypes.STRING,  // User's wallet for sending EVM deposits
     solanaDepositWalletAddress: DataTypes.STRING, // User's wallet for sending Solana deposits
     createdAt: DataTypes.DATE,
     updatedAt: DataTypes.DATE,

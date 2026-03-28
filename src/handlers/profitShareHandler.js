@@ -132,12 +132,17 @@ class ProfitShareHandler {
     const { Op } = require('sequelize');
     const pending = parseFloat(pool.pendingAmount);
 
-    // Find bot users who have saved both an EVM wallet (for FLIP balance check)
-    // and a Solana wallet (to receive the Solana token payout)
+    // Find bot users who have saved a Solana wallet (to receive the payout) and at least
+    // one EVM wallet for the $FLIP balance check (flipHoldingWalletAddress preferred,
+    // falling back to evmWalletAddress).
     const profiles = await models.UserProfile.findAll({
       where: {
-        evmWalletAddress: { [Op.not]: null },
         solanaWalletAddress: { [Op.not]: null },
+        // Must have at least one EVM address to check FLIP balance against
+        [Op.or]: [
+          { flipHoldingWalletAddress: { [Op.not]: null } },
+          { evmWalletAddress: { [Op.not]: null } },
+        ],
       },
     });
 
@@ -165,12 +170,14 @@ class ProfitShareHandler {
     let failCount = 0;
 
     for (const profile of profiles) {
-      const evmAddr = (profile.evmWalletAddress || '').toLowerCase();
-      if (EXCLUDED_ADDRESSES.has(evmAddr)) continue;
+      // Use the dedicated FLIP holding wallet if set; otherwise fall back to the
+      // Paxeer receive wallet (evmWalletAddress).
+      const holdingAddr = (profile.flipHoldingWalletAddress || profile.evmWalletAddress || '').toLowerCase();
+      if (!holdingAddr || EXCLUDED_ADDRESSES.has(holdingAddr)) continue;
 
       let flipBalance;
       try {
-        flipBalance = await flipContract.balanceOf(profile.evmWalletAddress);
+        flipBalance = await flipContract.balanceOf(holdingAddr);
       } catch (_) { continue; }
 
       if (flipBalance === 0n) continue;
@@ -193,7 +200,7 @@ class ProfitShareHandler {
         successCount++;
         logger.info('[ProfitShare] Sent Solana share to registered user', {
           userId: profile.userId,
-          evmWallet: profile.evmWalletAddress,
+          holdingWallet: holdingAddr,
           solanaWallet: profile.solanaWalletAddress,
           flipBalance: flipBalance.toString(),
           amount,

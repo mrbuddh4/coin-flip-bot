@@ -822,6 +822,16 @@ async function initBot() {
       }
     });
 
+    bot.action('update_flip_holding_wallet', async (ctx) => {
+      try {
+        ctx.state.models = getDB().models;
+        await WalletHandler.handleUpdateFlipHoldingWallet(ctx);
+      } catch (error) {
+        logger.error('Error updating $FLIP holding wallet', error);
+        await ctx.answerCbQuery('Error', true);
+      }
+    });
+
     // Leaderboard callbacks
     bot.action('refresh_leaderboard', async (ctx) => {
       try {

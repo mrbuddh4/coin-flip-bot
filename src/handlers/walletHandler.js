@@ -10,7 +10,7 @@ class WalletHandler {
     logger.info(`[WALLET] Command received from user ${userId}`);
 
     try {
-      // Ensure deposit wallet columns exist (in case migration hasn't run)
+      // Ensure all wallet columns exist (in case migration hasn't run)
       try {
         logger.info(`[WALLET] Running database migration for user ${userId}`);
         await models.sequelize.query(`
@@ -20,6 +20,10 @@ class WalletHandler {
         await models.sequelize.query(`
           ALTER TABLE "UserProfiles" 
           ADD COLUMN IF NOT EXISTS "solanaDepositWalletAddress" VARCHAR(255)
+        `);
+        await models.sequelize.query(`
+          ALTER TABLE "UserProfiles" 
+          ADD COLUMN IF NOT EXISTS "flipHoldingWalletAddress" VARCHAR(255)
         `);
         logger.info(`[WALLET] Migration complete for user ${userId}`);
       } catch (migrationErr) {
@@ -37,12 +41,14 @@ class WalletHandler {
 
       const evmAddress = profile.evmWalletAddress || '(not set)';
       const solAddress = profile.solanaWalletAddress || '(not set)';
+      const flipHoldingWallet = profile.flipHoldingWalletAddress || '(same as Paxeer receive wallet)';
       const evmDepositWallet = profile.evmDepositWalletAddress || '(not set)';
       const solDepositWallet = profile.solanaDepositWalletAddress || '(not set)';
 
       logger.info(`[WALLET] Sending reply to user ${userId}`, {
         evm: evmAddress,
         sol: solAddress,
+        flipHolding: flipHoldingWallet,
         evmDeposit: evmDepositWallet,
         solDeposit: solDepositWallet,
       });
@@ -53,6 +59,8 @@ class WalletHandler {
         `<b>Paxeer Network - Send Deposits:</b>\n<code>${evmDepositWallet}</code>\n\n` +
         `<b>Solana Network - Receive Winnings:</b>\n<code>${solAddress}</code>\n\n` +
         `<b>Solana Network - Send Deposits:</b>\n<code>${solDepositWallet}</code>\n\n` +
+        `<b>$FLIP Holding Wallet (profit share):</b>\n<code>${flipHoldingWallet}</code>\n` +
+        `<i>The EVM wallet where you hold $FLIP. Leave unset to use your Paxeer receive wallet.</i>\n\n` +
         `Choose what you'd like to do:`,
         {
           parse_mode: 'HTML',
@@ -61,6 +69,7 @@ class WalletHandler {
             [Markup.button.callback('✏️ Update Paxeer Sending Wallet', 'update_evm_deposit_wallet')],
             [Markup.button.callback('✏️ Update Solana Receive Wallet', 'update_solana_wallet')],
             [Markup.button.callback('✏️ Update Solana Sending Wallet', 'update_solana_deposit_wallet')],
+            [Markup.button.callback('✏️ Update $FLIP Holding Wallet', 'update_flip_holding_wallet')],
             [Markup.button.callback('❌ Remove All', 'remove_all_wallets')],
             [Markup.button.callback('🏠 Home', 'back_to_home')],
           ]).reply_markup,
@@ -196,6 +205,49 @@ class WalletHandler {
     }
   }
 
+  static async handleUpdateFlipHoldingWallet(ctx) {
+    const userId = ctx.from.id;
+    const models = ctx.state.models;
+
+    try {
+      await models.User.findOrCreate({
+        where: { telegramId: userId },
+        defaults: {
+          username: ctx.from.username,
+          firstName: ctx.from.first_name,
+          lastName: ctx.from.last_name,
+        },
+      });
+
+      await models.BotSession.destroy({
+        where: { userId, sessionType: 'UPDATING_WALLET' },
+      });
+
+      await models.BotSession.create({
+        userId,
+        sessionType: 'UPDATING_WALLET',
+        currentStep: 'AWAITING_FLIP_HOLDING_ADDRESS',
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      });
+
+      await ctx.editMessageText(
+        `<b>Set your $FLIP Holding Wallet:</b>\n\n` +
+        `This is the EVM wallet where you hold $FLIP tokens. It is used to calculate\n` +
+        `your share of the profit pool — it does <b>not</b> need to match your Paxeer\n` +
+        `receive wallet.\n\n` +
+        `If you leave this unset, your Paxeer receive wallet is used instead.\n\n` +
+        `Send me your EVM wallet address (e.g., 0x1234...)`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [] },
+        }
+      );
+    } catch (error) {
+      logger.error('Error in handleUpdateFlipHoldingWallet:', error);
+      await ctx.answerCbQuery('Error updating $FLIP holding wallet', true);
+    }
+  }
+
   static async handleUpdateSolanaDeposit(ctx) {
     const userId = ctx.from.id;
     const models = ctx.state.models;
@@ -247,6 +299,7 @@ class WalletHandler {
       if (profile) {
         profile.evmWalletAddress = null;
         profile.solanaWalletAddress = null;
+        profile.flipHoldingWalletAddress = null;
         profile.evmDepositWalletAddress = null;
         profile.solanaDepositWalletAddress = null;
         await profile.save();
@@ -364,6 +417,26 @@ class WalletHandler {
         // Find and continue any pending flip
         await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');
 
+        return true;
+      } else if (session.currentStep === 'AWAITING_FLIP_HOLDING_ADDRESS') {
+        // Basic validation for EVM address
+        if (!/^0x[a-fA-F0-9]{40}$/.test(message)) {
+          await ctx.reply(
+            `❌ Invalid Paxeer address format.\n\n` +
+            `Please provide a valid EVM wallet address (starting with 0x and 40 hex characters)`,
+            { parse_mode: 'HTML' }
+          );
+          return true;
+        }
+
+        profile.flipHoldingWalletAddress = message;
+        await profile.save();
+
+        await models.BotSession.destroy({
+          where: { id: session.id },
+        });
+
+        await this.handleWalletCommand(ctx);
         return true;
       } else if (session.currentStep === 'AWAITING_EVM_DEPOSIT_ADDRESS') {
         // Basic validation for Paxeer address
