@@ -1475,7 +1475,7 @@ async function initBot() {
               messageText = 
                 `❌ <b>Insufficient Deposit</b>\n\n` +
                 `Expected: ${formattedExpected} ${flip.tokenSymbol}\n` +
-                `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` + +
+                `Received: ${receivedAmount.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
                 `<b>Still needed: ${shortfallAmount} ${flip.tokenSymbol}</b>\n\n` +
                 `<b>Troubleshooting:</b>\n` +
                 `• Verify you sent to: <code>${botWallet}</code>\n` +
