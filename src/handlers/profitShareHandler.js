@@ -1,13 +1,17 @@
 'use strict';
 
+const { ethers } = require('ethers');
 const { getDB } = require('../database');
 const { getBlockchainManager } = require('../blockchain/manager');
+const config = require('../config');
 const logger = require('../utils/logger');
 
 const FLIP_TOKEN_ADDRESS = process.env.FLIP_TOKEN_ADDRESS || '0x2aA5968F710080ea453e7e09E59d769E8C470fac';
 const PAXSCAN_BASE = 'https://paxscan.paxeer.app/api';
 const DISTRIBUTION_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MIN_PER_HOLDER = 0.001; // Skip sending dust amounts below this
+
+const ERC20_TOTAL_SUPPLY_ABI = ['function totalSupply() view returns (uint256)'];
 
 // Addresses that must never receive profit share distributions
 const EXCLUDED_ADDRESSES = new Set([
@@ -21,6 +25,18 @@ function sleep(ms) {
 }
 
 class ProfitShareHandler {
+  /**
+   * Query the $FLIP ERC-20 contract for its total supply (raw BigInt).
+   * This is used as the denominator so each holder's share =
+   * holder_balance / total_supply — not relative to circulating supply.
+   */
+  static async getFlipTotalSupply() {
+    const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
+    const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_TOTAL_SUPPLY_ABI, provider);
+    const raw = await contract.totalSupply();
+    logger.info('[ProfitShare] $FLIP total supply fetched', { totalSupply: raw.toString() });
+    return raw; // BigInt
+  }
   /**
    * Accumulate an EVM flip dev fee into the profit share pool instead of
    * sending it to the dev wallet. Called from executionHandler after each
@@ -136,10 +152,25 @@ class ProfitShareHandler {
       return { distributed: false, reason: 'No $FLIP holders found' };
     }
 
-    const totalSupply = holders.reduce((sum, h) => sum + h.balance, 0n);
+    // Use the actual contract total supply as denominator so that each holder
+    // receives exactly (their_balance / total_supply) * pool_amount.
+    // Fees corresponding to burned/excluded tokens are NOT distributed and
+    // remain in the pool for the next cycle.
+    let totalSupply;
+    try {
+      totalSupply = await this.getFlipTotalSupply();
+    } catch (err) {
+      logger.error('[ProfitShare] Failed to fetch $FLIP total supply, aborting distribution', { error: err.message });
+      return { distributed: false, reason: `Could not fetch $FLIP total supply: ${err.message}` };
+    }
     if (totalSupply === 0n) {
       return { distributed: false, reason: 'Total $FLIP supply is zero' };
     }
+
+    logger.info('[ProfitShare] Distribution parameters', {
+      holderCount: holders.length,
+      totalSupply: totalSupply.toString(),
+    });
 
     const blockchainManager = getBlockchainManager();
     const results = [];
