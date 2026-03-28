@@ -160,12 +160,48 @@ const defineModels = (sequelize) => {
     updatedAt: DataTypes.DATE,
   });
 
+  // ProfitSharePool Model - tracks accumulated EVM flip fees for $FLIP holder distribution
+  const ProfitSharePool = sequelize.define('ProfitSharePool', {
+    id: {
+      type: DataTypes.UUID,
+      primaryKey: true,
+      defaultValue: DataTypes.UUIDV4,
+    },
+    tokenAddress: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      unique: true,
+    },
+    tokenSymbol: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    tokenDecimals: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 18,
+    },
+    pendingAmount: {
+      type: DataTypes.DECIMAL(36, 18),
+      defaultValue: 0,
+    },
+    totalDistributed: {
+      type: DataTypes.DECIMAL(36, 18),
+      defaultValue: 0,
+    },
+    lastDistributedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+  }, { timestamps: true });
+
   return {
     User,
     CoinFlip,
     Transaction,
     BotSession,
     UserProfile,
+    ProfitSharePool,
     sequelize, // Export sequelize so handlers can use it for queries
   };
 };

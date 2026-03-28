@@ -8,6 +8,7 @@ const path = require('path');
 const FlipHandler = require('./handlers/flipHandler');
 const ExecutionHandler = require('./handlers/executionHandler');
 const AdminHandler = require('./handlers/adminHandler');
+const ProfitShareHandler = require('./handlers/profitShareHandler');
 const WalletHandler = require('./handlers/walletHandler');
 const LeaderboardHandler = require('./handlers/leaderboardHandler');
 const DatabaseUtils = require('./database/utils');
@@ -488,6 +489,9 @@ async function initBot() {
 
     // Admin commands
     AdminHandler.registerCommands(bot);
+
+    // Start $FLIP profit share 24h distribution scheduler
+    ProfitShareHandler.startScheduler(bot);
 
     // Check for expired challenges on startup and restore timeouts
     const { models } = getDB();

@@ -244,6 +244,75 @@ class AdminHandler {
     }
   }
 
+  /**
+   * Show current $FLIP profit share pool status
+   */
+  static async profitShareStatus(ctx) {
+    if (!this.isAdmin(ctx.from.id)) {
+      await ctx.reply('❌ Not authorized.');
+      return;
+    }
+    try {
+      const ProfitShareHandler = require('./profitShareHandler');
+      const pools = await ProfitShareHandler.getPoolStatus();
+
+      if (pools.length === 0) {
+        await ctx.reply('ℹ️ No profit share pools yet. Fees accumulate after EVM flips complete.');
+        return;
+      }
+
+      let message = `💰 <b>$FLIP Profit Share Pools</b>\n\n`;
+      for (const pool of pools) {
+        const lastDist = pool.lastDistributedAt
+          ? new Date(pool.lastDistributedAt).toUTCString()
+          : 'Never';
+        message += `<b>${pool.tokenSymbol}</b>\n`;
+        message += `  Pending: ${parseFloat(pool.pendingAmount).toFixed(6)} ${pool.tokenSymbol}\n`;
+        message += `  Total distributed: ${parseFloat(pool.totalDistributed).toFixed(4)} ${pool.tokenSymbol}\n`;
+        message += `  Last distribution: ${lastDist}\n\n`;
+      }
+      message += `Auto-distribution runs every 24 hours.`;
+
+      await ctx.reply(message, { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.error('Error getting profit share status', error);
+      await ctx.reply('❌ Error retrieving profit share status.');
+    }
+  }
+
+  /**
+   * Manually trigger a profit share distribution to all $FLIP holders
+   */
+  static async triggerDistribute(ctx) {
+    if (!this.isAdmin(ctx.from.id)) {
+      await ctx.reply('❌ Not authorized.');
+      return;
+    }
+    await ctx.reply('⏳ Running $FLIP profit share distribution...');
+    try {
+      const ProfitShareHandler = require('./profitShareHandler');
+      const result = await ProfitShareHandler.distribute(null, 'admin');
+
+      if (!result.distributed) {
+        await ctx.reply(`ℹ️ Distribution skipped: ${result.reason}`);
+        return;
+      }
+
+      const summary = result.results
+        .map(r => `• ${r.totalSent.toFixed(4)} ${r.symbol} → ${r.successCount} holders (${r.failCount} failed)`)
+        .join('\n');
+
+      await ctx.reply(
+        `✅ <b>Distribution complete!</b>\n\n` +
+        `$FLIP holders reached: ${result.holderCount}\n\n${summary}`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      logger.error('Error triggering profit share distribution', error);
+      await ctx.reply(`❌ Distribution failed: ${error.message}`);
+    }
+  }
+
   static registerCommands(bot) {
     bot.command('admin_stats', ctx => this.stats(ctx));
     bot.command('admin_health', ctx => this.health(ctx));
@@ -251,6 +320,8 @@ class AdminHandler {
     bot.command('admin_broadcast', ctx => this.broadcast(ctx));
     bot.command('admin_debug', ctx => this.debug(ctx));
     bot.command('admin_cancel_all', ctx => this.cancelAllFlips(ctx));
+    bot.command('profit_status', ctx => this.profitShareStatus(ctx));
+    bot.command('profit_distribute', ctx => this.triggerDistribute(ctx));
 
     // For flip details: /flip_<id>
     bot.hears(/^\/flip_(.+)$/, (ctx) => {
