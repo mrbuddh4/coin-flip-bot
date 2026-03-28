@@ -174,6 +174,7 @@ class EVMHandler {
       const currentBlock = await this.provider.getBlockNumber();
       const lookbackBlocks = 10000; // Paxscan doesn't have RPC restrictions
       const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
+      const toBlock = currentBlock + 100; // buffer for RPC lag — Paxscan will clamp to latest
       
       // Declare once at function scope so all queries (main, fallback 1, fallback 2, fallback 3) can access
       const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
@@ -184,7 +185,7 @@ class EVMHandler {
         expectedAmount,
         knownSender,
         fromBlock,
-        toBlock: currentBlock,
+        toBlock,
         blockRange: currentBlock - fromBlock,
         flipCreatedAt,
         method: 'Paxscan API only (RPC skipped)',
@@ -214,7 +215,7 @@ class EVMHandler {
           // Special handling: if looking for a CONTRACT token but none found, also check native transfers
           // This catches cases where user sends native token (PAX) instead of ERC20 (SID)
           if (tokenAddress && tokenAddress !== 'NATIVE') {
-            paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+            paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
             
             console.log('[getRecentDepositSender] Querying Paxscan API for expected token', { url: paxscanUrl });
             
@@ -234,7 +235,7 @@ class EVMHandler {
                 expectedToken: tokenAddress.toLowerCase(),
               });
               
-              paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+              paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
               console.log('[getRecentDepositSender] Querying Paxscan API for all ERC20 tokens (wrong token detection)', { url: paxscanUrl });
               
               response = await fetch(paxscanUrl);
@@ -254,7 +255,7 @@ class EVMHandler {
                 expectedToken: tokenAddress.toLowerCase(),
               });
               
-              paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+              paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
               console.log('[getRecentDepositSender] Querying Paxscan API for native transfers', { url: paxscanUrl });
               
               response = await fetch(paxscanUrl);
@@ -268,7 +269,7 @@ class EVMHandler {
             }
           } else if (tokenAddress === 'NATIVE') {
             // Looking for native transfers directly
-            paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+            paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
             console.log('[getRecentDepositSender] Querying Paxscan API for native token transfers', { url: paxscanUrl });
             
             response = await fetch(paxscanUrl);
@@ -414,7 +415,7 @@ class EVMHandler {
                   expectedToken: tokenAddress.toLowerCase(),
                 });
                 
-                const paxscanUrlAllTokens = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+                const paxscanUrlAllTokens = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
                 
                 try {
                   const allTokensResponse = await fetch(paxscanUrlAllTokens);
@@ -481,7 +482,7 @@ class EVMHandler {
                   botWallet: botWalletAddress,
                 });
                 
-                const paxscanUrlNative = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+                const paxscanUrlNative = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
                 
                 try {
                   const nativeResponse = await fetch(paxscanUrlNative);
@@ -728,7 +729,7 @@ class EVMHandler {
       } else if (tokenAddress === 'NATIVE') {
         // Handle native PAX token deposits via txlist API
         try {
-          const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+          const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
           console.log('[getRecentDepositSender] Querying Paxscan API for native token transfers', { url: paxscanUrl });
 
           const response = await fetch(paxscanUrl);
