@@ -61,7 +61,7 @@ class LeaderboardHandler {
     if (losers.length === 0) {
       t += 'No losers yet\n';
     } else {
-      losers.forEach((e, i) => { t += `  ${i + 1}. ${name(e.user)} -${fmt(e.net)} ${symbol}\n`; });
+      [...losers].reverse().forEach((e, i) => { t += `  ${losers.length - i}. ${name(e.user)} -${fmt(e.net)} ${symbol}\n`; });
     }
     return t + '\n';
   }
