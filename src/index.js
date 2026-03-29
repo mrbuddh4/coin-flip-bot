@@ -843,6 +843,12 @@ async function initBot() {
       }
     });
 
+    // "Start a Challenge" button on expired challenge card — triggers /flip in the same chat
+    bot.action('start_flip', async (ctx) => {
+      await ctx.answerCbQuery().catch(() => {});
+      await handlers.flip(ctx);
+    });
+
     // Start flip in DM from group button
     bot.action(/^start_flip_dm_(.+)$/, async (ctx) => {
       try {

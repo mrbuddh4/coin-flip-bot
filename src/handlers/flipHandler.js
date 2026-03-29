@@ -521,7 +521,6 @@ class FlipHandler {
           
           // Send a helpful message to the challenger with option to start new challenge
           try {
-            const botInfo = await ctx.telegram.getMe();
             await ctx.reply(
               `⏰ <b>Challenge Expired</b>\n\n` +
               `The challenge for <b>${parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}</b> has expired.\n\n` +
@@ -529,7 +528,7 @@ class FlipHandler {
               {
                 parse_mode: 'HTML',
                 reply_markup: Markup.inlineKeyboard([
-                  [Markup.button.url('🪙 Start a Challenge', `https://t.me/${botInfo.username}`)],
+                  [Markup.button.callback('🪙 Start a Challenge', 'start_flip')],
                 ]).reply_markup,
               }
             );
