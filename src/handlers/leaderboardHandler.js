@@ -5,155 +5,104 @@ const logger = require('../utils/logger');
 
 class LeaderboardHandler {
   /**
-   * Show leaderboard with top winners and losers
+   * Aggregate top winners and losers for a given token filter from CoinFlip records.
+   * Returns { winners: [{user, net}], losers: [{user, net}] }
+   */
+  static async getTokenLeaderboard(models, tokenFilter) {
+    const flips = await models.CoinFlip.findAll({
+      where: { status: 'COMPLETED', ...tokenFilter },
+      attributes: ['creatorId', 'challengerId', 'winnerId', 'wagerAmount'],
+      raw: true,
+    });
+
+    const netByUser = {};
+    for (const flip of flips) {
+      const wager = parseFloat(flip.wagerAmount);
+      const winnerNet = wager * 2 * 0.9 - wager; // 90% of pool minus own wager
+      const loserId = String(flip.winnerId) === String(flip.creatorId)
+        ? flip.challengerId
+        : flip.creatorId;
+      if (flip.winnerId) netByUser[flip.winnerId] = (netByUser[flip.winnerId] || 0) + winnerNet;
+      if (loserId)       netByUser[loserId]       = (netByUser[loserId]       || 0) - wager;
+    }
+
+    const userIds = Object.keys(netByUser);
+    if (userIds.length === 0) return { winners: [], losers: [] };
+
+    const users = await models.User.findAll({
+      where: { telegramId: { [Op.in]: userIds } },
+      attributes: ['telegramId', 'firstName', 'username'],
+      raw: true,
+    });
+    const userMap = {};
+    users.forEach(u => { userMap[String(u.telegramId)] = u; });
+
+    const entries = userIds.map(id => ({
+      user: userMap[id] || { firstName: 'Unknown', username: null },
+      net: netByUser[id],
+    }));
+
+    const winners = entries.filter(e => e.net > 0).sort((a, b) => b.net - a.net).slice(0, 5);
+    const losers  = entries.filter(e => e.net < 0).sort((a, b) => a.net - b.net).slice(0, 5);
+    return { winners, losers };
+  }
+
+  static formatSection(title, winners, losers, symbol) {
+    const fmt = n => Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 0 });
+    const name = u => u.username ? `@${u.username}` : (u.firstName || 'Unknown');
+    let t = `${title}\n`;
+    t += `🏆 <b>Top Winners</b>\n`;
+    if (winners.length === 0) {
+      t += 'No winners yet\n';
+    } else {
+      winners.forEach((e, i) => { t += `  ${i + 1}. ${name(e.user)} +${fmt(e.net)} ${symbol}\n`; });
+    }
+    t += `📉 <b>Top Losers</b>\n`;
+    if (losers.length === 0) {
+      t += 'No losers yet\n';
+    } else {
+      losers.forEach((e, i) => { t += `  ${i + 1}. ${name(e.user)} -${fmt(e.net)} ${symbol}\n`; });
+    }
+    return t + '\n';
+  }
+
+  /**
+   * Show leaderboard — one section per token (SID combined EVM+Sol, PAX EVM)
    */
   static async showLeaderboard(ctx) {
     try {
       const { models } = getDB();
+      logger.info('[leaderboard] Building per-token leaderboard', { userId: ctx.from.id });
 
-      logger.info('[leaderboard] Fetching top 5 winners and losers', { userId: ctx.from.id });
+      // SID: both EVM and Solana combined
+      const sid = await this.getTokenLeaderboard(models, { tokenSymbol: 'SID' });
+      // PAX: EVM only
+      const pax = await this.getTokenLeaderboard(models, { tokenSymbol: 'PAX', tokenNetwork: 'EVM' });
 
-      // Get top 5 winners by net profit (totalWon - totalWagered)
-      const allWinners = await models.User.findAll({
-        attributes: ['telegramId', 'firstName', 'username', 'totalWon', 'totalWagered'],
-        where: {
-          totalWon: {
-            [Op.gt]: 0,
-          },
-        },
-        raw: true,
-      });
-
-      const topWinners = allWinners
-        .map(user => ({
-          ...user,
-          profit: parseFloat(user.totalWon) - parseFloat(user.totalWagered),
-        }))
-        .filter(user => user.profit > 0)
-        .sort((a, b) => b.profit - a.profit)
-        .slice(0, 5);
-
-      // Get top 5 biggest losers (by losses = totalWagered - totalWon)
-      const allUsers = await models.User.findAll({
-        attributes: ['telegramId', 'firstName', 'username', 'totalWon', 'totalWagered'],
-        where: {
-          totalWagered: {
-            [Op.gt]: 0,
-          },
-        },
-        raw: true,
-      });
-
-      // Calculate losses for each user — sort ascending, take 5 biggest, display smallest→biggest
-      const losersDisplay = allUsers
-        .map(user => ({
-          ...user,
-          losses: parseFloat(user.totalWagered) - parseFloat(user.totalWon),
-        }))
-        .filter(user => user.losses > 0)
-        .sort((a, b) => a.losses - b.losses)  // ASC: smallest loss first
-        .slice(-5);                             // keep top 5 biggest, still ASC order
-
-      // Calculate total burned by token across all completed flips
-      const allFlipsWithTokens = await models.CoinFlip.findAll({
-        where: {
-          status: 'COMPLETED',
-        },
+      // Volume & burned from all completed flips
+      const allFlips = await models.CoinFlip.findAll({
+        where: { status: 'COMPLETED' },
         attributes: ['wagerAmount', 'tokenSymbol', 'tokenNetwork'],
         raw: true,
       });
 
-      // Format winners section
-      let winnersText = '🏆 <b>TOP WINNERS</b>\n';
-      if (topWinners.length === 0) {
-        winnersText += 'No winners yet\n\n';
-      } else {
-        topWinners.forEach((winner, index) => {
-          const displayName = winner.username ? `@${winner.username}` : winner.firstName;
-          const amount = parseFloat(winner.profit).toLocaleString('en-US', {
-            maximumFractionDigits: 6,
-            minimumFractionDigits: 0,
-          });
-          winnersText += `${index + 1}. ${displayName} - ${amount}\n`;
-        });
-        winnersText += '\n';
-      }
-
-      // Format losers section (ascending: least loss = #1, most loss = last)
-      let losersText = '📉 <b>TOP LOSERS</b>\n';
-      if (losersDisplay.length === 0) {
-        losersText += 'No losers yet\n\n';
-      } else {
-        losersDisplay.forEach((loser, index) => {
-          const rank = losersDisplay.length - index; // 5 at top, 1 at bottom (losingest)
-          const displayName = loser.username ? `@${loser.username}` : loser.firstName;
-          const losses = parseFloat(loser.losses).toLocaleString('en-US', {
-            maximumFractionDigits: 6,
-            minimumFractionDigits: 0,
-          });
-          losersText += `${rank}. ${displayName} - ${losses}\n`;
-        });
-        losersText += '\n';
-      }
-
-      // Group volume and burned amounts by token (symbol + network for uniqueness)
-      const volumeByToken = {};
-      const burnedByToken = {};
-      allFlipsWithTokens.forEach(flip => {
-        const tokenKey = `${flip.tokenSymbol}_${flip.tokenNetwork}`;
-        const volume = parseFloat(flip.wagerAmount) * 2; // both sides
-        if (!volumeByToken[tokenKey]) {
-          volumeByToken[tokenKey] = { symbol: flip.tokenSymbol, network: flip.tokenNetwork, amount: 0 };
-        }
-        volumeByToken[tokenKey].amount += volume;
-
-        const burned = parseFloat(flip.wagerAmount) * 0.10; // 5% of total pool (both sides)
-        if (!burnedByToken[tokenKey]) {
-          burnedByToken[tokenKey] = {
-            symbol: flip.tokenSymbol,
-            network: flip.tokenNetwork,
-            amount: 0,
-          };
-        }
-        burnedByToken[tokenKey].amount += burned;
+      let sidVolume = 0, sidBurned = 0, paxVolume = 0, paxBurned = 0;
+      allFlips.forEach(flip => {
+        const pool = parseFloat(flip.wagerAmount) * 2;
+        const burned = pool * 0.05;
+        if (flip.tokenSymbol === 'SID') { sidVolume += pool; sidBurned += burned; }
+        if (flip.tokenSymbol === 'PAX' && flip.tokenNetwork === 'EVM') { paxVolume += pool; paxBurned += burned; }
       });
 
-      // Format total burned section with breakdown by token
-      let burnedText = '🔥 <b>TOTAL BURNED</b>\n';
-      const tokenList = Object.values(burnedByToken);
-      if (tokenList.length === 0) {
-        burnedText += 'None yet\n\n';
-      } else {
-        tokenList.forEach(token => {
-          const amount = token.amount.toLocaleString('en-US', {
-            maximumFractionDigits: 6,
-            minimumFractionDigits: 0,
-          });
-          burnedText += `${amount} ${token.symbol}`;
-          if (token.network) {
-            burnedText += ` (${token.network === 'EVM' ? 'Paxeer' : token.network})`;
-          }
-          burnedText += '\n';
-        });
-        burnedText += '\n';
-      }
+      const fmt = n => n.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 
-      // Format total volume section
-      let volumeText = '📊 <b>TOTAL VOLUME</b>\n';
-      const volumeList = Object.values(volumeByToken);
-      if (volumeList.length === 0) {
-        volumeText += 'None yet\n\n';
-      } else {
-        volumeList.forEach(token => {
-          const amount = token.amount.toLocaleString('en-US', { maximumFractionDigits: 6, minimumFractionDigits: 0 });
-          volumeText += `${amount} ${token.symbol}`;
-          if (token.network) volumeText += ` (${token.network === 'EVM' ? 'Paxeer' : token.network})`;
-          volumeText += '\n';
-        });
-        volumeText += '\n';
-      }
-
-      const leaderboardMessage = winnersText + losersText + burnedText + volumeText;
+      let leaderboardMessage = '';
+      leaderboardMessage += this.formatSection('🟡 <b>SID LEADERBOARD</b> (Paxeer + Solana)', sid.winners, sid.losers, 'SID');
+      leaderboardMessage += this.formatSection('🔵 <b>PAX LEADERBOARD</b> (Paxeer)', pax.winners, pax.losers, 'PAX');
+      leaderboardMessage += `🔥 <b>TOTAL BURNED</b>\n`;
+      leaderboardMessage += `  ${fmt(sidBurned)} SID | ${fmt(paxBurned)} PAX\n\n`;
+      leaderboardMessage += `📊 <b>TOTAL VOLUME</b>\n`;
+      leaderboardMessage += `  ${fmt(sidVolume)} SID | ${fmt(paxVolume)} PAX\n`;
 
       // Try to send with image
       const fs = require('fs');
@@ -203,9 +152,8 @@ class LeaderboardHandler {
 
       logger.info('[leaderboard] Leaderboard displayed', {
         userId: ctx.from.id,
-        winnersCount: topWinners.length,
-        losersCount: losersDisplay.length,
-        tokensBurned: Object.keys(burnedByToken).length,
+        sidWinners: sid.winners.length,
+        paxWinners: pax.winners.length,
       });
     } catch (error) {
       logger.error('[leaderboard] Error fetching leaderboard', { error: error.message, stack: error.stack });
