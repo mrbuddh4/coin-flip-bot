@@ -859,7 +859,7 @@ async function initBot() {
         const session = await models.BotSession.findByPk(sessionId);
         if (!session) {
           logger.error('Session not found', { sessionId, userId });
-          await ctx.answerCbQuery('❌ Session expired');
+          await ctx.answerCbQuery('❌ Session expired.', { show_alert: true });
           return;
         }
         
@@ -868,16 +868,19 @@ async function initBot() {
         const clickingUserId = parseInt(userId);
         
         if (sessionUserId !== clickingUserId) {
-          logger.error('Session user mismatch', { sessionId, sessionUserId, clickingUserId });
-          await ctx.answerCbQuery('❌ This button is for someone else');
+          logger.warn('start_flip_dm: unauthorized user clicked button', { sessionId, sessionUserId, clickingUserId });
+          await ctx.answerCbQuery('❌ Only the person who started this flip can use this button.', { show_alert: true });
           return;
         }
 
-        // Just acknowledge - the /start deeplink will handle token selection
-        await ctx.answerCbQuery('Opening Coin Flip...');
+        // Answer with the deep link so the bot opens in the user's DM
+        const botInfo = await ctx.telegram.getMe();
+        await ctx.answerCbQuery('Opening Coin Flip...', {
+          url: `https://t.me/${botInfo.username}?start=flip_${sessionId}`,
+        });
       } catch (error) {
         logger.error('Error starting flip in DM', error);
-        await ctx.answerCbQuery('❌ Error');
+        await ctx.answerCbQuery('❌ Error', { show_alert: true });
       }
     });
 
@@ -3408,7 +3411,7 @@ For each network (Paxeer & Solana) you need:
                 'Click below to set up your flip in DM (for privacy)',
                 parse_mode: 'HTML',
                 reply_markup: Markup.inlineKeyboard([
-                  [Markup.button.url('💬 Start in DM', `https://t.me/${botInfo.username}?start=flip_${session.id}`)],
+                  [Markup.button.callback('💬 Start in DM', `start_flip_dm_${session.id}`)],
                 ]).reply_markup,
               }
             );
@@ -3425,7 +3428,7 @@ For each network (Paxeer & Solana) you need:
             {
               parse_mode: 'HTML',
               reply_markup: Markup.inlineKeyboard([
-                [Markup.button.url('💬 Start in DM', `https://t.me/${botInfo.username}?start=flip_${session.id}`)],
+                [Markup.button.callback('💬 Start in DM', `start_flip_dm_${session.id}`)],
               ]).reply_markup,
             }
           );
