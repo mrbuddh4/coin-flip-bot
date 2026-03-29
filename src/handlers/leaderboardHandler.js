@@ -50,18 +50,25 @@ class LeaderboardHandler {
   static formatSection(title, winners, losers, symbol) {
     const fmt = n => Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 0 });
     const name = u => u.username ? `@${u.username}` : (u.firstName || 'Unknown');
-    let t = `${title}\n`;
+    const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+    let t = `${title}\n\n`;
     t += `🏆 <b>Top Winners</b>\n`;
     if (winners.length === 0) {
-      t += 'No winners yet\n';
+      t += '  —\n';
     } else {
-      winners.forEach((e, i) => { t += `  ${i + 1}. ${name(e.user)} +${fmt(e.net)} ${symbol}\n`; });
+      winners.forEach((e, i) => {
+        t += `  ${medals[i] || `${i + 1}.`} ${name(e.user)}\n`;
+        t += `      <b>+${fmt(e.net)} ${symbol}</b>\n`;
+      });
     }
-    t += `📉 <b>Top Losers</b>\n`;
+    t += `\n📉 <b>Top Losers</b>\n`;
     if (losers.length === 0) {
-      t += 'No losers yet\n';
+      t += '  —\n';
     } else {
-      [...losers].reverse().forEach((e, i) => { t += `  ${losers.length - i}. ${name(e.user)} -${fmt(e.net)} ${symbol}\n`; });
+      [...losers].reverse().forEach((e, i) => {
+        t += `  ${losers.length - i}. ${name(e.user)}\n`;
+        t += `      <b>-${fmt(e.net)} ${symbol}</b>\n`;
+      });
     }
     return t + '\n';
   }
@@ -99,10 +106,13 @@ class LeaderboardHandler {
       let leaderboardMessage = '';
       leaderboardMessage += this.formatSection('🟡 <b>SID LEADERBOARD</b> (Paxeer + Solana)', sid.winners, sid.losers, 'SID');
       leaderboardMessage += this.formatSection('🔵 <b>PAX LEADERBOARD</b> (Paxeer)', pax.winners, pax.losers, 'PAX');
+      leaderboardMessage += `━━━━━━━━━━━━━━━━\n`;
       leaderboardMessage += `🔥 <b>TOTAL BURNED</b>\n`;
-      leaderboardMessage += `  ${fmt(sidBurned)} SID | ${fmt(paxBurned)} PAX\n\n`;
+      leaderboardMessage += `  ${fmt(sidBurned)} SID\n`;
+      leaderboardMessage += `  ${fmt(paxBurned)} PAX\n\n`;
       leaderboardMessage += `📊 <b>TOTAL VOLUME</b>\n`;
-      leaderboardMessage += `  ${fmt(sidVolume)} SID | ${fmt(paxVolume)} PAX\n`;
+      leaderboardMessage += `  ${fmt(sidVolume)} SID\n`;
+      leaderboardMessage += `  ${fmt(paxVolume)} PAX\n`;
 
       // Try to send with image
       const fs = require('fs');

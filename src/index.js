@@ -3268,7 +3268,6 @@ For each network (Paxeer & Solana) you need:
 
   leaderboard: async (ctx) => {
     console.log('[HANDLER] /leaderboard called');
-    if (ctx.chat.type !== 'private') return;
     await LeaderboardHandler.showLeaderboard(ctx);
   },
 
