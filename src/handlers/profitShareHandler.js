@@ -210,13 +210,17 @@ class ProfitShareHandler {
 
       try {
         await sleep(1200);
+        // Native SOL accumulates in the bot wallet; only use devPrivateKey for SPL tokens.
+        const solSigningKey = pool.tokenAddress === 'native'
+          ? undefined
+          : (config.solana.devPrivateKey || undefined);
         const result = await blockchainManager.sendWinnings(
           'Solana',
           sendTokenAddress,
           profile.solanaWalletAddress,
           amount.toFixed(pool.tokenDecimals),
           pool.tokenDecimals,
-          config.solana.devPrivateKey || undefined
+          solSigningKey
         );
         totalSent += amount;
         successCount++;
@@ -451,13 +455,19 @@ class ProfitShareHandler {
 
         try {
           await sleep(1200); // ~50 tx/min to avoid RPC hammering
+          // Native PAX accumulates in the bot wallet during flips, so always
+          // use the bot wallet key for native distributions. devPrivateKey is
+          // only relevant for ERC20 tokens held in the dev wallet.
+          const signingKey = pool.tokenAddress === 'native'
+            ? undefined
+            : (config.evm.devPrivateKey || undefined);
           const result = await blockchainManager.sendWinnings(
             'EVM',
             sendTokenAddress,
             holder.address,
             amount.toFixed(pool.tokenDecimals),
             pool.tokenDecimals,
-            config.evm.devPrivateKey || undefined
+            signingKey
           );
           totalSent += amount;
           successCount++;
