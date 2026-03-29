@@ -537,14 +537,13 @@ async function initBot() {
               // Try to notify group
               try {
                 await bot.telegram.editMessageCaption(
+                  flipCheck.groupChatId,
+                  flipCheck.groupMessageId,
+                  null,
                   `❌ <b>Challenge Expired</b>\n\n` +
                   `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
                   `expired because no one accepted it.`,
-                  {
-                    chat_id: flipCheck.groupChatId,
-                    message_id: flipCheck.groupMessageId,
-                    parse_mode: 'HTML'
-                  }
+                  { parse_mode: 'HTML' }
                 );
               } catch (err) {
                 logger.warn('[startup-timeout] Failed to update group message', { flipId: flip.id, error: err.message });
@@ -620,14 +619,13 @@ async function initBot() {
 
                     try {
                       await bot.telegram.editMessageCaption(
+                        flipFinal.groupChatId,
+                        flipFinal.groupMessageId,
+                        null,
                         `❌ <b>Challenge Expired</b>\n\n` +
                         `The challenge for <b>${parseFloat(flipFinal.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipFinal.tokenSymbol}</b> ` +
                         `expired because no one accepted it.`,
-                        {
-                          chat_id: flipFinal.groupChatId,
-                          message_id: flipFinal.groupMessageId,
-                          parse_mode: 'HTML'
-                        }
+                        { parse_mode: 'HTML' }
                       );
                     } catch (err) {
                       logger.warn('[startup-timeout] Failed to update message on cancel', { flipId: flip.id, error: err.message });
