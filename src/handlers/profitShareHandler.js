@@ -269,7 +269,7 @@ class ProfitShareHandler {
     const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_ABI, provider);
 
     // ── Step 1: try Paxscan tokenholderlist (paginated) ──────────────────────
-    const PAXSCAN_BASE = process.env.PAXSCAN_API_URL || 'https://paxscan.io/api';
+    const PAXSCAN_BASE = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
     let paxscanAddresses = [];
     try {
       let page = 1;
@@ -286,25 +286,76 @@ class ProfitShareHandler {
         if (json.result.length < offset) break; // last page
         page++;
       }
+      if (paxscanAddresses.length > 0) {
+        logger.info('[ProfitShare] $FLIP holder addresses from Paxscan tokenholderlist', { count: paxscanAddresses.length });
+      } else {
+        logger.warn('[ProfitShare] Paxscan tokenholderlist returned no holders, will rely on eth_getLogs + DB');
+      }
     } catch (err) {
-      logger.warn('[ProfitShare] Paxscan tokenholderlist failed, using DB fallback', { error: err.message });
+      logger.warn('[ProfitShare] Paxscan tokenholderlist failed', { error: err.message });
+    }
+
+    // ── Step 1.5: eth_getLogs Transfer scan — catches holders Paxscan misses ─
+    // Scan all FLIP Transfer events to collect every address that ever received
+    // FLIP tokens. We then verify their current balance in Step 3.
+    const rpcAddresses = new Set(paxscanAddresses);
+    try {
+      const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+      const currentBlock = await provider.getBlockNumber();
+      const CHUNK = 50000;
+      let rpcNewCount = 0;
+
+      for (let fromBlock = 0; fromBlock <= currentBlock; fromBlock += CHUNK) {
+        const toBlock = Math.min(fromBlock + CHUNK - 1, currentBlock);
+        try {
+          const logs = await provider.getLogs({
+            address: FLIP_TOKEN_ADDRESS,
+            topics: [TRANSFER_TOPIC],
+            fromBlock,
+            toBlock,
+          });
+          for (const log of logs) {
+            // topics[2] is the 'to' address (indexed), zero-padded to 32 bytes
+            if (log.topics[2]) {
+              const addr = ('0x' + log.topics[2].slice(26)).toLowerCase();
+              if (/^0x[a-f0-9]{40}$/.test(addr) && !rpcAddresses.has(addr)) {
+                rpcAddresses.add(addr);
+                rpcNewCount++;
+              }
+            }
+          }
+        } catch (chunkErr) {
+          logger.warn('[ProfitShare] eth_getLogs chunk failed', { fromBlock, toBlock, error: chunkErr.message });
+        }
+      }
+
+      if (rpcNewCount > 0) {
+        logger.info('[ProfitShare] eth_getLogs discovered additional FLIP recipient addresses', {
+          newAddresses: rpcNewCount,
+          totalAfterScan: rpcAddresses.size,
+        });
+      } else {
+        logger.info('[ProfitShare] eth_getLogs scan complete, no new addresses beyond Paxscan', {
+          total: rpcAddresses.size,
+        });
+      }
+    } catch (err) {
+      logger.warn('[ProfitShare] eth_getLogs FLIP holder scan failed', { error: err.message });
     }
 
     // ── Step 2: merge with DB addresses (ensures manually-added ones are included) ─
     const dbRows = await models.FlipHolderAddress.findAll();
     const dbAddresses = dbRows.map(r => r.address.toLowerCase());
+    for (const addr of dbAddresses) rpcAddresses.add(addr);
 
-    const allAddresses = [...new Set([...paxscanAddresses, ...dbAddresses])];
+    const allAddresses = [...rpcAddresses];
 
-    if (paxscanAddresses.length > 0) {
-      logger.info('[ProfitShare] $FLIP holder addresses fetched', {
-        fromPaxscan: paxscanAddresses.length,
-        fromDb: dbAddresses.length,
-        total: allAddresses.length,
-      });
-    } else {
-      logger.warn('[ProfitShare] Paxscan returned no holders — using DB list only', { dbCount: dbAddresses.length });
-    }
+    logger.info('[ProfitShare] $FLIP holder addresses fetched', {
+      fromPaxscan: paxscanAddresses.length,
+      fromRpc: rpcAddresses.size - paxscanAddresses.length - dbAddresses.filter(a => !rpcAddresses.has(a)).length,
+      fromDb: dbAddresses.length,
+      total: allAddresses.length,
+    });
 
     // ── Step 3: verify on-chain balance for every address ────────────────────
     const holders = [];
