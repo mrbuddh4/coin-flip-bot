@@ -325,6 +325,12 @@ class ProfitShareHandler {
             }
           }
         } catch (chunkErr) {
+          // Some RPC nodes don't support ranged eth_getLogs (e.g. "maximum [from, to] blocks distance: 0").
+          // If this is one of those nodes, break immediately rather than retrying every chunk.
+          if (chunkErr.message && chunkErr.message.includes('blocks distance')) {
+            logger.warn('[ProfitShare] eth_getLogs not supported by this RPC node, skipping scan', { error: chunkErr.message });
+            break;
+          }
           logger.warn('[ProfitShare] eth_getLogs chunk failed', { fromBlock, toBlock, error: chunkErr.message });
         }
       }
