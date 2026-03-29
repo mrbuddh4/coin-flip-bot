@@ -6,6 +6,31 @@ const config = require('../config');
 const logger = require('../utils/logger');
 const ProfitShareHandler = require('./profitShareHandler');
 
+// Minimum native balance (in display units) to always keep in the bot wallet for gas.
+// Applies per-chain; irrelevant for ERC-20/SPL token flips.
+const GAS_RESERVE = parseFloat(process.env.BOT_GAS_RESERVE || '0.1');
+
+/**
+ * For native-token flips, cap `amount` so the bot wallet always retains at least
+ * GAS_RESERVE after the send. Returns the safe amount to send (may be 0).
+ */
+async function safeNativeAmount(network, amount) {
+  if (isNaN(amount) || amount <= 0) return 0;
+  try {
+    const bm = getBlockchainManager();
+    const handler = bm.getHandler(network);
+    const botAddress = bm.getBotWalletAddress(network);
+    const balObj = await handler.getNativeBalance(botAddress);
+    const balance = parseFloat(balObj.formatted);
+    const safe = balance - GAS_RESERVE;
+    if (safe <= 0) return 0;
+    return Math.min(amount, safe);
+  } catch (err) {
+    logger.warn('[safeNativeAmount] Could not check balance, sending as-is', { network, error: err.message });
+    return amount;
+  }
+}
+
 class ExecutionHandler {
   /**
    * Execute the coin flip once both deposits are confirmed
@@ -118,14 +143,22 @@ class ExecutionHandler {
       try {
         if (devWalletAddress) {
           const blockchainManager = getBlockchainManager();
-          const devFeeTx = await blockchainManager.sendWinnings(
-            flip.tokenNetwork,
-            flip.tokenAddress,
-            devWalletAddress,
-            devFeeAmount.toString(),
-            flip.tokenDecimals
-          );
-          logger.info('[executeFlip] Dev fee sent to dev wallet', { flipId, devFeeAmount, devWallet: devWalletAddress, txHash: devFeeTx.txHash });
+          // For native tokens, cap the send to preserve gas reserve in the bot wallet
+          const safeDevFee = flip.tokenAddress === 'NATIVE'
+            ? await safeNativeAmount(flip.tokenNetwork, devFeeAmount)
+            : devFeeAmount;
+          if (safeDevFee > 0) {
+            const devFeeTx = await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              flip.tokenAddress,
+              devWalletAddress,
+              safeDevFee.toString(),
+              flip.tokenDecimals
+            );
+            logger.info('[executeFlip] Dev fee sent to dev wallet', { flipId, devFeeAmount: safeDevFee, devWallet: devWalletAddress, txHash: devFeeTx.txHash });
+          } else {
+            logger.warn('[executeFlip] Skipped dev fee send — bot wallet below gas reserve', { flipId, devFeeAmount, gasReserve: GAS_RESERVE });
+          }
         } else {
           logger.warn('[executeFlip] No dev wallet configured, skipping on-chain dev fee send', { flipId });
         }
@@ -153,14 +186,18 @@ class ExecutionHandler {
         console.log(`[executeFlip] BURN FEE - Amount: ${burnFeeAmount}, To: ${burnAddress}, Token: ${flip.tokenAddress}`);
         const blockchainManager = getBlockchainManager();
         logger.info('[executeFlip] About to call sendWinnings for burn', { burnAddress, burnFeeAmount });
+        // For native tokens, cap the send to preserve gas reserve
+        const safeBurnFee = flip.tokenAddress === 'NATIVE'
+          ? await safeNativeAmount(flip.tokenNetwork, burnFeeAmount)
+          : burnFeeAmount;
         const burnResult = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
           flip.tokenAddress,
           burnAddress,
-          burnFeeAmount.toString(),
+          safeBurnFee.toString(),
           flip.tokenDecimals
         );
-        logger.info('[executeFlip] Burn fee SENT', { flipId, burnAddress: `${burnAddress.substring(0, 10)}...`, txHash: burnResult.txHash, amount: burnFeeAmount });
+        logger.info('[executeFlip] Burn fee SENT', { flipId, burnAddress: `${burnAddress.substring(0, 10)}...`, txHash: burnResult.txHash, amount: safeBurnFee });
         console.log(`[SUCCESS] Burn fee sent with txHash: ${burnResult.txHash}`);
       } catch (burnFeeError) {
         logger.error('[executeFlip] ERROR SENDING BURN FEE (attempt 1)', { flipId, burnAddress, burnFeeAmount, error: burnFeeError.message });
@@ -519,14 +556,22 @@ class ExecutionHandler {
       let devTx = null;
       try {
         if (devWallet) {
-          devTx = await blockchainManager.sendWinnings(
-            flip.tokenNetwork,
-            flip.tokenAddress,
-            devWallet,
-            devAmount,
-            flip.tokenDecimals
-          );
-          logger.info('[confirmPayoutAddress] Dev fee sent to dev wallet', { flipId, amount: devAmount, devWallet, txHash: devTx.txHash });
+          // For native tokens, cap the send to preserve gas reserve in the bot wallet
+          const safeDevAmount = flip.tokenAddress === 'NATIVE'
+            ? await safeNativeAmount(flip.tokenNetwork, parseFloat(devAmount))
+            : parseFloat(devAmount);
+          if (safeDevAmount > 0) {
+            devTx = await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              flip.tokenAddress,
+              devWallet,
+              safeDevAmount.toFixed(flip.tokenDecimals),
+              flip.tokenDecimals
+            );
+            logger.info('[confirmPayoutAddress] Dev fee sent to dev wallet', { flipId, amount: safeDevAmount, devWallet, txHash: devTx.txHash });
+          } else {
+            logger.warn('[confirmPayoutAddress] Skipped dev fee send — bot wallet below gas reserve', { flipId, devAmount, gasReserve: GAS_RESERVE });
+          }
         } else {
           logger.warn('[confirmPayoutAddress] No dev wallet configured, skipping on-chain dev fee send', { flipId });
         }
@@ -547,11 +592,15 @@ class ExecutionHandler {
       let burnTx = null;
       try {
         if (flip.tokenNetwork === 'Solana') await new Promise(r => setTimeout(r, 15000));
+        // For native tokens, cap the send to preserve gas reserve
+        const safeBurnAmount = flip.tokenAddress === 'NATIVE'
+          ? await safeNativeAmount(flip.tokenNetwork, parseFloat(burnAmount))
+          : parseFloat(burnAmount);
         burnTx = await blockchainManager.sendWinnings(
           flip.tokenNetwork,
           flip.tokenAddress,
           burnAddress,
-          burnAmount,
+          safeBurnAmount.toFixed(flip.tokenDecimals),
           flip.tokenDecimals
         );
       } catch (burnFeeError) {
