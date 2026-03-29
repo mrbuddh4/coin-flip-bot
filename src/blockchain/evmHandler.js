@@ -1,6 +1,10 @@
 const { ethers } = require('ethers');
 const config = require('../config');
 
+// Use paxscan.io (public explorer) for all API queries — it indexes transactions faster
+// than paxscan.paxeer.app and supports the full Etherscan-compatible API
+const PAXSCAN_API = 'https://paxscan.io/api';
+
 class EVMHandler {
   constructor() {
     this.provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
@@ -215,7 +219,7 @@ class EVMHandler {
           // Special handling: if looking for a CONTRACT token but none found, also check native transfers
           // This catches cases where user sends native token (PAX) instead of ERC20 (SID)
           if (tokenAddress && tokenAddress !== 'NATIVE') {
-            paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+            paxscanUrl = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
             
             console.log('[getRecentDepositSender] Querying Paxscan API for expected token', { url: paxscanUrl });
             
@@ -235,7 +239,7 @@ class EVMHandler {
                 expectedToken: tokenAddress.toLowerCase(),
               });
               
-              paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+              paxscanUrl = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
               console.log('[getRecentDepositSender] Querying Paxscan API for all ERC20 tokens (wrong token detection)', { url: paxscanUrl });
               
               response = await fetch(paxscanUrl);
@@ -255,7 +259,7 @@ class EVMHandler {
                 expectedToken: tokenAddress.toLowerCase(),
               });
               
-              paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+              paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
               console.log('[getRecentDepositSender] Querying Paxscan API for native transfers', { url: paxscanUrl });
               
               response = await fetch(paxscanUrl);
@@ -269,7 +273,7 @@ class EVMHandler {
             }
           } else if (tokenAddress === 'NATIVE') {
             // Looking for native transfers directly
-            paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+            paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
             console.log('[getRecentDepositSender] Querying Paxscan API for native token transfers', { url: paxscanUrl });
             
             response = await fetch(paxscanUrl);
@@ -415,7 +419,7 @@ class EVMHandler {
                   expectedToken: tokenAddress.toLowerCase(),
                 });
                 
-                const paxscanUrlAllTokens = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+                const paxscanUrlAllTokens = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
                 
                 try {
                   const allTokensResponse = await fetch(paxscanUrlAllTokens);
@@ -482,7 +486,7 @@ class EVMHandler {
                   botWallet: botWalletAddress,
                 });
                 
-                const paxscanUrlNative = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+                const paxscanUrlNative = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
                 
                 try {
                   const nativeResponse = await fetch(paxscanUrlNative);
@@ -815,7 +819,7 @@ class EVMHandler {
       } else if (tokenAddress === 'NATIVE') {
         // Handle native PAX token deposits via txlist API
         try {
-          const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+          const paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
           console.log('[getRecentDepositSender] Querying Paxscan API for native token transfers', { url: paxscanUrl });
 
           const response = await fetch(paxscanUrl);
@@ -921,7 +925,7 @@ class EVMHandler {
       });
 
       try {
-        const paxscanUrl = `https://paxscan.paxeer.app/api?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+        const paxscanUrl = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
         
         const response = await fetch(paxscanUrl);
         const data = await response.json();
@@ -1039,7 +1043,7 @@ class EVMHandler {
           expectedToken: expectedTokenAddress,
         });
 
-        const nativeUrl = `https://paxscan.paxeer.app/api?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
+        const nativeUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${currentBlock}&sort=desc`;
         const nativeResponse = await fetch(nativeUrl);
         const nativeData = await nativeResponse.json();
 
