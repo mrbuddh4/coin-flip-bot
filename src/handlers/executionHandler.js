@@ -211,7 +211,7 @@ class ExecutionHandler {
             logger.error('[executeFlip] ERROR SENDING BURN FEE (retry failed)', { flipId, burnAddress, burnFeeAmount, error: burnRetryError.message });
           }
         }
-      })();
+      })().catch(err => logger.error('[executeFlip] Unhandled error in background fee send', { flipId, error: err.message }));
 
       // Update flip record with result
       flip.flipResult = flipResultEnum;
@@ -648,7 +648,7 @@ class ExecutionHandler {
         } catch (feeRecordError) {
           logger.error('[confirmPayoutAddress] Error recording fee transactions', { flipId, error: feeRecordError.message });
         }
-      })();
+      })().catch(err => logger.error('[confirmPayoutAddress] Unhandled error in background fee send', { flipId, error: err.message }));
 
       try {
         // Record winner transaction
