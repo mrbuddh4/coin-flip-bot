@@ -244,8 +244,11 @@ class ProfitShareHandler {
   }
 
   /**
-   * Fetch all known $FLIP holders from the DB, then query each address's balance
-   * on-chain via balanceOf. This is more reliable than Paxscan's tokenholderlist API.
+   * Fetch all $FLIP holders, querying their on-chain balances.
+   *
+   * Primary source: Paxscan tokenholderlist API (paginated).
+   * Fallback: DB FlipHolderAddress table (manually/auto-registered addresses).
+   *
    * Returns array of { address: string, balance: BigInt }.
    */
   static async getFlipHolders() {
@@ -253,24 +256,58 @@ class ProfitShareHandler {
     const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
     const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_ABI, provider);
 
-    const rows = await models.FlipHolderAddress.findAll();
-    const holders = [];
+    // ── Step 1: try Paxscan tokenholderlist (paginated) ──────────────────────
+    const PAXSCAN_BASE = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
+    let paxscanAddresses = [];
+    try {
+      let page = 1;
+      const offset = 500;
+      while (true) {
+        const url = `${PAXSCAN_BASE}?module=token&action=tokenholderlist&contractaddress=${FLIP_TOKEN_ADDRESS}&page=${page}&offset=${offset}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        const json = await res.json();
+        if (json.status !== '1' || !Array.isArray(json.result) || json.result.length === 0) break;
+        for (const item of json.result) {
+          const addr = (item.TokenHolderAddress || item.address || '').toLowerCase();
+          if (addr && /^0x[a-f0-9]{40}$/.test(addr)) paxscanAddresses.push(addr);
+        }
+        if (json.result.length < offset) break; // last page
+        page++;
+      }
+    } catch (err) {
+      logger.warn('[ProfitShare] Paxscan tokenholderlist failed, using DB fallback', { error: err.message });
+    }
 
-    for (const row of rows) {
-      const addr = row.address.toLowerCase();
+    // ── Step 2: merge with DB addresses (ensures manually-added ones are included) ─
+    const dbRows = await models.FlipHolderAddress.findAll();
+    const dbAddresses = dbRows.map(r => r.address.toLowerCase());
+
+    const allAddresses = [...new Set([...paxscanAddresses, ...dbAddresses])];
+
+    if (paxscanAddresses.length > 0) {
+      logger.info('[ProfitShare] $FLIP holder addresses fetched', {
+        fromPaxscan: paxscanAddresses.length,
+        fromDb: dbAddresses.length,
+        total: allAddresses.length,
+      });
+    } else {
+      logger.warn('[ProfitShare] Paxscan returned no holders — using DB list only', { dbCount: dbAddresses.length });
+    }
+
+    // ── Step 3: verify on-chain balance for every address ────────────────────
+    const holders = [];
+    for (const addr of allAddresses) {
       if (EXCLUDED_ADDRESSES.has(addr)) continue;
       try {
-        const balance = await contract.balanceOf(row.address);
-        if (balance > 0n) {
-          holders.push({ address: row.address, balance });
-        }
+        const balance = await contract.balanceOf(addr);
+        if (balance > 0n) holders.push({ address: addr, balance });
       } catch (err) {
         logger.warn('[ProfitShare] Could not fetch balanceOf for holder', { address: addr, error: err.message });
       }
-      await sleep(200); // Avoid RPC rate limiting
+      await sleep(200);
     }
 
-    logger.info('[ProfitShare] $FLIP holders fetched (on-chain balanceOf)', { registered: rows.length, withBalance: holders.length });
+    logger.info('[ProfitShare] $FLIP holders with on-chain balance', { checked: allAddresses.length, withBalance: holders.length });
     return holders;
   }
 
