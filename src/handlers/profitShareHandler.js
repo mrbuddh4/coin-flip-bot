@@ -717,10 +717,14 @@ class ProfitShareHandler {
           return lastDate < todayUtc && parseFloat(p.pendingAmount) > MIN_PER_HOLDER;
         });
         if (overdue) {
-          logger.info('[ProfitShare] Overdue distribution detected on startup, running now');
-          this.distribute(bot, 'startup-catchup').catch(err =>
-            logger.error('[ProfitShare] Startup catchup distribution failed', { error: err.message })
-          );
+          if (process.env.PROFIT_SHARE_SKIP_CATCHUP === 'true') {
+            logger.info('[ProfitShare] Overdue distribution detected but PROFIT_SHARE_SKIP_CATCHUP=true — skipping');
+          } else {
+            logger.info('[ProfitShare] Overdue distribution detected on startup, running now');
+            this.distribute(bot, 'startup-catchup').catch(err =>
+              logger.error('[ProfitShare] Startup catchup distribution failed', { error: err.message })
+            );
+          }
         }
       })
       .catch(() => {});
