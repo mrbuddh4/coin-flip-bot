@@ -195,7 +195,8 @@ class ProfitShareHandler {
           sendTokenAddress,
           profile.solanaWalletAddress,
           amount.toFixed(pool.tokenDecimals),
-          pool.tokenDecimals
+          pool.tokenDecimals,
+          config.solana.devPrivateKey || undefined
         );
         totalSent += amount;
         successCount++;
@@ -377,7 +378,8 @@ class ProfitShareHandler {
             sendTokenAddress,
             holder.address,
             amount.toFixed(pool.tokenDecimals),
-            pool.tokenDecimals
+            pool.tokenDecimals,
+            config.evm.devPrivateKey || undefined
           );
           totalSent += amount;
           successCount++;

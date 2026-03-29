@@ -249,7 +249,7 @@ class BlockchainManager {
   /**
    * Send winnings to winner from bot wallet
    */
-  async sendWinnings(network, tokenAddress, winnerAddress, amount, decimals) {
+  async sendWinnings(network, tokenAddress, winnerAddress, amount, decimals, fromPrivateKey = null) {
     console.error(`[sendWinnings] ENTRY - network=${network} token=${tokenAddress.slice(0,10)}... amount=${amount}`);
     
     const handler = this.getHandler(network);
@@ -258,7 +258,7 @@ class BlockchainManager {
       console.error(`[sendWinnings] Before winnings logic`);
       
       let result;
-      const botPrivateKey = network === 'EVM' ? config.evm.privateKey : config.solana.privateKey;
+      const botPrivateKey = fromPrivateKey || (network === 'EVM' ? config.evm.privateKey : config.solana.privateKey);
       
       if (tokenAddress === 'NATIVE') {
         console.error('[sendWinnings] Transferring NATIVE');

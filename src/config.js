@@ -19,6 +19,7 @@ module.exports = {
     privateKey: process.env.EVM_BOT_PRIVATE_KEY || process.env.EVM_PRIVATE_KEY,
     walletAddress: process.env.EVM_BOT_WALLET_ADDRESS, // Optional: explicit address (derived from private key if not set)
     devWallet: process.env.EVM_DEV_WALLET,
+    devPrivateKey: process.env.EVM_DEV_PRIVATE_KEY,
   },
   solana: {
     rpcUrl: process.env.SOLANA_RPC_URL,
@@ -28,6 +29,7 @@ module.exports = {
     walletAddress: process.env.SOL_BOT_WALLET_ADDRESS, // Optional: explicit address (derived from private key if not set)
     sidTokenATA: process.env.SOL_SID_TOKEN_ATA || 'BoyaYRYtLtCbKdGFLP3aMhdPm3asfUCMbeo7sh1YHfzk', // Pre-computed ATA for SID token
     devWallet: process.env.SOL_DEV_WALLET,
+    devPrivateKey: process.env.SOL_DEV_PRIVATE_KEY,
   },
   bot: {
     walletAddress: process.env.BOT_WALLET_ADDRESS,
