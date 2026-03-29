@@ -7,7 +7,7 @@ const config = require('../config');
 const logger = require('../utils/logger');
 
 const FLIP_TOKEN_ADDRESS = process.env.FLIP_TOKEN_ADDRESS || '0x2aA5968F710080ea453e7e09E59d769E8C470fac';
-const DISTRIBUTION_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DISTRIBUTION_INTERVAL_MS = 24 * 60 * 60 * 1000; // kept for reference, scheduler now uses UTC midnight
 const MIN_PER_HOLDER = 0.001; // Skip sending dust amounts below this
 
 const ERC20_ABI = [
@@ -513,19 +513,20 @@ class ProfitShareHandler {
   }
 
   /**
-   * Start the 24-hour automatic distribution scheduler.
-   * Also runs immediately on startup if the last distribution was >24h ago.
+   * Start the daily distribution scheduler, firing at 00:00 UTC every day.
+   * Also runs immediately on startup if the last distribution was missed today.
    */
   static startScheduler(bot) {
-    logger.info('[ProfitShare] Starting 24h distribution scheduler');
+    logger.info('[ProfitShare] Starting daily 00:00 UTC distribution scheduler');
 
-    // On startup: trigger immediately if any pool is overdue
+    // On startup: trigger immediately if any pool is overdue (last run was not today UTC)
     this.getPoolStatus()
       .then(pools => {
+        const todayUtc = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
         const overdue = pools.some(p => {
           if (!p.lastDistributedAt) return parseFloat(p.pendingAmount) > MIN_PER_HOLDER;
-          const hoursSince = (Date.now() - new Date(p.lastDistributedAt).getTime()) / 3600000;
-          return hoursSince >= 24 && parseFloat(p.pendingAmount) > MIN_PER_HOLDER;
+          const lastDate = new Date(p.lastDistributedAt).toISOString().slice(0, 10);
+          return lastDate < todayUtc && parseFloat(p.pendingAmount) > MIN_PER_HOLDER;
         });
         if (overdue) {
           logger.info('[ProfitShare] Overdue distribution detected on startup, running now');
@@ -534,15 +535,33 @@ class ProfitShareHandler {
           );
         }
       })
-      .catch(() => {}); // Ignore errors during startup check
+      .catch(() => {});
 
-    setInterval(async () => {
-      try {
-        await this.distribute(bot, 'scheduler');
-      } catch (err) {
-        logger.error('[ProfitShare] Scheduled distribution failed', { error: err.message });
-      }
-    }, DISTRIBUTION_INTERVAL_MS);
+    // Schedule next and all subsequent 00:00 UTC runs
+    const scheduleNext = () => {
+      const now = new Date();
+      const nextMidnight = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + 1, // tomorrow
+        0, 0, 0, 0
+      ));
+      const msUntilMidnight = nextMidnight.getTime() - now.getTime();
+      logger.info('[ProfitShare] Next distribution scheduled', {
+        at: nextMidnight.toISOString(),
+        inMs: msUntilMidnight,
+      });
+      setTimeout(async () => {
+        try {
+          await this.distribute(bot, 'scheduler');
+        } catch (err) {
+          logger.error('[ProfitShare] Scheduled distribution failed', { error: err.message });
+        }
+        scheduleNext(); // reschedule for the following day
+      }, msUntilMidnight);
+    };
+
+    scheduleNext();
   }
 }
 
