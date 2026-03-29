@@ -130,6 +130,7 @@ class ProfitShareHandler {
     const { models } = getDB();
     const { Op } = require('sequelize');
     let pending = parseFloat(pool.pendingAmount);
+    const txHashes = [];
 
     // If the Solana dev wallet private key is available, use its actual on-chain
     // balance as the distribution amount (fees are sent there after each flip).
@@ -230,6 +231,7 @@ class ProfitShareHandler {
         );
         totalSent += amount;
         successCount++;
+        if (result.txHash) txHashes.push(result.txHash);
         logger.info('[ProfitShare] Sent Solana share to registered user', {
           userId: profile.userId,
           holdingWallet: holdingAddr,
@@ -250,7 +252,7 @@ class ProfitShareHandler {
       }
     }
 
-    return { totalSent, successCount, failCount };
+    return { totalSent, successCount, failCount, txHashes };
   }
 
   /**
@@ -458,6 +460,7 @@ class ProfitShareHandler {
       let totalSent = 0;
       let successCount = 0;
       let failCount = 0;
+      const txHashes = [];
 
       for (const holder of holders) {
         const share = Number(holder.balance) / Number(effectiveSupply);
@@ -482,6 +485,7 @@ class ProfitShareHandler {
           );
           totalSent += amount;
           successCount++;
+          if (result.txHash) txHashes.push(result.txHash);
           logger.info('[ProfitShare] Sent EVM share to holder', {
             holder: holder.address,
             amount,
@@ -505,7 +509,7 @@ class ProfitShareHandler {
       pool.lastDistributedAt = new Date();
       await pool.save();
 
-      results.push({ symbol: pool.tokenSymbol, network: 'EVM', totalSent, successCount, failCount });
+      results.push({ symbol: pool.tokenSymbol, network: 'EVM', totalSent, successCount, failCount, txHashes, tokenAddress: pool.tokenAddress });
       logger.info('[ProfitShare] EVM pool distribution complete', {
         symbol: pool.tokenSymbol, totalSent, successCount, failCount,
         remainingPending: pool.pendingAmount,
@@ -519,18 +523,18 @@ class ProfitShareHandler {
 
       logger.info('[ProfitShare] Distributing Solana pool', { symbol: pool.tokenSymbol, pending });
 
-      const { totalSent, successCount, failCount } =
+      const { totalSent: sSent, successCount: sSuc, failCount: sFail, txHashes: sTxHashes } =
         await this.distributeToRegisteredSolanaHolders(pool, effectiveSupply);
 
-      const remaining = Math.max(0, pending - totalSent);
+      const remaining = Math.max(0, parseFloat(pool.pendingAmount) - sSent);
       pool.pendingAmount = remaining < MIN_PER_HOLDER ? '0' : remaining.toString();
-      pool.totalDistributed = (parseFloat(pool.totalDistributed) + totalSent).toString();
+      pool.totalDistributed = (parseFloat(pool.totalDistributed) + sSent).toString();
       pool.lastDistributedAt = new Date();
       await pool.save();
 
-      results.push({ symbol: pool.tokenSymbol, network: 'Solana', totalSent, successCount, failCount });
+      results.push({ symbol: pool.tokenSymbol, network: 'Solana', totalSent: sSent, successCount: sSuc, failCount: sFail, txHashes: sTxHashes || [], tokenAddress: pool.tokenAddress });
       logger.info('[ProfitShare] Solana pool distribution complete', {
-        symbol: pool.tokenSymbol, totalSent, successCount, failCount,
+        symbol: pool.tokenSymbol, totalSent: sSent, successCount: sSuc, failCount: sFail,
         remainingPending: pool.pendingAmount,
       });
     }
@@ -539,8 +543,55 @@ class ProfitShareHandler {
       return { distributed: false, reason: 'All pools skipped (no holders found or below minimum)' };
     }
 
-    // Notify admins via Telegram
+    // Broadcast to all active group chats and notify admins
     if (bot) {
+      const { models: _models } = getDB();
+      const { Op: _Op } = require('sequelize');
+
+      // Gather distinct group chats that have had a flip in the last 30 days
+      const recentGroups = await _models.CoinFlip.findAll({
+        attributes: [[_models.sequelize.fn('DISTINCT', _models.sequelize.col('groupChatId')), 'groupChatId']],
+        where: {
+          groupChatId: { [_Op.not]: null },
+          createdAt: { [_Op.gte]: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+        },
+        raw: true,
+      });
+      const groupIds = recentGroups.map(r => r.groupChatId).filter(Boolean);
+
+      // Build per-pool lines with Paxscan links
+      const PAXSCAN = 'https://paxscan.paxeer.app';
+      const poolLines = results.map(r => {
+        const amountStr = r.totalSent > 0 ? r.totalSent.toLocaleString('en-US', { maximumFractionDigits: 4 }) : '0';
+        if (r.totalSent <= 0) return null;
+        let explorerLink;
+        if (r.network === 'EVM') {
+          const devWallet = config.evm.devWallet || '';
+          explorerLink = r.tokenAddress === 'native'
+            ? `${PAXSCAN}/address/${devWallet}`
+            : `${PAXSCAN}/token/${r.tokenAddress}?a=${devWallet}`;
+        } else {
+          // Solana: link to Solscan for the dev wallet
+          const devWallet = config.solana.devWallet || '';
+          explorerLink = `https://solscan.io/account/${devWallet}`;
+        }
+        return `• <b>${amountStr} ${r.symbol}</b> → ${r.successCount} holders  <a href="${explorerLink}">🔗 View txs</a>`;
+      }).filter(Boolean);
+
+      if (poolLines.length > 0) {
+        const groupMsg =
+          `💰 <b>$FLIP Profit Share Distributed!</b>\n\n` +
+          poolLines.join('\n') +
+          `\n\n🪙 Every $FLIP holder earns a share of every coin flip!`;
+
+        for (const groupId of groupIds) {
+          try {
+            await bot.telegram.sendMessage(groupId, groupMsg, { parse_mode: 'HTML', disable_web_page_preview: true });
+          } catch (_) { /* group may have removed the bot */ }
+        }
+      }
+
+      // Admin DM summary (with per-pool tx counts)
       const adminIds = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
       const summary = results
         .map(r => `• [${r.network}] ${r.totalSent.toFixed(4)} ${r.symbol} → ${r.successCount} recipients (${r.failCount} failed)`)
