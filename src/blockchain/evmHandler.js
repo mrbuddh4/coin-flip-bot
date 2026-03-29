@@ -1,9 +1,7 @@
 const { ethers } = require('ethers');
 const config = require('../config');
 
-// Use paxscan.io (public explorer) for all API queries — it indexes transactions faster
-// than paxscan.paxeer.app and supports the full Etherscan-compatible API
-const PAXSCAN_API = 'https://paxscan.io/api';
+const PAXSCAN_API = 'https://paxscan.paxeer.app/api';
 
 class EVMHandler {
   constructor() {
@@ -815,6 +813,82 @@ class EVMHandler {
           }
         } catch (paxscanErr) {
           console.error('[getRecentDepositSender] Paxscan API query failed', { error: paxscanErr.message });
+
+          // Paxscan returned non-JSON (e.g. HTML error page) — fall back to eth_getLogs directly
+          if (knownSender && tokenAddress && tokenAddress !== 'NATIVE') {
+            try {
+              console.log('[getRecentDepositSender] Paxscan unavailable — falling back to eth_getLogs', {
+                targetSender: knownSender.toLowerCase(),
+                tokenAddress,
+                fromBlock,
+              });
+
+              const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+              const senderTopic = ethers.zeroPadValue(knownSender.toLowerCase(), 32);
+              const recipientTopic = ethers.zeroPadValue(botWalletAddress.toLowerCase(), 32);
+
+              const rawLogs = await this.provider.getLogs({
+                address: tokenAddress,
+                topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
+                fromBlock,
+                toBlock: 'latest',
+              });
+
+              console.log('[getRecentDepositSender] eth_getLogs result (Paxscan unavailable)', { logCount: rawLogs.length, tokenAddress });
+
+              let logsTotal = 0;
+              let logsLatestTx = null;
+
+              for (const log of rawLogs) {
+                const rawValue = BigInt(log.data);
+                const txAmount = parseFloat(ethers.formatUnits(rawValue, decimals));
+                const blockNum = typeof log.blockNumber === 'bigint' ? Number(log.blockNumber) : log.blockNumber;
+
+                let txTimestamp = null;
+                try {
+                  const block = await this.provider.getBlock(blockNum);
+                  txTimestamp = block?.timestamp ?? null;
+                } catch (_) { /* skip timestamp check on block fetch failure */ }
+
+                const isAfterFlipCreation = !flipCreatedAtSeconds || !txTimestamp || txTimestamp >= flipCreatedAtSeconds;
+                if (!isAfterFlipCreation) {
+                  console.log('[getRecentDepositSender] eth_getLogs (Paxscan fallback): skipping transfer before flip creation', {
+                    txTimestamp, flipCreatedAtSeconds, txHash: log.transactionHash,
+                  });
+                  continue;
+                }
+
+                if (!logsLatestTx) logsLatestTx = { hash: log.transactionHash, blockNumber: blockNum };
+                logsTotal += txAmount;
+
+                console.log('[getRecentDepositSender] eth_getLogs (Paxscan fallback): matched Transfer event', {
+                  from: knownSender.toLowerCase(),
+                  to: botWalletAddress.toLowerCase(),
+                  amount: txAmount,
+                  txHash: log.transactionHash,
+                  blockNumber: blockNum,
+                });
+              }
+
+              if (logsLatestTx) {
+                console.log('[getRecentDepositSender] eth_getLogs fallback succeeded (Paxscan was unavailable)', {
+                  totalAmount: logsTotal,
+                });
+                return {
+                  sender: knownSender.toLowerCase(),
+                  amount: logsTotal.toString(),
+                  transactionHash: logsLatestTx.hash,
+                  blockNumber: logsLatestTx.blockNumber,
+                  transferCount: 1,
+                  hasWrongTokens: false,
+                  wrongToken: null,
+                  amountIsDisplayFormat: true,
+                };
+              }
+            } catch (logsErr) {
+              console.error('[getRecentDepositSender] eth_getLogs fallback also failed', { error: logsErr.message });
+            }
+          }
         }
       } else if (tokenAddress === 'NATIVE') {
         // Handle native PAX token deposits via txlist API
