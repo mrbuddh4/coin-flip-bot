@@ -113,8 +113,23 @@ class ExecutionHandler {
         burnAddress: `${burnAddress.substring(0, 10)}...`,
       });
       
-      // Accumulate 5% dev fee into distribution pool for $FLIP holder payouts (24h scheduler)
+      // Send 5% dev fee to dev wallet on-chain, then accumulate in DB for midnight distribution
+      const devWalletAddress = flip.tokenNetwork === 'EVM' ? config.evm.devWallet : config.solana.devWallet;
       try {
+        if (devWalletAddress) {
+          const blockchainManager = getBlockchainManager();
+          const devFeeTx = await blockchainManager.sendWinnings(
+            flip.tokenNetwork,
+            flip.tokenAddress,
+            devWalletAddress,
+            devFeeAmount.toString(),
+            flip.tokenDecimals
+          );
+          logger.info('[executeFlip] Dev fee sent to dev wallet', { flipId, devFeeAmount, devWallet: devWalletAddress, txHash: devFeeTx.txHash });
+        } else {
+          logger.warn('[executeFlip] No dev wallet configured, skipping on-chain dev fee send', { flipId });
+        }
+        // Accumulate in DB so the midnight scheduler knows how much to distribute
         await ProfitShareHandler.accumulateFee(
           flip.tokenAddress,
           flip.tokenSymbol,
@@ -124,7 +139,7 @@ class ExecutionHandler {
         );
         logger.info('[executeFlip] Dev fee accumulated for $FLIP distribution', { flipId, devFeeAmount, token: flip.tokenSymbol, network: flip.tokenNetwork });
       } catch (devFeeError) {
-        logger.error('[executeFlip] ERROR accumulating dev fee', { flipId, devFeeAmount, error: devFeeError.message });
+        logger.error('[executeFlip] ERROR processing dev fee', { flipId, devFeeAmount, error: devFeeError.message });
       }
       
       // Send 5% to burn address
@@ -499,9 +514,23 @@ class ExecutionHandler {
         flip.tokenDecimals
       );
 
-      // Accumulate 5% dev fee into distribution pool for $FLIP holder payouts (24h scheduler)
+      // Send 5% dev fee to dev wallet on-chain, then accumulate in DB for midnight distribution
+      const devWallet = flip.tokenNetwork === 'EVM' ? config.evm.devWallet : config.solana.devWallet;
       let devTx = null;
       try {
+        if (devWallet) {
+          devTx = await blockchainManager.sendWinnings(
+            flip.tokenNetwork,
+            flip.tokenAddress,
+            devWallet,
+            devAmount,
+            flip.tokenDecimals
+          );
+          logger.info('[confirmPayoutAddress] Dev fee sent to dev wallet', { flipId, amount: devAmount, devWallet, txHash: devTx.txHash });
+        } else {
+          logger.warn('[confirmPayoutAddress] No dev wallet configured, skipping on-chain dev fee send', { flipId });
+        }
+        // Accumulate in DB so the midnight scheduler knows how much to distribute
         await ProfitShareHandler.accumulateFee(
           flip.tokenAddress,
           flip.tokenSymbol,
@@ -511,7 +540,7 @@ class ExecutionHandler {
         );
         logger.info('[confirmPayoutAddress] Dev fee accumulated for $FLIP distribution', { flipId, amount: devAmount, token: flip.tokenSymbol, network: flip.tokenNetwork });
       } catch (devFeeError) {
-        logger.error('[confirmPayoutAddress] ERROR accumulating dev fee', { flipId, devAmount, error: devFeeError.message });
+        logger.error('[confirmPayoutAddress] ERROR processing dev fee', { flipId, devAmount, error: devFeeError.message });
       }
 
       // Send burn fee (5%)

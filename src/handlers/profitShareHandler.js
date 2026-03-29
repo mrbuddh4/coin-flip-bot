@@ -132,19 +132,26 @@ class ProfitShareHandler {
     let pending = parseFloat(pool.pendingAmount);
 
     // If the Solana dev wallet private key is available, use its actual on-chain
-    // token balance as the distribution amount.
-    if (config.solana.devPrivateKey && config.solana.devWallet && pool.tokenAddress !== 'native') {
+    // balance as the distribution amount (fees are sent there after each flip).
+    if (config.solana.devPrivateKey && config.solana.devWallet) {
       try {
         const { getBlockchainManager } = require('../blockchain/manager');
         const solHandler = getBlockchainManager().getHandler('Solana');
-        const devBal = await solHandler.getTokenBalance(pool.tokenAddress, config.solana.devWallet);
-        if (devBal.formatted > MIN_PER_HOLDER) {
+        let devBalFormatted;
+        if (pool.tokenAddress === 'native') {
+          const devBal = await solHandler.getNativeBalance(config.solana.devWallet);
+          devBalFormatted = devBal.formatted;
+        } else {
+          const devBal = await solHandler.getTokenBalance(pool.tokenAddress, config.solana.devWallet);
+          devBalFormatted = devBal.formatted;
+        }
+        if (devBalFormatted > MIN_PER_HOLDER) {
           logger.info('[ProfitShare] Using Solana dev wallet on-chain balance', {
             devWallet: config.solana.devWallet,
-            balance: devBal.formatted,
+            balance: devBalFormatted,
             symbol: pool.tokenSymbol,
           });
-          pending = devBal.formatted;
+          pending = devBalFormatted;
         }
       } catch (err) {
         logger.warn('[ProfitShare] Could not fetch Solana dev wallet balance, falling back to pool amount', { error: err.message });
@@ -210,10 +217,9 @@ class ProfitShareHandler {
 
       try {
         await sleep(1200);
-        // Native SOL accumulates in the bot wallet; only use devPrivateKey for SPL tokens.
-        const solSigningKey = pool.tokenAddress === 'native'
-          ? undefined
-          : (config.solana.devPrivateKey || undefined);
+        // All fees are sent to the dev wallet after each flip, so always
+        // sign distributions with the dev wallet key.
+        const solSigningKey = config.solana.devPrivateKey || undefined;
         const result = await blockchainManager.sendWinnings(
           'Solana',
           sendTokenAddress,
@@ -414,12 +420,20 @@ class ProfitShareHandler {
       // balance as the distribution amount so accumulated tokens are distributed
       // directly rather than relying solely on the DB pool counter.
       let pending = parseFloat(pool.pendingAmount);
-      if (config.evm.devPrivateKey && config.evm.devWallet && pool.tokenAddress !== 'native') {
+      // Use the dev wallet's actual on-chain balance as the distribution amount.
+      // This accounts for fees that were sent on-chain after each flip.
+      if (config.evm.devPrivateKey && config.evm.devWallet) {
         try {
           const _provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
-          const _token = new ethers.Contract(pool.tokenAddress, ERC20_ABI, _provider);
-          const devBal = await _token.balanceOf(config.evm.devWallet);
-          const devBalFloat = parseFloat(ethers.formatUnits(devBal, pool.tokenDecimals));
+          let devBalFloat;
+          if (pool.tokenAddress === 'native') {
+            const rawBal = await _provider.getBalance(config.evm.devWallet);
+            devBalFloat = parseFloat(ethers.formatUnits(rawBal, pool.tokenDecimals));
+          } else {
+            const _token = new ethers.Contract(pool.tokenAddress, ERC20_ABI, _provider);
+            const devBal = await _token.balanceOf(config.evm.devWallet);
+            devBalFloat = parseFloat(ethers.formatUnits(devBal, pool.tokenDecimals));
+          }
           if (devBalFloat > MIN_PER_HOLDER) {
             logger.info('[ProfitShare] Using dev wallet on-chain balance', {
               devWallet: config.evm.devWallet,
@@ -455,12 +469,9 @@ class ProfitShareHandler {
 
         try {
           await sleep(1200); // ~50 tx/min to avoid RPC hammering
-          // Native PAX accumulates in the bot wallet during flips, so always
-          // use the bot wallet key for native distributions. devPrivateKey is
-          // only relevant for ERC20 tokens held in the dev wallet.
-          const signingKey = pool.tokenAddress === 'native'
-            ? undefined
-            : (config.evm.devPrivateKey || undefined);
+          // All fees are sent to the dev wallet after each flip, so always
+          // sign distributions with the dev wallet key.
+          const signingKey = config.evm.devPrivateKey || undefined;
           const result = await blockchainManager.sendWinnings(
             'EVM',
             sendTokenAddress,
