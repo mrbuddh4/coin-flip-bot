@@ -44,7 +44,64 @@ function isValidMintAddress(tokenAddress) {
 let bot;
 let sessionStore = {};
 let challengeTimeouts = {}; // Store challenge acceptance timeouts by flipId
+let initiatingTimeouts = {}; // Store expiry timeouts for INITIATING group cards by sessionId
 let botInitialized = false; // Guard to prevent re-initializing bot on retries
+
+/**
+ * Set an expiry timeout for the initial "Start in DM" group card.
+ * If the creator never deposits within 5 minutes, edit the card to show it expired.
+ */
+function setInitiatingTimeout(sessionId, groupId, messageId, telegram) {
+  if (initiatingTimeouts[sessionId]) {
+    clearTimeout(initiatingTimeouts[sessionId]);
+  }
+
+  initiatingTimeouts[sessionId] = setTimeout(async () => {
+    try {
+      const { models } = getDB();
+      const session = await models.BotSession.findByPk(sessionId);
+
+      // Only clean up if no flip was ever created from this session
+      if (session && !session.coinFlipId && session.currentStep === 'AWAITING_DM_START') {
+        logger.info('[initiating-timeout] Expiring unclaimed flip card', { sessionId, groupId, messageId });
+
+        // Edit the group card to show it expired
+        try {
+          await telegram.editMessageCaption(
+            groupId,
+            messageId,
+            null,
+            `⏰ <b>Flip Expired</b>\n\nNo one started this flip in time.`,
+            { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } }
+          );
+        } catch (editErr) {
+          // Fallback: text-only message — try editMessageText instead
+          try {
+            await telegram.editMessageText(
+              groupId,
+              messageId,
+              null,
+              `⏰ <b>Flip Expired</b>\n\nNo one started this flip in time.`,
+              { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } }
+            );
+          } catch (_) {
+            // Last resort — delete it
+            try { await telegram.deleteMessage(groupId, messageId); } catch (__) { /* ignore */ }
+          }
+        }
+
+        // Mark the session as expired
+        session.currentStep = 'EXPIRED';
+        session.changed('data', true);
+        await session.save();
+      }
+    } catch (err) {
+      logger.error('[initiating-timeout] Error expiring initiating card', { sessionId, error: err.message });
+    } finally {
+      delete initiatingTimeouts[sessionId];
+    }
+  }, 5 * 60 * 1000); // 5 minutes
+}
 
 /**
  * Set a challenge acceptance timeout (3 minutes for challenger to accept)
@@ -2978,6 +3035,12 @@ const handlers = {
           });
           
           if (session && parseInt(session.userId) === userId) {
+            // Creator clicked through — cancel the initiating expiry timer
+            if (initiatingTimeouts[session.id]) {
+              clearTimeout(initiatingTimeouts[session.id]);
+              delete initiatingTimeouts[session.id];
+            }
+
             // Check if user has BOTH required wallet addresses
             const userProfile = await models.UserProfile.findByPk(userId);
             const receiveWalletField = 'evmWalletAddress'; // For receiving winnings
@@ -3440,6 +3503,9 @@ For each network (Paxeer & Solana) you need:
         session.changed('data', true); // Mark JSON field as changed for Sequelize
         await session.save();
         logger.info('[flip] Stored initial message for deletion', { sessionId: session.id, messageId: groupMsg.message_id, groupId: ctx.chat.id });
+
+        // Set a 5-minute expiry on the group card in case creator never deposits
+        setInitiatingTimeout(session.id, ctx.chat.id, groupMsg.message_id, ctx.telegram);
       } else {
         // In DM: Check if user has a group context
         const lastGroupSession = await models.BotSession.findOne({
