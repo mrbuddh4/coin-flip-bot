@@ -183,7 +183,9 @@ class ProfitShareHandler {
 
       // Share = their FLIP balance / total effective supply (same denominator as EVM payouts)
       const share = Number(flipBalance) / Number(effectiveSupply);
-      const amount = pending * share;
+      const rawAmount = pending * share;
+      // Truncate to token decimal precision to avoid precision errors
+      const amount = parseFloat(rawAmount.toFixed(pool.tokenDecimals));
       if (amount < MIN_PER_HOLDER) continue;
 
       try {
@@ -192,7 +194,7 @@ class ProfitShareHandler {
           'Solana',
           sendTokenAddress,
           profile.solanaWalletAddress,
-          amount.toString(),
+          amount.toFixed(pool.tokenDecimals),
           pool.tokenDecimals
         );
         totalSent += amount;
@@ -362,7 +364,9 @@ class ProfitShareHandler {
 
       for (const holder of holders) {
         const share = Number(holder.balance) / Number(effectiveSupply);
-        const amount = pending * share;
+        const rawAmount = pending * share;
+        // Truncate to token decimal precision to avoid ethers 'too many decimals' error
+        const amount = parseFloat(rawAmount.toFixed(pool.tokenDecimals));
 
         if (amount < MIN_PER_HOLDER) continue;
 
@@ -372,7 +376,7 @@ class ProfitShareHandler {
             'EVM',
             sendTokenAddress,
             holder.address,
-            amount.toString(),
+            amount.toFixed(pool.tokenDecimals),
             pool.tokenDecimals
           );
           totalSent += amount;
