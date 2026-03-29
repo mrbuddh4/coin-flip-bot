@@ -257,7 +257,7 @@ class ProfitShareHandler {
     const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_ABI, provider);
 
     // ── Step 1: try Paxscan tokenholderlist (paginated) ──────────────────────
-    const PAXSCAN_BASE = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
+    const PAXSCAN_BASE = process.env.PAXSCAN_API_URL || 'https://paxscan.io/api';
     let paxscanAddresses = [];
     try {
       let page = 1;
