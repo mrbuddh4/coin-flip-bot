@@ -318,7 +318,7 @@ class ProfitShareHandler {
     if (evmPools.length > 0) {
       holders = await this.getFlipHolders();
       if (holders.length === 0) {
-        logger.warn('[ProfitShare] No $FLIP holders found from Paxscan — EVM pools will carry over');
+        logger.warn('[ProfitShare] No $FLIP holders with balance found — EVM pools will carry over (add holders via /flip_holders_add)');
       }
     }
 
