@@ -7,7 +7,6 @@ const config = require('../config');
 const logger = require('../utils/logger');
 
 const FLIP_TOKEN_ADDRESS = process.env.FLIP_TOKEN_ADDRESS || '0x2aA5968F710080ea453e7e09E59d769E8C470fac';
-const PAXSCAN_BASE = 'https://paxscan.paxeer.app/api';
 const DISTRIBUTION_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MIN_PER_HOLDER = 0.001; // Skip sending dust amounts below this
 
@@ -222,48 +221,60 @@ class ProfitShareHandler {
   }
 
   /**
-   * Fetch all $FLIP token holders from Paxscan, paginating until exhausted.
-   * Excludes burn/zero/contract addresses.
+   * Fetch all known $FLIP holders from the DB, then query each address's balance
+   * on-chain via balanceOf. This is more reliable than Paxscan's tokenholderlist API.
    * Returns array of { address: string, balance: BigInt }.
    */
   static async getFlipHolders() {
+    const { models } = getDB();
+    const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
+    const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_ABI, provider);
+
+    const rows = await models.FlipHolderAddress.findAll();
     const holders = [];
-    let page = 1;
-    const pageSize = 100;
 
-    while (true) {
-      const url =
-        `${PAXSCAN_BASE}?module=token&action=tokenholderlist` +
-        `&contractaddress=${FLIP_TOKEN_ADDRESS}&page=${page}&offset=${pageSize}`;
-
-      logger.info('[ProfitShare] Fetching $FLIP holders page', { page, url });
-
-      let data;
+    for (const row of rows) {
+      const addr = row.address.toLowerCase();
+      if (EXCLUDED_ADDRESSES.has(addr)) continue;
       try {
-        const res = await fetch(url);
-        data = await res.json();
+        const balance = await contract.balanceOf(row.address);
+        if (balance > 0n) {
+          holders.push({ address: row.address, balance });
+        }
       } catch (err) {
-        logger.error('[ProfitShare] Failed to fetch holders page', { page, error: err.message });
-        break;
+        logger.warn('[ProfitShare] Could not fetch balanceOf for holder', { address: addr, error: err.message });
       }
-
-      if (!data.result || !Array.isArray(data.result) || data.result.length === 0) break;
-
-      for (const h of data.result) {
-        const addr = (h.TokenHolderAddress || '').toLowerCase();
-        if (EXCLUDED_ADDRESSES.has(addr)) continue;
-        const quantity = BigInt(h.TokenHolderQuantity || '0');
-        if (quantity <= 0n) continue;
-        holders.push({ address: h.TokenHolderAddress, balance: quantity });
-      }
-
-      if (data.result.length < pageSize) break;
-      page++;
-      await sleep(500); // Avoid Paxscan rate limiting between pages
+      await sleep(200); // Avoid RPC rate limiting
     }
 
-    logger.info('[ProfitShare] $FLIP holders fetched', { count: holders.length });
+    logger.info('[ProfitShare] $FLIP holders fetched (on-chain balanceOf)', { registered: rows.length, withBalance: holders.length });
     return holders;
+  }
+
+  /** Add an address to the known holder list. Returns { created: bool }. */
+  static async addHolder(address, label = '') {
+    const { models } = getDB();
+    const normalized = address.toLowerCase();
+    const [, created] = await models.FlipHolderAddress.findOrCreate({
+      where: { address: normalized },
+      defaults: { address: normalized, label },
+    });
+    return { created };
+  }
+
+  /** Remove an address from the known holder list. Returns true if it existed. */
+  static async removeHolder(address) {
+    const { models } = getDB();
+    const count = await models.FlipHolderAddress.destroy({
+      where: { address: address.toLowerCase() },
+    });
+    return count > 0;
+  }
+
+  /** List all registered holder addresses (DB rows only, no on-chain call). */
+  static async listHolders() {
+    const { models } = getDB();
+    return models.FlipHolderAddress.findAll({ order: [['createdAt', 'ASC']] });
   }
 
   /**

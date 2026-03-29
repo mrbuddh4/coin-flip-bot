@@ -313,6 +313,71 @@ class AdminHandler {
     }
   }
 
+  static async flipHoldersAdd(ctx) {
+    if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
+    const parts = ctx.message.text.trim().split(/\s+/);
+    const address = parts[1];
+    const label = parts.slice(2).join(' ') || '';
+    if (!address || !/^0x[a-fA-F0-9]{40}$/i.test(address)) {
+      await ctx.reply('Usage: /flip_holders_add 0x<address> [optional label]');
+      return;
+    }
+    try {
+      const ProfitShareHandler = require('./profitShareHandler');
+      const { created } = await ProfitShareHandler.addHolder(address, label);
+      await ctx.reply(created
+        ? `✅ Added <code>${address}</code>${label ? ` (${label})` : ''} to $FLIP holder list.`
+        : `ℹ️ <code>${address}</code> is already in the list.`,
+        { parse_mode: 'HTML' });
+    } catch (err) {
+      logger.error('[AdminHandler] flipHoldersAdd error', { error: err.message });
+      await ctx.reply(`❌ Error: ${err.message}`);
+    }
+  }
+
+  static async flipHoldersRemove(ctx) {
+    if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
+    const parts = ctx.message.text.trim().split(/\s+/);
+    const address = parts[1];
+    if (!address || !/^0x[a-fA-F0-9]{40}$/i.test(address)) {
+      await ctx.reply('Usage: /flip_holders_remove 0x<address>');
+      return;
+    }
+    try {
+      const ProfitShareHandler = require('./profitShareHandler');
+      const removed = await ProfitShareHandler.removeHolder(address);
+      await ctx.reply(removed
+        ? `✅ Removed <code>${address}</code> from $FLIP holder list.`
+        : `❌ Address not found in list.`,
+        { parse_mode: 'HTML' });
+    } catch (err) {
+      logger.error('[AdminHandler] flipHoldersRemove error', { error: err.message });
+      await ctx.reply(`❌ Error: ${err.message}`);
+    }
+  }
+
+  static async flipHoldersList(ctx) {
+    if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
+    try {
+      const ProfitShareHandler = require('./profitShareHandler');
+      const rows = await ProfitShareHandler.listHolders();
+      if (rows.length === 0) {
+        await ctx.reply('No $FLIP holders registered.\nUse /flip_holders_add 0x<address> to add one.');
+        return;
+      }
+      const lines = rows.map((r, i) =>
+        `${i + 1}. <code>${r.address}</code>${r.label ? ` — ${r.label}` : ''}`
+      );
+      await ctx.reply(
+        `<b>Registered $FLIP Holders (${rows.length})</b>\n\n` + lines.join('\n'),
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      logger.error('[AdminHandler] flipHoldersList error', { error: err.message });
+      await ctx.reply(`❌ Error: ${err.message}`);
+    }
+  }
+
   static registerCommands(bot) {
     bot.command('admin_stats', ctx => this.stats(ctx));
     bot.command('admin_health', ctx => this.health(ctx));
@@ -322,6 +387,9 @@ class AdminHandler {
     bot.command('admin_cancel_all', ctx => this.cancelAllFlips(ctx));
     bot.command('profit_status', ctx => this.profitShareStatus(ctx));
     bot.command('profit_distribute', ctx => this.triggerDistribute(ctx));
+    bot.command('flip_holders_add', ctx => this.flipHoldersAdd(ctx));
+    bot.command('flip_holders_remove', ctx => this.flipHoldersRemove(ctx));
+    bot.command('flip_holders_list', ctx => this.flipHoldersList(ctx));
 
     // For flip details: /flip_<id>
     bot.hears(/^\/flip_(.+)$/, (ctx) => {

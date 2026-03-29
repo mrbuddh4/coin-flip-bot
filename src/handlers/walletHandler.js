@@ -388,6 +388,12 @@ class WalletHandler {
         profile.evmWalletAddress = message;
         await profile.save();
 
+        // Auto-register as a known $FLIP holder for profit share distribution
+        await models.FlipHolderAddress.findOrCreate({
+          where: { address: message.toLowerCase() },
+          defaults: { address: message.toLowerCase(), label: `user:${userId}` },
+        }).catch(() => {});
+
         await models.BotSession.destroy({
           where: { id: session.id },
         });
@@ -431,6 +437,12 @@ class WalletHandler {
 
         profile.flipHoldingWalletAddress = message;
         await profile.save();
+
+        // Auto-register as a known $FLIP holder for profit share distribution
+        await models.FlipHolderAddress.findOrCreate({
+          where: { address: message.toLowerCase() },
+          defaults: { address: message.toLowerCase(), label: `user:${userId}` },
+        }).catch(() => {});
 
         await models.BotSession.destroy({
           where: { id: session.id },

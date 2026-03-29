@@ -161,6 +161,22 @@ const defineModels = (sequelize) => {
     updatedAt: DataTypes.DATE,
   });
 
+  // FlipHolderAddress Model - known $FLIP token holder addresses for on-chain distribution
+  // Admins add addresses here; each distribution cycle queries balanceOf on-chain for each entry.
+  const FlipHolderAddress = sequelize.define('FlipHolderAddress', {
+    address: {
+      type: DataTypes.STRING,
+      primaryKey: true,
+      allowNull: false,
+    },
+    label: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+  }, {
+    timestamps: true,
+  });
+
   // ProfitSharePool Model - tracks accumulated flip fees for $FLIP holder distribution
   // EVM pools distribute to all on-chain $FLIP holders; Solana pools distribute to bot
   // users who have registered both an EVM wallet (FLIP balance check) and a Solana wallet.
@@ -212,6 +228,7 @@ const defineModels = (sequelize) => {
     Transaction,
     BotSession,
     UserProfile,
+    FlipHolderAddress,
     ProfitSharePool,
     sequelize, // Export sequelize so handlers can use it for queries
   };
