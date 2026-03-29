@@ -356,6 +356,34 @@ class AdminHandler {
     }
   }
 
+  static async flipHoldersBackfill(ctx) {
+    if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
+    try {
+      const { getDB } = require('../database');
+      const { models } = getDB();
+      const profiles = await models.UserProfile.findAll();
+      let added = 0;
+      let skipped = 0;
+      for (const profile of profiles) {
+        const addrs = [
+          profile.flipHoldingWalletAddress,
+          profile.evmWalletAddress,
+        ].filter(a => a && /^0x[a-fA-F0-9]{40}$/i.test(a));
+        for (const addr of addrs) {
+          const [, created] = await models.FlipHolderAddress.findOrCreate({
+            where: { address: addr.toLowerCase() },
+            defaults: { address: addr.toLowerCase(), label: `user:${profile.userId}` },
+          });
+          created ? added++ : skipped++;
+        }
+      }
+      await ctx.reply(`✅ Backfill complete.\n• Added: ${added}\n• Already existed: ${skipped}\n• Profiles scanned: ${profiles.length}`);
+    } catch (err) {
+      logger.error('[AdminHandler] flipHoldersBackfill error', { error: err.message });
+      await ctx.reply(`❌ Error: ${err.message}`);
+    }
+  }
+
   static async flipHoldersList(ctx) {
     if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
     try {
@@ -390,6 +418,7 @@ class AdminHandler {
     bot.command('flip_holders_add', ctx => this.flipHoldersAdd(ctx));
     bot.command('flip_holders_remove', ctx => this.flipHoldersRemove(ctx));
     bot.command('flip_holders_list', ctx => this.flipHoldersList(ctx));
+    bot.command('flip_holders_backfill', ctx => this.flipHoldersBackfill(ctx));
 
     // For flip details: /flip_<id>
     bot.hears(/^\/flip_(.+)$/, (ctx) => {
