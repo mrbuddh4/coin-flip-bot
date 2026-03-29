@@ -586,6 +586,92 @@ class EVMHandler {
                 };
               }
               
+              // Fallback 3: Paxscan may simply not index this token — query the chain directly via eth_getLogs.
+              // This catches tokens whose Transfer events exist on-chain but are not surfaced by the API.
+              if (transfers.length === 0 && knownSender && tokenAddress && tokenAddress !== 'NATIVE') {
+                try {
+                  console.log('[getRecentDepositSender] Fallback 3: eth_getLogs (Paxscan may not index this token)', {
+                    targetSender,
+                    tokenAddress,
+                    fromBlock,
+                  });
+
+                  const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+                  const senderTopic = ethers.zeroPadValue(knownSender.toLowerCase(), 32);
+                  const recipientTopic = ethers.zeroPadValue(botWalletAddress.toLowerCase(), 32);
+
+                  const rawLogs = await this.provider.getLogs({
+                    address: tokenAddress,
+                    topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
+                    fromBlock,
+                    toBlock: 'latest',
+                  });
+
+                  console.log('[getRecentDepositSender] eth_getLogs result', { logCount: rawLogs.length, tokenAddress });
+
+                  for (const log of rawLogs) {
+                    const rawValue = BigInt(log.data);
+                    const txAmount = parseFloat(ethers.formatUnits(rawValue, decimals));
+                    const blockNum = typeof log.blockNumber === 'bigint' ? Number(log.blockNumber) : log.blockNumber;
+
+                    // Fetch block timestamp to honour flipCreatedAt filter
+                    let txTimestamp = null;
+                    try {
+                      const block = await this.provider.getBlock(blockNum);
+                      txTimestamp = block?.timestamp ?? null;
+                    } catch (_) { /* timestamp check skipped on block fetch failure */ }
+
+                    const isAfterFlipCreation = !flipCreatedAtSeconds || !txTimestamp || txTimestamp >= flipCreatedAtSeconds;
+                    if (!isAfterFlipCreation) {
+                      console.log('[getRecentDepositSender] eth_getLogs: skipping transfer before flip creation', {
+                        txTimestamp, flipCreatedAtSeconds, txHash: log.transactionHash,
+                      });
+                      continue;
+                    }
+
+                    transfers.push({
+                      amount: txAmount,
+                      hash: log.transactionHash,
+                      blockNumber: blockNum,
+                      timestamp: txTimestamp || 0,
+                      contractAddress: tokenAddress.toLowerCase(),
+                      isNativeTransfer: false,
+                      wrongToken: null,
+                    });
+                    if (!latestTxForReturn) latestTxForReturn = { hash: log.transactionHash, blockNumber: blockNum };
+                    totalAmount += txAmount;
+
+                    console.log('[getRecentDepositSender] eth_getLogs: matched Transfer event', {
+                      from: targetSender,
+                      to: botWalletAddress.toLowerCase(),
+                      amount: txAmount,
+                      txHash: log.transactionHash,
+                      blockNumber: blockNum,
+                      txTimestamp,
+                    });
+                  }
+
+                  if (transfers.length > 0) {
+                    console.log('[getRecentDepositSender] eth_getLogs fallback succeeded', {
+                      transferCount: transfers.length,
+                      totalAmount,
+                    });
+                    return {
+                      sender: targetSender,
+                      amount: totalAmount.toString(),
+                      transactionHash: latestTxForReturn.hash,
+                      blockNumber: latestTxForReturn.blockNumber,
+                      transferCount: transfers.length,
+                      hasWrongTokens: false,
+                      wrongToken: null,
+                      amountIsDisplayFormat: true,
+                    };
+                  }
+                } catch (logsErr) {
+                  console.error('[getRecentDepositSender] eth_getLogs fallback failed', { error: logsErr.message });
+                }
+              }
+
               // If knownSender is specified but no transfers found from that wallet, return null.
               // Do NOT fall through to the any-sender fallback — that would pick up other parties'
               // deposits (e.g. the creator's deposit) and falsely attribute them to this depositor.
