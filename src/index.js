@@ -3156,31 +3156,8 @@ const handlers = {
         }
       );
     } else {
-      // In group chat
-
-      // Get supported tokens for this group/network
-      const supportedTokens = await getSupportedTokensList();
-
-      if (supportedTokens.length === 0) {
-        await ctx.reply('⚠️ No tokens configured for this bot yet.');
-        return;
-      }
-
-      const inlineButtons = supportedTokens.map(token => [
-        Markup.button.callback(
-          `${token.symbol} (${token.network})`,
-          `start_flip_${token.id}`
-        ),
-      ]);
-
-      await ctx.reply(
-        '🪙 <b>Welcome to Coin Flip!</b>\n\n' +
-        'Select a token to start a flip:',
-        {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard(inlineButtons).reply_markup,
-        }
-      );
+      // In group chat — /start does nothing
+      return;
     }
   },
 
