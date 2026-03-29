@@ -10,7 +10,7 @@ class ExecutionHandler {
   /**
    * Execute the coin flip once both deposits are confirmed
    */
-  static async executeFlip(flipId, ctx, videoMessageId) {
+  static async executeFlip(flipId, ctx, videoMessageId, videoReadyAt = null) {
     try {
       const { models } = getDB();
       const flip = await models.CoinFlip.findByPk(flipId);
@@ -240,6 +240,24 @@ class ExecutionHandler {
       const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
 
       try {
+        // Wait for the video to finish playing before showing the result,
+        // then delete it and reveal the result in one smooth step
+        if (videoReadyAt) {
+          const remaining = videoReadyAt - Date.now();
+          if (remaining > 0) {
+            logger.info('Waiting for video to finish before showing result', { flipId, remainingMs: remaining });
+            await new Promise(r => setTimeout(r, remaining));
+          }
+        }
+        if (videoMessageId) {
+          try {
+            await ctx.telegram.deleteMessage(flip.groupChatId, videoMessageId);
+            logger.info('Deleted video message, revealing result now', { flipId, videoMessageId });
+          } catch (deleteErr) {
+            logger.warn('Failed to delete video message', { flipId, videoMessageId, error: deleteErr.message });
+          }
+        }
+
         // Try to send with image first
         if (fs.existsSync(imagePath)) {
           try {
@@ -279,16 +297,7 @@ class ExecutionHandler {
             }
           );
         }
-        
-        // Delete the video message now that result is displayed
-        if (videoMessageId) {
-          try {
-            await ctx.telegram.deleteMessage(flip.groupChatId, videoMessageId);
-            logger.info('Deleted video message after flip result', { flipId, videoMessageId });
-          } catch (deleteErr) {
-            logger.warn('Failed to delete video message', { flipId, videoMessageId, error: deleteErr.message });
-          }
-        }
+
       } catch (editErr) {
         logger.warn('Failed to send flip result to group', { flipId, error: editErr.message });
         // Last fallback: send a new message if everything fails

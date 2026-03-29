@@ -1744,6 +1744,7 @@ async function initBot() {
 
           // Send coin flip video to group before revealing result
           let videoMessageId = null;
+          let videoReadyAt = null;
           try {
             const fs = require('fs');
             const path = require('path');
@@ -1759,26 +1760,18 @@ async function initBot() {
                 }
               );
               videoMessageId = sentMessage.message_id;
-              
-              // Get actual video duration and auto-delete after it finishes
+
+              // Record when the video will finish so executeFlip can sync with it
               const videoDuration = await getVideoDuration(videoPath);
               logger.info('Video duration detected', { flipId, videoDuration });
-              
-              setTimeout(async () => {
-                try {
-                  await ctx.telegram.deleteMessage(flip.groupChatId, videoMessageId);
-                  logger.info('Auto-deleted video message after duration', { flipId, videoMessageId, duration: videoDuration });
-                } catch (err) {
-                  logger.warn('Failed to auto-delete video message', { flipId, videoMessageId, error: err.message });
-                }
-              }, videoDuration);
+              videoReadyAt = Date.now() + videoDuration;
             }
           } catch (videoErr) {
             logger.warn('Failed to send flip video', { flipId, error: videoErr.message });
           }
 
-          // Execute the flip and pass video message ID to delete it after result
-          await ExecutionHandler.executeFlip(flipId, ctx, videoMessageId);
+          // Execute the flip — result won't show until video finishes
+          await ExecutionHandler.executeFlip(flipId, ctx, videoMessageId, videoReadyAt);
         } else {
 
           // Notify creator in group with image - delete old and send new
