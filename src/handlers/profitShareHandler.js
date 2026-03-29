@@ -129,7 +129,27 @@ class ProfitShareHandler {
   static async distributeToRegisteredSolanaHolders(pool, effectiveSupply) {
     const { models } = getDB();
     const { Op } = require('sequelize');
-    const pending = parseFloat(pool.pendingAmount);
+    let pending = parseFloat(pool.pendingAmount);
+
+    // If the Solana dev wallet private key is available, use its actual on-chain
+    // token balance as the distribution amount.
+    if (config.solana.devPrivateKey && config.solana.devWallet && pool.tokenAddress !== 'native') {
+      try {
+        const { getBlockchainManager } = require('../blockchain/manager');
+        const solHandler = getBlockchainManager().getHandler('Solana');
+        const devBal = await solHandler.getTokenBalance(pool.tokenAddress, config.solana.devWallet);
+        if (devBal.formatted > MIN_PER_HOLDER) {
+          logger.info('[ProfitShare] Using Solana dev wallet on-chain balance', {
+            devWallet: config.solana.devWallet,
+            balance: devBal.formatted,
+            symbol: pool.tokenSymbol,
+          });
+          pending = devBal.formatted;
+        }
+      } catch (err) {
+        logger.warn('[ProfitShare] Could not fetch Solana dev wallet balance, falling back to pool amount', { error: err.message });
+      }
+    }
 
     // Find bot users who have saved a Solana wallet (to receive the payout) and at least
     // one EVM wallet for the $FLIP balance check (flipHoldingWalletAddress preferred,
@@ -349,7 +369,28 @@ class ProfitShareHandler {
 
     // ── EVM pools: send to every on-chain $FLIP holder via Paxscan ────────────
     for (const pool of evmPools) {
-      const pending = parseFloat(pool.pendingAmount);
+      // If the dev wallet private key is available, use its actual on-chain
+      // balance as the distribution amount so accumulated tokens are distributed
+      // directly rather than relying solely on the DB pool counter.
+      let pending = parseFloat(pool.pendingAmount);
+      if (config.evm.devPrivateKey && config.evm.devWallet && pool.tokenAddress !== 'native') {
+        try {
+          const _provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
+          const _token = new ethers.Contract(pool.tokenAddress, ERC20_ABI, _provider);
+          const devBal = await _token.balanceOf(config.evm.devWallet);
+          const devBalFloat = parseFloat(ethers.formatUnits(devBal, pool.tokenDecimals));
+          if (devBalFloat > MIN_PER_HOLDER) {
+            logger.info('[ProfitShare] Using dev wallet on-chain balance', {
+              devWallet: config.evm.devWallet,
+              balance: devBalFloat,
+              symbol: pool.tokenSymbol,
+            });
+            pending = devBalFloat;
+          }
+        } catch (err) {
+          logger.warn('[ProfitShare] Could not fetch dev wallet balance, falling back to pool amount', { error: err.message });
+        }
+      }
       if (pending < MIN_PER_HOLDER || holders.length === 0) continue;
 
       logger.info('[ProfitShare] Distributing EVM pool', {
