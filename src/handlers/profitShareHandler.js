@@ -707,24 +707,39 @@ class ProfitShareHandler {
   static startScheduler(bot) {
     logger.info('[ProfitShare] Starting daily 00:00 UTC distribution scheduler');
 
-    // On startup: trigger immediately if any pool is overdue (last run was not today UTC)
+    // On startup: trigger immediately only if midnight was genuinely missed —
+    // i.e. no pool has run today yet AND at least one overdue pool has pending funds.
+    // If any pool already ran today, the distribution is considered done for the day
+    // and we skip catchup (prevents double-runs when the bot is restarted mid-day).
     this.getPoolStatus()
       .then(pools => {
         const todayUtc = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+
+        // If any pool already distributed today, don't run again
+        const alreadyRanToday = pools.some(p =>
+          p.lastDistributedAt &&
+          new Date(p.lastDistributedAt).toISOString().slice(0, 10) === todayUtc
+        );
+        if (alreadyRanToday) {
+          logger.info('[ProfitShare] Distribution already ran today — skipping startup catchup');
+          return;
+        }
+
+        if (process.env.PROFIT_SHARE_SKIP_CATCHUP === 'true') {
+          logger.info('[ProfitShare] PROFIT_SHARE_SKIP_CATCHUP=true — skipping startup catchup');
+          return;
+        }
+
         const overdue = pools.some(p => {
           if (!p.lastDistributedAt) return parseFloat(p.pendingAmount) > MIN_PER_HOLDER;
           const lastDate = new Date(p.lastDistributedAt).toISOString().slice(0, 10);
           return lastDate < todayUtc && parseFloat(p.pendingAmount) > MIN_PER_HOLDER;
         });
         if (overdue) {
-          if (process.env.PROFIT_SHARE_SKIP_CATCHUP === 'true') {
-            logger.info('[ProfitShare] Overdue distribution detected but PROFIT_SHARE_SKIP_CATCHUP=true — skipping');
-          } else {
-            logger.info('[ProfitShare] Overdue distribution detected on startup, running now');
-            this.distribute(bot, 'startup-catchup').catch(err =>
-              logger.error('[ProfitShare] Startup catchup distribution failed', { error: err.message })
-            );
-          }
+          logger.info('[ProfitShare] Overdue distribution detected on startup, running now');
+          this.distribute(bot, 'startup-catchup').catch(err =>
+            logger.error('[ProfitShare] Startup catchup distribution failed', { error: err.message })
+          );
         }
       })
       .catch(() => {});
