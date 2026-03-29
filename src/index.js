@@ -834,6 +834,7 @@ async function initBot() {
 
     // Leaderboard callbacks
     bot.action('refresh_leaderboard', async (ctx) => {
+      if (ctx.chat.type !== 'private') return ctx.answerCbQuery().catch(() => {});
       try {
         await LeaderboardHandler.refreshLeaderboard(ctx);
       } catch (error) {
@@ -3274,6 +3275,7 @@ For each network (Paxeer & Solana) you need:
 
   leaderboard: async (ctx) => {
     console.log('[HANDLER] /leaderboard called');
+    if (ctx.chat.type !== 'private') return;
     await LeaderboardHandler.showLeaderboard(ctx);
   },
 
