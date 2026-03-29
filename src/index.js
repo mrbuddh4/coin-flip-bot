@@ -182,63 +182,6 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
               flipCheck.changed('data', true); // Explicitly mark JSON field as changed for Sequelize
               await flipCheck.save();
 
-              // Refund creator's deposit
-              try {
-                const creator = await models.User.findByPk(flipCheck.creatorId);
-                
-                // Use the wallet they sent the deposit FROM (not their receiving wallet)
-                const creatorDepositWallet = flipCheck.creatorDepositWalletAddress;
-                
-                if (creator && creatorDepositWallet) {
-                  const blockchainManager = getBlockchainManager();
-                  
-                  try {
-                    // Refund the exact wager amount - get token config to find token address
-                    const supportedTokens = config.supportedTokens;
-                    let tokenAddress = 'NATIVE';
-                    let tokenDecimals = 18;
-                    
-                    for (const key in supportedTokens) {
-                      if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
-                        tokenAddress = supportedTokens[key].address || 'NATIVE';
-                        tokenDecimals = supportedTokens[key].decimals || 18;
-                        break;
-                      }
-                    }
-
-                    const txHash = await blockchainManager.sendWinnings(
-                      flipCheck.tokenNetwork,
-                      tokenAddress,
-                      creatorDepositWallet,
-                      flipCheck.creatorAccumulatedDeposit,
-                      tokenDecimals
-                    );
-                    
-                    logger.info('[challengeTimeout] Refunded creator deposit to original wallet', { 
-                      flipId, 
-                      creatorId: flipCheck.creatorId,
-                      depositWallet: creatorDepositWallet,
-                      amount: flipCheck.creatorAccumulatedDeposit,
-                      token: flipCheck.tokenSymbol,
-                      txHash 
-                    });
-                  } catch (refundErr) {
-                    logger.error('[challengeTimeout] Failed to refund creator', { 
-                      flipId, 
-                      error: refundErr.message 
-                    });
-                  }
-                } else {
-                  logger.warn('[challengeTimeout] Creator or deposit wallet missing for refund', { 
-                    flipId, 
-                    creatorId: flipCheck.creatorId,
-                    hasDepositWallet: !!creatorDepositWallet
-                  });
-                }
-              } catch (creatorErr) {
-                logger.error('[challengeTimeout] Error processing creator refund', { flipId, error: creatorErr.message });
-              }
-
               // Send timeout notification to group with start new challenge button
               try {
                 const botInfo = await telegram.getMe();
@@ -287,6 +230,55 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
               } catch (msgErr) {
                 logger.error('[challengeTimeout] Failed to send expiration message', { flipId, error: msgErr.message });
               }
+
+              // Refund creator's deposit in background — tx.wait() can block for a long time
+              // so we fire-and-forget after the message is already sent
+              (async () => {
+                try {
+                  const creator = await models.User.findByPk(flipCheck.creatorId);
+                  const creatorDepositWallet = flipCheck.creatorDepositWalletAddress;
+
+                  if (creator && creatorDepositWallet) {
+                    const blockchainManager = getBlockchainManager();
+                    const supportedTokens = config.supportedTokens;
+                    let tokenAddress = 'NATIVE';
+                    let tokenDecimals = 18;
+
+                    for (const key in supportedTokens) {
+                      if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
+                        tokenAddress = supportedTokens[key].address || 'NATIVE';
+                        tokenDecimals = supportedTokens[key].decimals || 18;
+                        break;
+                      }
+                    }
+
+                    const txHash = await blockchainManager.sendWinnings(
+                      flipCheck.tokenNetwork,
+                      tokenAddress,
+                      creatorDepositWallet,
+                      flipCheck.creatorAccumulatedDeposit,
+                      tokenDecimals
+                    );
+
+                    logger.info('[challengeTimeout] Refunded creator deposit to original wallet', {
+                      flipId,
+                      creatorId: flipCheck.creatorId,
+                      depositWallet: creatorDepositWallet,
+                      amount: flipCheck.creatorAccumulatedDeposit,
+                      token: flipCheck.tokenSymbol,
+                      txHash,
+                    });
+                  } else {
+                    logger.warn('[challengeTimeout] Creator or deposit wallet missing for refund', {
+                      flipId,
+                      creatorId: flipCheck.creatorId,
+                      hasDepositWallet: !!creatorDepositWallet,
+                    });
+                  }
+                } catch (refundErr) {
+                  logger.error('[challengeTimeout] Error processing creator refund', { flipId, error: refundErr.message });
+                }
+              })().catch(err => logger.error('[challengeTimeout] Unhandled error in background refund', { flipId, error: err.message }));
             }
             delete challengeTimeouts[flipId];
           } catch (err) {
@@ -1411,8 +1403,8 @@ async function initBot() {
           flip.tokenAddress,
           flip.wagerAmount,
           flip.tokenDecimals,
-          4, // maxRetries
-          5000, // retryDelayMs - 5 second delay to account for Helius indexing lag
+          8, // maxRetries
+          10000, // retryDelayMs - 10 second delay to account for Paxscan indexing lag
           depositWallet, // Use user's configured deposit wallet
           flip.createdAt // pass flip creation time to filter old deposits
         );
@@ -1987,8 +1979,8 @@ async function initBot() {
           flip.tokenAddress,
           flip.wagerAmount,
           flip.tokenDecimals,
-          4, // maxRetries
-          5000, // retryDelayMs - 5 second delay to account for Helius indexing lag
+          8, // maxRetries
+          10000, // retryDelayMs - 10 second delay to account for Paxscan indexing lag
           depositWallet, // Use user's configured deposit wallet
           flip.createdAt // pass flip creation time to filter old deposits
         );
