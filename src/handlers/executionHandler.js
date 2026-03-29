@@ -232,11 +232,18 @@ class ExecutionHandler {
         ? `\n🔗 <a href="${txLink}">View Transaction</a>`
         : `\n⏳ Processing winnings...`;
 
+      const flipBuyButton = {
+        inline_keyboard: [[
+          { text: '💎 BUY $FLIP', url: 'https://sidiora.fun/token/0xA0Cd0F92f12f881aeBaFF9e0fb3144511c9ebF6c' }
+        ]]
+      };
+
       const resultMessageText = 
         `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
         `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
         `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-        `⚡ Fees: 10% (5% $FLIP holders + 5% burn)${txLinkMessage}`;
+        `⚡ Fees: 10% (5% $FLIP holders + 5% burn)${txLinkMessage}\n\n` +
+        `💎 Share in the profits from this bot by holding $FLIP`;
 
       const fs = require('fs');
       const path = require('path');
@@ -252,6 +259,7 @@ class ExecutionHandler {
               {
                 caption: resultMessageText,
                 parse_mode: 'HTML',
+                reply_markup: flipBuyButton,
               }
             );
           } catch (photoErr) {
@@ -264,6 +272,7 @@ class ExecutionHandler {
               resultMessageText,
               {
                 parse_mode: 'HTML',
+                reply_markup: flipBuyButton,
               }
             );
           }
@@ -276,6 +285,7 @@ class ExecutionHandler {
             resultMessageText,
             {
               parse_mode: 'HTML',
+              reply_markup: flipBuyButton,
             }
           );
         }
@@ -298,6 +308,7 @@ class ExecutionHandler {
             resultMessageText,
             {
               parse_mode: 'HTML',
+              reply_markup: flipBuyButton,
             }
           );
           
@@ -332,7 +343,8 @@ class ExecutionHandler {
                 `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
                 `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
                 `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-                `⚡ Fees: 10% (5% $FLIP holders + 5% burn)\n🔗 <a href="${txLinkUpdated}">View Transaction</a>`;
+                `⚡ Fees: 10% (5% $FLIP holders + 5% burn)\n🔗 <a href="${txLinkUpdated}">View Transaction</a>\n\n` +
+                `💎 Share in the profits from this bot by holding $FLIP`;
               
               await ctx.telegram.editMessageText(
                 flip.groupChatId,
@@ -341,6 +353,7 @@ class ExecutionHandler {
                 updatedMessage,
                 {
                   parse_mode: 'HTML',
+                  reply_markup: flipBuyButton,
                 }
               );
               logger.info('Updated flip result message with transaction link', { flipId, txHash: updatedFlip.winningTxHash });
