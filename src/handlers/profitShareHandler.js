@@ -569,15 +569,37 @@ class ProfitShareHandler {
 
     // ── Solana pools: send to bot users with registered EVM+Solana wallets ────
     for (const pool of solanaPools) {
-      const pending = parseFloat(pool.pendingAmount);
-      if (pending < MIN_PER_HOLDER) continue;
+      // Mirror the EVM approach: check dev wallet on-chain balance first so the
+      // pool isn't skipped just because the DB pendingAmount is 0 while on-chain
+      // fees have accumulated (the inner function does the same override, but the
+      // outer MIN check must happen AFTER we know the real distributable amount).
+      let solPending = parseFloat(pool.pendingAmount);
+      if (config.solana.devPrivateKey && config.solana.devWallet) {
+        try {
+          const solHandler = blockchainManager.getHandler('Solana');
+          let devBalFormatted;
+          if (pool.tokenAddress === 'native') {
+            const devBal = await solHandler.getNativeBalance(config.solana.devWallet);
+            devBalFormatted = devBal.formatted;
+          } else {
+            const devBal = await solHandler.getTokenBalance(pool.tokenAddress, config.solana.devWallet);
+            devBalFormatted = devBal.formatted;
+          }
+          if (devBalFormatted > MIN_PER_HOLDER) {
+            solPending = devBalFormatted;
+          }
+        } catch (err) {
+          logger.warn('[ProfitShare] Could not fetch Solana dev wallet balance for gate check', { error: err.message });
+        }
+      }
+      if (solPending < MIN_PER_HOLDER) continue;
 
-      logger.info('[ProfitShare] Distributing Solana pool', { symbol: pool.tokenSymbol, pending });
+      logger.info('[ProfitShare] Distributing Solana pool', { symbol: pool.tokenSymbol, pending: solPending });
 
       const { totalSent: sSent, successCount: sSuc, failCount: sFail, txHashes: sTxHashes } =
         await this.distributeToRegisteredSolanaHolders(pool, effectiveSupply);
 
-      const remaining = Math.max(0, parseFloat(pool.pendingAmount) - sSent);
+      const remaining = Math.max(0, solPending - sSent);
       pool.pendingAmount = remaining < MIN_PER_HOLDER ? '0' : remaining.toString();
       pool.totalDistributed = (parseFloat(pool.totalDistributed) + sSent).toString();
       pool.lastDistributedAt = new Date();
