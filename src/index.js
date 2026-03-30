@@ -1406,7 +1406,8 @@ async function initBot() {
           8, // maxRetries
           10000, // retryDelayMs - 10 second delay to account for Paxscan indexing lag
           depositWallet, // Use user's configured deposit wallet
-          flip.createdAt // pass flip creation time to filter old deposits
+          flip.createdAt, // pass flip creation time to filter old deposits
+          flip.creatorDepositWalletAddress || null // exclude creator's wallet from any-sender fallback
         );
 
         logger.info('[deposit_confirmed] Challenger verification result', { 
@@ -1982,7 +1983,8 @@ async function initBot() {
           8, // maxRetries
           10000, // retryDelayMs - 10 second delay to account for Paxscan indexing lag
           depositWallet, // Use user's configured deposit wallet
-          flip.createdAt // pass flip creation time to filter old deposits
+          flip.createdAt, // pass flip creation time to filter old deposits
+          flip.challengerDepositWalletAddress || null // exclude challenger's wallet from any-sender fallback
         );
 
         logger.info('[creator_deposit_confirmed] Creator verification result', { 

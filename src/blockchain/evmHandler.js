@@ -171,7 +171,7 @@ class EVMHandler {
    * Uses Paxscan API only - RPC has too many restrictions on Paxeer
    * @param {number} flipCreatedAt - Unix timestamp when flip was created, to filter out old deposits
    */
-  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null, knownSender = null, flipCreatedAt = null) {
+  async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null, knownSender = null, flipCreatedAt = null, excludeSender = null) {
     try {
       const currentBlock = await this.provider.getBlockNumber();
       const lookbackBlocks = 10000; // Paxscan doesn't have RPC restrictions
@@ -961,6 +961,65 @@ class EVMHandler {
               targetSender,
               totalChecked: data.result.length,
             });
+
+            // Fallback: when knownSender is set but no deposit found from that address,
+            // accept any incoming native deposit of the right amount from a non-bot address.
+            // This handles the case where the user sent from a different wallet than registered.
+            // excludeSender (the other party's wallet) is excluded to prevent double-crediting.
+            if (targetSender && expectedAmount) {
+              const expectedDisplayAmount = parseFloat(expectedAmount);
+              const excludeSenderLower = excludeSender ? excludeSender.toLowerCase() : null;
+
+              console.log('[getRecentDepositSender] Native fallback: searching for any matching deposit (user may have sent from different wallet)', {
+                targetSender,
+                excludeSender: excludeSenderLower,
+                expectedAmount: expectedDisplayAmount,
+              });
+
+              for (const tx of data.result) {
+                const txSenderLower = tx.from.toLowerCase();
+                const txRecipientLower = tx.to?.toLowerCase() || '';
+                const txTimestamp = parseInt(tx.timeStamp, 10);
+
+                const isToBot = txRecipientLower === botWalletAddress.toLowerCase();
+                const isNotBotSelf = txSenderLower !== botWalletAddress.toLowerCase();
+                const isNotExcluded = !excludeSenderLower || txSenderLower !== excludeSenderLower;
+                const isAfterFlip = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+
+                if (isToBot && isNotBotSelf && isNotExcluded && isAfterFlip) {
+                  const txAmount = parseFloat(ethers.formatUnits(tx.value, 18));
+                  const isRightAmount = txAmount >= expectedDisplayAmount * 0.99;
+
+                  if (isRightAmount) {
+                    console.log('[getRecentDepositSender] Native fallback: accepting deposit from different address', {
+                      actualSender: txSenderLower,
+                      expectedSender: targetSender,
+                      amount: txAmount,
+                      expectedAmount: expectedDisplayAmount,
+                      txHash: tx.hash,
+                      timestamp: txTimestamp,
+                    });
+
+                    return {
+                      sender: txSenderLower,
+                      amount: txAmount.toString(),
+                      transactionHash: tx.hash,
+                      blockNumber: tx.blockNumber,
+                      transferCount: 1,
+                      hasWrongTokens: false,
+                      wrongToken: null,
+                      amountIsDisplayFormat: true,
+                    };
+                  }
+                }
+              }
+
+              console.warn('[getRecentDepositSender] Native fallback: no matching deposit found from any address', {
+                targetSender,
+                excludeSender: excludeSenderLower,
+                expectedAmount: expectedDisplayAmount,
+              });
+            }
           } else {
             console.warn('[getRecentDepositSender] No native transfers found via txlist', {
               status: data.status,

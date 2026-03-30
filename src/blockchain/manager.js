@@ -77,7 +77,7 @@ class BlockchainManager {
   /**
    * Check if deposit has been received (by verifying blockchain transaction)
    */
-  async verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender = null, flipCreatedAt = null) {
+  async verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender = null, flipCreatedAt = null, excludeSender = null) {
     const handler = this.getHandler(network);
     const botWallet = this.getBotWalletAddress(network);
 
@@ -93,7 +93,7 @@ class BlockchainManager {
       });
 
       // Primary verification: Check blockchain for actual deposit transaction
-      let depositInfo = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress, knownSender, flipCreatedAt);
+      let depositInfo = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress, knownSender, flipCreatedAt, excludeSender);
 
       if (depositInfo) {
         // Transaction found on blockchain
@@ -210,9 +210,9 @@ class BlockchainManager {
   /**
    * Verify deposit with retries (accounts for blockchain indexing delay)
    */
-  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 3, retryDelayMs = 15000, knownSender = null, flipCreatedAt = null) {
+  async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 3, retryDelayMs = 15000, knownSender = null, flipCreatedAt = null, excludeSender = null) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt);
+      const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt, excludeSender);
       
       // CRITICAL: Only return on success
       if (result.received) {
@@ -243,7 +243,7 @@ class BlockchainManager {
 
     // After all retries, return the last result
     console.log('Deposit verification failed after all retries');
-    return await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt);
+    return await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt, excludeSender);
   }
 
   /**
