@@ -3711,6 +3711,15 @@ async function main() {
 
 module.exports = { initBot, bot };
 
+// Prevent unhandled promise rejections from crashing the process (e.g. in-flight
+// sendWinnings calls that were started by old code before a rolling deploy).
+process.on('unhandledRejection', (reason) => {
+  logger.error('[process] Unhandled promise rejection (non-fatal)', {
+    error: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+});
+
 // Run if this is the main module
 if (require.main === module) {
   main();

@@ -592,10 +592,12 @@ class EVMHandler {
               // This catches tokens whose Transfer events exist on-chain but are not surfaced by the API.
               if (transfers.length === 0 && knownSender && tokenAddress && tokenAddress !== 'NATIVE') {
                 try {
+                  // Paxeer RPC enforces a max 1000-block distance — compute ethLogsFromBlock first.
+                  const ethLogsFromBlock = Math.max(0, currentBlock - 999);
                   console.log('[getRecentDepositSender] Fallback 3: eth_getLogs (Paxscan may not index this token)', {
                     targetSender,
                     tokenAddress,
-                    fromBlock,
+                    fromBlock: ethLogsFromBlock,
                   });
 
                   const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
@@ -605,7 +607,7 @@ class EVMHandler {
                   const rawLogs = await this.provider.getLogs({
                     address: tokenAddress,
                     topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
-                    fromBlock,
+                    fromBlock: ethLogsFromBlock,
                     toBlock: 'latest',
                   });
 
