@@ -253,6 +253,7 @@ class EVMHandler {
                 expectedToken: tokenAddress.toLowerCase(),
               });
               
+              await new Promise(r => setTimeout(r, 1500)); // avoid Paxscan rate limit between sequential calls
               paxscanUrl = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
               console.log('[getRecentDepositSender] Querying Paxscan API for all ERC20 tokens (wrong token detection)', { url: paxscanUrl });
               
@@ -273,6 +274,7 @@ class EVMHandler {
                 expectedToken: tokenAddress.toLowerCase(),
               });
               
+              await new Promise(r => setTimeout(r, 1500)); // avoid Paxscan rate limit between sequential calls
               paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
               console.log('[getRecentDepositSender] Querying Paxscan API for native transfers', { url: paxscanUrl });
               
@@ -436,6 +438,7 @@ class EVMHandler {
                 const paxscanUrlAllTokens = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
                 
                 try {
+                  await new Promise(r => setTimeout(r, 1500)); // avoid Paxscan rate limit between sequential calls
                   const allTokensResponse = await fetch(paxscanUrlAllTokens);
                   const allTokensData = await allTokensResponse.json();
                   
@@ -503,6 +506,7 @@ class EVMHandler {
                 const paxscanUrlNative = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
                 
                 try {
+                  await new Promise(r => setTimeout(r, 1500)); // avoid Paxscan rate limit between sequential calls
                   const nativeResponse = await fetch(paxscanUrlNative);
                   const nativeData = await nativeResponse.json();
                   

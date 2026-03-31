@@ -446,6 +446,11 @@ async function deleteOldFlipMessage(groupId, telegram) {
 /**
  * Initialize the bot
  */
+// In-memory set to prevent duplicate concurrent deposit verifications for the same flip.
+// Guards against the user tapping the button multiple times while a verification is already running,
+// which would spawn parallel Paxscan request chains and trigger rate-limiting.
+const pendingVerifications = new Set();
+
 async function initBot() {
   try {
     console.log('[INIT_BOT] Starting bot initialization...');
@@ -1341,6 +1346,14 @@ async function initBot() {
           return;
         }
 
+        // Prevent duplicate concurrent verification chains for the same flip
+        if (pendingVerifications.has(flipId)) {
+          logger.info('[deposit_confirmed] Verification already in progress, ignoring duplicate click', { flipId, userId });
+          await ctx.answerCbQuery('⏳ Already verifying...');
+          return;
+        }
+        pendingVerifications.add(flipId);
+
         logger.info('[deposit_confirmed] Verifying challenger deposit', { flipId, userId });
         
         // GET USER'S WALLETS - Both required for flip
@@ -1887,6 +1900,8 @@ async function initBot() {
           error: error.toString(),
         });
         await ctx.answerCbQuery('❌ Error confirming deposit');
+      } finally {
+        pendingVerifications.delete(ctx.match[1]);
       }
     });
 
@@ -1917,6 +1932,14 @@ async function initBot() {
           await ctx.answerCbQuery('✅ Already confirmed!');
           return;
         }
+
+        // Prevent duplicate concurrent verification chains for the same flip
+        if (pendingVerifications.has(flipId)) {
+          logger.info('[creator_deposit_confirmed] Verification already in progress, ignoring duplicate click', { flipId, userId });
+          await ctx.answerCbQuery('⏳ Already verifying...');
+          return;
+        }
+        pendingVerifications.add(flipId);
 
         logger.info('[creator_deposit_confirmed] Verifying creator deposit', { flipId, userId });
         
@@ -2447,6 +2470,8 @@ async function initBot() {
           error: error.toString(),
         });
         await ctx.answerCbQuery('❌ Error confirming deposit');
+      } finally {
+        pendingVerifications.delete(ctx.match[1]);
       }
     });
 
