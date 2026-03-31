@@ -986,69 +986,6 @@ class EVMHandler {
               targetSender,
               totalChecked: data.result.length,
             });
-
-            // Fallback: when knownSender is set but no deposit found from that address,
-            // accept any incoming native deposit of the right amount from a non-bot address.
-            // This handles the case where the user sent from a different wallet than registered.
-            // excludeSender (the other party's wallet) is excluded to prevent double-crediting.
-            if (targetSender && expectedAmount) {
-              const expectedDisplayAmount = parseFloat(expectedAmount);
-              const excludeSenderLower = excludeSender ? excludeSender.toLowerCase() : null;
-
-              console.log('[getRecentDepositSender] Native fallback: searching for any matching deposit (user may have sent from different wallet)', {
-                targetSender,
-                excludeSender: excludeSenderLower,
-                expectedAmount: expectedDisplayAmount,
-              });
-
-              // Use the same 30-minute backward grace period as the primary lookup so
-              // pre-funded deposits aren't missed just because the sender doesn't match the
-              // registered deposit wallet.
-              const fallbackGraceSecs = 1800;
-              for (const tx of data.result) {
-                const txSenderLower = tx.from.toLowerCase();
-                const txRecipientLower = tx.to?.toLowerCase() || '';
-                const txTimestamp = parseInt(tx.timeStamp, 10);
-
-                const isToBot = txRecipientLower === botWalletAddress.toLowerCase();
-                const isNotBotSelf = txSenderLower !== botWalletAddress.toLowerCase();
-                const isNotExcluded = !excludeSenderLower || txSenderLower !== excludeSenderLower;
-                const isAfterFlip = !flipCreatedAtSeconds || txTimestamp >= (flipCreatedAtSeconds - fallbackGraceSecs);
-
-                if (isToBot && isNotBotSelf && isNotExcluded && isAfterFlip) {
-                  const txAmount = parseFloat(ethers.formatUnits(tx.value, 18));
-                  const isRightAmount = txAmount >= expectedDisplayAmount * 0.99;
-
-                  if (isRightAmount) {
-                    console.log('[getRecentDepositSender] Native fallback: accepting deposit from different address', {
-                      actualSender: txSenderLower,
-                      expectedSender: targetSender,
-                      amount: txAmount,
-                      expectedAmount: expectedDisplayAmount,
-                      txHash: tx.hash,
-                      timestamp: txTimestamp,
-                    });
-
-                    return {
-                      sender: txSenderLower,
-                      amount: txAmount.toString(),
-                      transactionHash: tx.hash,
-                      blockNumber: tx.blockNumber,
-                      transferCount: 1,
-                      hasWrongTokens: false,
-                      wrongToken: null,
-                      amountIsDisplayFormat: true,
-                    };
-                  }
-                }
-              }
-
-              console.warn('[getRecentDepositSender] Native fallback: no matching deposit found from any address', {
-                targetSender,
-                excludeSender: excludeSenderLower,
-                expectedAmount: expectedDisplayAmount,
-              });
-            }
           } else {
             console.warn('[getRecentDepositSender] No native transfers found via txlist', {
               status: data.status,
