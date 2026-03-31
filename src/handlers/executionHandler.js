@@ -102,22 +102,28 @@ class ExecutionHandler {
       const winnerPrize = totalPool * 0.9; // 90% to winner, 10% fees
       const winnerPrizeFormatted = winnerPrize.toLocaleString('en-US', { maximumFractionDigits: 6 });
 
-      // Send winnings to winner automatically
+      // Send winnings to winner automatically — retry up to 3 times with a 5-second delay
       let winningTxHash = null;
-      try {
-        const blockchainManager = getBlockchainManager();
-        const sendResult = await blockchainManager.sendWinnings(
-          flip.tokenNetwork,
-          flip.tokenAddress,
-          winnerDepositAddress,
-          winnerPrize.toString(),
-          flip.tokenDecimals
-        );
-        winningTxHash = sendResult.txHash;
-        logger.info('Winnings sent to winner', { flipId, winnerId, txHash: winningTxHash, amount: winnerPrize });
-      } catch (sendError) {
-        logger.error('Error sending winnings', { flipId, winnerId, error: sendError.message });
-        // Continue even if send fails, we still want to record the flip result
+      const MAX_PAYOUT_ATTEMPTS = 3;
+      for (let attempt = 1; attempt <= MAX_PAYOUT_ATTEMPTS; attempt++) {
+        try {
+          const blockchainManager = getBlockchainManager();
+          const sendResult = await blockchainManager.sendWinnings(
+            flip.tokenNetwork,
+            flip.tokenAddress,
+            winnerDepositAddress,
+            winnerPrize.toString(),
+            flip.tokenDecimals
+          );
+          winningTxHash = sendResult.txHash;
+          logger.info('Winnings sent to winner', { flipId, winnerId, txHash: winningTxHash, amount: winnerPrize });
+          break; // success — stop retrying
+        } catch (sendError) {
+          logger.error('Error sending winnings', { flipId, winnerId, attempt, maxAttempts: MAX_PAYOUT_ATTEMPTS, error: sendError.message });
+          if (attempt < MAX_PAYOUT_ATTEMPTS) {
+            await new Promise(r => setTimeout(r, 5000));
+          }
+        }
       }
 
       // Send fees - split between $FLIP holder distribution pool (5%) and burn address (5%)
