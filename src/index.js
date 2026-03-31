@@ -565,11 +565,66 @@ async function initBot() {
         logger.info('[startup] Auto-cancelling expired challenge', { flipId: flip.id, elapsedSeconds: Math.round(elapsedTime / 1000) });
         flip.status = 'CANCELLED';
         flip.data = { ...flip.data, cancelReason: 'Challenge expired on bot startup' };
-        flip.creatorDepositWalletAddress = null;
-        flip.challengerDepositWalletAddress = null;
-        flip.creatorAccumulatedDeposit = 0;
-        flip.challengerAccumulatedDeposit = 0;
+        flip.changed('data', true);
         await flip.save();
+
+        // Send expiration notice to group
+        try {
+          const botInfo = await bot.telegram.getMe();
+          const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+          const newFlipSession = await models.BotSession.create({
+            userId: flip.creatorId,
+            sessionType: 'INITIATING',
+            currentStep: 'AWAITING_DM_START',
+            data: { groupId: flip.groupChatId },
+          });
+          const deeplink = `https://t.me/${botInfo.username}?start=flip_${newFlipSession.id}`;
+          const expiredMsg = await bot.telegram.sendMessage(
+            flip.groupChatId,
+            `⏰ <b>Challenge Expired</b>\n\n` +
+            `No one accepted the challenge for <b>${formattedWager} ${flip.tokenSymbol}</b>.\n` +
+            `Funds have been refunded to the creator.\n\n` +
+            `Would you like to start a new challenge?`,
+            {
+              parse_mode: 'HTML',
+              reply_markup: Markup.inlineKeyboard([
+                [Markup.button.url('🪙 Start a Challenge', deeplink)],
+              ]).reply_markup,
+            }
+          );
+          flip.data = { ...flip.data, expiredNoticeMessageId: expiredMsg.message_id };
+          flip.changed('data', true);
+          await flip.save();
+        } catch (msgErr) {
+          logger.error('[startup] Failed to send expiration message', { flipId: flip.id, error: msgErr.message });
+        }
+
+        // Refund creator's deposit in background
+        (async () => {
+          try {
+            const creator = await models.User.findByPk(flip.creatorId);
+            const creatorDepositWallet = flip.creatorDepositWalletAddress;
+            if (creator && creatorDepositWallet) {
+              const blockchainManager = getBlockchainManager();
+              const supportedTokens = config.supportedTokens;
+              let tokenAddress = 'NATIVE';
+              let tokenDecimals = 18;
+              for (const key in supportedTokens) {
+                if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
+                  tokenAddress = supportedTokens[key].address || 'NATIVE';
+                  tokenDecimals = supportedTokens[key].decimals || 18;
+                  break;
+                }
+              }
+              const txHash = await blockchainManager.sendWinnings(flip.tokenNetwork, tokenAddress, creatorDepositWallet, flip.creatorAccumulatedDeposit, tokenDecimals);
+              logger.info('[startup] Refunded creator deposit', { flipId: flip.id, creatorId: flip.creatorId, depositWallet: creatorDepositWallet, amount: flip.creatorAccumulatedDeposit, txHash });
+            } else {
+              logger.warn('[startup] Creator or deposit wallet missing for refund', { flipId: flip.id, hasDepositWallet: !!flip.creatorDepositWalletAddress });
+            }
+          } catch (refundErr) {
+            logger.error('[startup] Error processing creator refund', { flipId: flip.id, error: refundErr.message });
+          }
+        })().catch(err => logger.error('[startup] Unhandled error in background refund', { flipId: flip.id, error: err.message }));
       } else if (elapsedTime > CHALLENGE_TIMEOUT) {
         // Challenge is in the alert window, re-set the alert timeout
         const remainingAlert = (CHALLENGE_TIMEOUT + ALERT_DELAY) - elapsedTime;
@@ -582,26 +637,66 @@ async function initBot() {
               logger.info('[startup-timeout] Auto-cancelling expired challenge', { flipId: flip.id });
               flipCheck.status = 'CANCELLED';
               flipCheck.data = { ...flipCheck.data, cancelReason: 'Challenge expired' };
-              flipCheck.creatorDepositWalletAddress = null;
-              flipCheck.challengerDepositWalletAddress = null;
-              flipCheck.creatorAccumulatedDeposit = 0;
-              flipCheck.challengerAccumulatedDeposit = 0;
+              flipCheck.changed('data', true);
               await flipCheck.save();
-              
-              // Try to notify group
+
+              // Send expiration notice to group
               try {
-                await bot.telegram.editMessageCaption(
+                const botInfo = await bot.telegram.getMe();
+                const formattedWager = parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+                const newFlipSession = await models.BotSession.create({
+                  userId: flipCheck.creatorId,
+                  sessionType: 'INITIATING',
+                  currentStep: 'AWAITING_DM_START',
+                  data: { groupId: flipCheck.groupChatId },
+                });
+                const deeplink = `https://t.me/${botInfo.username}?start=flip_${newFlipSession.id}`;
+                const expiredMsg = await bot.telegram.sendMessage(
                   flipCheck.groupChatId,
-                  flipCheck.groupMessageId,
-                  null,
-                  `❌ <b>Challenge Expired</b>\n\n` +
-                  `The challenge for <b>${parseFloat(flipCheck.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipCheck.tokenSymbol}</b> ` +
-                  `expired because no one accepted it.`,
-                  { parse_mode: 'HTML' }
+                  `⏰ <b>Challenge Expired</b>\n\n` +
+                  `No one accepted the challenge for <b>${formattedWager} ${flipCheck.tokenSymbol}</b>.\n` +
+                  `Funds have been refunded to the creator.\n\n` +
+                  `Would you like to start a new challenge?`,
+                  {
+                    parse_mode: 'HTML',
+                    reply_markup: Markup.inlineKeyboard([
+                      [Markup.button.url('🪙 Start a Challenge', deeplink)],
+                    ]).reply_markup,
+                  }
                 );
-              } catch (err) {
-                logger.warn('[startup-timeout] Failed to update group message', { flipId: flip.id, error: err.message });
+                flipCheck.data = { ...flipCheck.data, expiredNoticeMessageId: expiredMsg.message_id };
+                flipCheck.changed('data', true);
+                await flipCheck.save();
+              } catch (msgErr) {
+                logger.error('[startup-timeout] Failed to send expiration message', { flipId: flip.id, error: msgErr.message });
               }
+
+              // Refund creator's deposit in background
+              (async () => {
+                try {
+                  const creator = await models.User.findByPk(flipCheck.creatorId);
+                  const creatorDepositWallet = flipCheck.creatorDepositWalletAddress;
+                  if (creator && creatorDepositWallet) {
+                    const blockchainManager = getBlockchainManager();
+                    const supportedTokens = config.supportedTokens;
+                    let tokenAddress = 'NATIVE';
+                    let tokenDecimals = 18;
+                    for (const key in supportedTokens) {
+                      if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
+                        tokenAddress = supportedTokens[key].address || 'NATIVE';
+                        tokenDecimals = supportedTokens[key].decimals || 18;
+                        break;
+                      }
+                    }
+                    const txHash = await blockchainManager.sendWinnings(flipCheck.tokenNetwork, tokenAddress, creatorDepositWallet, flipCheck.creatorAccumulatedDeposit, tokenDecimals);
+                    logger.info('[startup-timeout] Refunded creator deposit', { flipId: flip.id, creatorId: flipCheck.creatorId, depositWallet: creatorDepositWallet, amount: flipCheck.creatorAccumulatedDeposit, txHash });
+                  } else {
+                    logger.warn('[startup-timeout] Creator or deposit wallet missing for refund', { flipId: flip.id, hasDepositWallet: !!flipCheck.creatorDepositWalletAddress });
+                  }
+                } catch (refundErr) {
+                  logger.error('[startup-timeout] Error processing creator refund', { flipId: flip.id, error: refundErr.message });
+                }
+              })().catch(err => logger.error('[startup-timeout] Unhandled error in background refund', { flipId: flip.id, error: err.message }));
             }
             delete challengeTimeouts[flip.id];
           } catch (err) {
@@ -669,21 +764,66 @@ async function initBot() {
                     logger.info('[startup-timeout] Auto-cancelling expired challenge', { flipId: flip.id });
                     flipFinal.status = 'CANCELLED';
                     flipFinal.data = { ...flipFinal.data, cancelReason: 'Challenge expired' };
+                    flipFinal.changed('data', true);
                     await flipFinal.save();
 
+                    // Send expiration notice to group
                     try {
-                      await bot.telegram.editMessageCaption(
+                      const botInfo = await bot.telegram.getMe();
+                      const formattedWager = parseFloat(flipFinal.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+                      const newFlipSession = await models.BotSession.create({
+                        userId: flipFinal.creatorId,
+                        sessionType: 'INITIATING',
+                        currentStep: 'AWAITING_DM_START',
+                        data: { groupId: flipFinal.groupChatId },
+                      });
+                      const deeplink = `https://t.me/${botInfo.username}?start=flip_${newFlipSession.id}`;
+                      const expiredMsg = await bot.telegram.sendMessage(
                         flipFinal.groupChatId,
-                        flipFinal.groupMessageId,
-                        null,
-                        `❌ <b>Challenge Expired</b>\n\n` +
-                        `The challenge for <b>${parseFloat(flipFinal.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flipFinal.tokenSymbol}</b> ` +
-                        `expired because no one accepted it.`,
-                        { parse_mode: 'HTML' }
+                        `⏰ <b>Challenge Expired</b>\n\n` +
+                        `No one accepted the challenge for <b>${formattedWager} ${flipFinal.tokenSymbol}</b>.\n` +
+                        `Funds have been refunded to the creator.\n\n` +
+                        `Would you like to start a new challenge?`,
+                        {
+                          parse_mode: 'HTML',
+                          reply_markup: Markup.inlineKeyboard([
+                            [Markup.button.url('🪙 Start a Challenge', deeplink)],
+                          ]).reply_markup,
+                        }
                       );
-                    } catch (err) {
-                      logger.warn('[startup-timeout] Failed to update message on cancel', { flipId: flip.id, error: err.message });
+                      flipFinal.data = { ...flipFinal.data, expiredNoticeMessageId: expiredMsg.message_id };
+                      flipFinal.changed('data', true);
+                      await flipFinal.save();
+                    } catch (msgErr) {
+                      logger.error('[startup-timeout] Failed to send expiration message', { flipId: flip.id, error: msgErr.message });
                     }
+
+                    // Refund creator's deposit in background
+                    (async () => {
+                      try {
+                        const creator = await models.User.findByPk(flipFinal.creatorId);
+                        const creatorDepositWallet = flipFinal.creatorDepositWalletAddress;
+                        if (creator && creatorDepositWallet) {
+                          const blockchainManager = getBlockchainManager();
+                          const supportedTokens = config.supportedTokens;
+                          let tokenAddress = 'NATIVE';
+                          let tokenDecimals = 18;
+                          for (const key in supportedTokens) {
+                            if (supportedTokens[key].symbol === flipFinal.tokenSymbol && supportedTokens[key].network === flipFinal.tokenNetwork) {
+                              tokenAddress = supportedTokens[key].address || 'NATIVE';
+                              tokenDecimals = supportedTokens[key].decimals || 18;
+                              break;
+                            }
+                          }
+                          const txHash = await blockchainManager.sendWinnings(flipFinal.tokenNetwork, tokenAddress, creatorDepositWallet, flipFinal.creatorAccumulatedDeposit, tokenDecimals);
+                          logger.info('[startup-timeout] Refunded creator deposit', { flipId: flip.id, creatorId: flipFinal.creatorId, depositWallet: creatorDepositWallet, amount: flipFinal.creatorAccumulatedDeposit, txHash });
+                        } else {
+                          logger.warn('[startup-timeout] Creator or deposit wallet missing for refund', { flipId: flip.id, hasDepositWallet: !!flipFinal.creatorDepositWalletAddress });
+                        }
+                      } catch (refundErr) {
+                        logger.error('[startup-timeout] Error processing creator refund', { flipId: flip.id, error: refundErr.message });
+                      }
+                    })().catch(err => logger.error('[startup-timeout] Unhandled error in background refund', { flipId: flip.id, error: err.message }));
                   }
                   delete challengeTimeouts[flip.id];
                 } catch (err) {
