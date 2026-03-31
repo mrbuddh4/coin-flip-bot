@@ -695,114 +695,12 @@ class EVMHandler {
                 }
               }
 
-              // If knownSender is specified but no transfers found from that wallet, return null.
-              // Do NOT fall through to the any-sender fallback — that would pick up other parties'
-              // deposits (e.g. the creator's deposit) and falsely attribute them to this depositor.
-              if (transfers.length === 0 && knownSender) {
-                console.warn('[getRecentDepositSender] Known sender specified but NO deposits found from that wallet - returning null', {
-                  knownSender,
-                  botWalletAddress,
-                  expectedToken: tokenAddress.toLowerCase(),
-                });
-                return null;
-              }
-              
-              // Fallback: accumulate ALL recent incoming transfers to bot wallet that are after flip creation.
-              // Only reached when knownSender is NOT specified (i.e., we don't know who should deposit).
-              let fallbackTotal = 0;
-              let fallbackLatestTx = null;
-              let fallbackSender = null;
-              const fallbackTransfers = [];
-              
-              for (const tx of data.result) {
-                const txRecipientLower = tx.to?.toLowerCase() || '';
-                const txTimestamp = parseInt(tx.timeStamp, 10);
-                const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
-                const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
-                
-                // CRITICAL: Verify the transfer is from the expected token contract
-                const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
-                
-                if (txRecipientLower === botWalletAddress.toLowerCase() && isAfterFlipCreation && isCorrectToken) {
-                  const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
-                  const txSenderLower = tx.from.toLowerCase();
-                  
-                  // Use first incoming sender if not set yet
-                  if (!fallbackSender) {
-                    fallbackSender = txSenderLower;
-                  }
-                  
-                  // Only accumulate if from same sender (first incoming sender)
-                  if (txSenderLower === fallbackSender) {
-                    fallbackTotal += txAmount;
-                    if (!fallbackLatestTx) fallbackLatestTx = tx;
-                    fallbackTransfers.push({
-                      from: txSenderLower,
-                      amount: txAmount,
-                      hash: tx.hash,
-                      timestamp: txTimestamp,
-                      contractAddress: txContractAddressLower,
-                    });
-                  }
-                }
-              }
-              
-              if (fallbackTransfers.length > 0) {
-                console.log('[getRecentDepositSender] Fallback - accumulated transfers', {
-                  sender: fallbackSender,
-                  totalAmount: fallbackTotal,
-                  transferCount: fallbackTransfers.length,
-                  expectedToken: tokenAddress.toLowerCase(),
-                  transfers: fallbackTransfers,
-                });
-                
-                return {
-                  sender: fallbackSender,
-                  amount: fallbackTotal.toString(),
-                  transactionHash: fallbackLatestTx.hash,
-                  blockNumber: fallbackLatestTx.blockNumber,
-                  transferCount: fallbackTransfers.length,
-                  amountIsDisplayFormat: true, // EVM amounts already formatted by ethers.formatUnits()
-                };
-              }
-              
-              // CRITICAL: If still no transfers found, search for ANY transfers to bot (including wrong tokens)
-              // This helps refund incorrect tokens even if they don't match the expected token
-              console.log('[getRecentDepositSender] No correct-token transfers found, searching for ANY transfers to bot for refund purposes', {
-                botWalletAddress: botWalletAddress.toLowerCase(),
+              // No deposits found from the registered wallet — always return null.
+              console.warn('[getRecentDepositSender] No deposits found from registered wallet - returning null', {
+                knownSender,
+                botWalletAddress,
                 expectedToken: tokenAddress.toLowerCase(),
               });
-              
-              for (const tx of data.result) {
-                const txRecipientLower = tx.to?.toLowerCase() || '';
-                const txTimestamp = parseInt(tx.timeStamp, 10);
-                const txSenderLower = tx.from.toLowerCase();
-                const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
-                
-                // Find ANY incoming transfer to bot after flip creation (for refund purposes)
-                if (txRecipientLower === botWalletAddress.toLowerCase() && isAfterFlipCreation) {
-                  const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
-                  const wrongTokenAddress = tx.contractAddress?.toLowerCase() || '';
-                  
-                  console.log('[getRecentDepositSender] Found transfer with WRONG token - returning sender for refund', {
-                    sender: txSenderLower,
-                    amount: txAmount,
-                    wrongToken: wrongTokenAddress,
-                    expectedToken: tokenAddress.toLowerCase(),
-                    txHash: tx.hash,
-                  });
-                  
-                  return {
-                    sender: txSenderLower,
-                    amount: txAmount.toString(),
-                    transactionHash: tx.hash,
-                    blockNumber: tx.blockNumber,
-                    wrongToken: wrongTokenAddress, // Flag this as wrong token for refund handling
-                    amountIsDisplayFormat: true, // EVM amounts are already formatted by ethers.formatUnits()
-                  };
-                }
-              }
-              
               return null;
             }
             
@@ -950,11 +848,9 @@ class EVMHandler {
               const txTimestamp = parseInt(tx.timeStamp, 10);
 
               const isToBot = txRecipientLower === botWalletAddress.toLowerCase();
-              const isFromTarget = !targetSender || txSenderLower === targetSender;
-              // For an exact knownSender match, allow deposits up to 30 minutes before flip
-              // creation — covers the common case where a user prefunds the bot before creating
-              // the flip. For unknown senders keep the strict >= filter.
-              const graceSecs = targetSender ? 1800 : 0;
+              const isFromTarget = txSenderLower === targetSender;
+              // Allow deposits up to 30 minutes before flip creation to cover pre-funded wallets.
+              const graceSecs = 1800;
               const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= (flipCreatedAtSeconds - graceSecs);
 
               if (isToBot && isFromTarget && isAfterFlipCreation) {
