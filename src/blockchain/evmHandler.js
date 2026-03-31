@@ -173,24 +173,40 @@ class EVMHandler {
    */
   async getRecentDepositSender(botWalletAddress, expectedAmount, tokenAddress = null, knownSender = null, flipCreatedAt = null, excludeSender = null) {
     try {
-      const currentBlock = await this.provider.getBlockNumber();
-      const lookbackBlocks = 10000; // Paxscan doesn't have RPC restrictions
-      const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
-      const toBlock = currentBlock + 100; // buffer for RPC lag — Paxscan will clamp to latest
-      
       // Declare once at function scope so all queries (main, fallback 1, fallback 2, fallback 3) can access
       const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
+
+      // toBlock = 999999999 so Paxscan clamps to its actual latest — avoids stale RPC values
+      // shifting toBlock backward and hiding recently-confirmed deposits.
+      // fromBlock is estimated from flip creation time (+ 300-block / ~15min buffer for pre-funding),
+      // scoping the query without risking misses from pagination on a busy bot wallet.
+      // A slightly stale getBlockNumber() here is safe — it can only widen the window, not narrow it.
+      const PAXEER_AVG_BLOCK_TIME = 3; // seconds per block on Paxeer
+      const paxToBlock = 999999999;
+      // getBlockNumber is only called for eth_getLogs fallbacks; wrap in a lazy getter
+      // so subsequent calls (Fallback 3, native path) reuse the block number already fetched above.
+      let _currentBlock = null;
+      const getBlockNumber = async () => {
+        if (_currentBlock === null) _currentBlock = await this.provider.getBlockNumber();
+        return _currentBlock;
+      };
+
+      let paxFromBlock = 0;
+      if (flipCreatedAtSeconds) {
+        const elapsedSecs = Math.max(0, Math.floor(Date.now() / 1000) - flipCreatedAtSeconds);
+        const blocksElapsed = Math.ceil(elapsedSecs / PAXEER_AVG_BLOCK_TIME);
+        _currentBlock = await this.provider.getBlockNumber(); // cache so getBlockNumber() reuses it
+        paxFromBlock = Math.max(0, _currentBlock - blocksElapsed - 300); // 300-block (~15min) buffer
+      }
 
       console.log('[getRecentDepositSender] Searching for deposits', {
         botWallet: botWalletAddress,
         token: tokenAddress,
         expectedAmount,
         knownSender,
-        fromBlock,
-        toBlock,
-        blockRange: currentBlock - fromBlock,
         flipCreatedAt,
-        method: 'Paxscan API only (RPC skipped)',
+        paxFromBlock,
+        paxToBlock,
       });
 
       if (tokenAddress && tokenAddress !== 'NATIVE') {
@@ -217,7 +233,7 @@ class EVMHandler {
           // Special handling: if looking for a CONTRACT token but none found, also check native transfers
           // This catches cases where user sends native token (PAX) instead of ERC20 (SID)
           if (tokenAddress && tokenAddress !== 'NATIVE') {
-            paxscanUrl = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+            paxscanUrl = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&contractaddress=${tokenAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
             
             console.log('[getRecentDepositSender] Querying Paxscan API for expected token', { url: paxscanUrl });
             
@@ -237,7 +253,7 @@ class EVMHandler {
                 expectedToken: tokenAddress.toLowerCase(),
               });
               
-              paxscanUrl = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+              paxscanUrl = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
               console.log('[getRecentDepositSender] Querying Paxscan API for all ERC20 tokens (wrong token detection)', { url: paxscanUrl });
               
               response = await fetch(paxscanUrl);
@@ -257,7 +273,7 @@ class EVMHandler {
                 expectedToken: tokenAddress.toLowerCase(),
               });
               
-              paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+              paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
               console.log('[getRecentDepositSender] Querying Paxscan API for native transfers', { url: paxscanUrl });
               
               response = await fetch(paxscanUrl);
@@ -271,7 +287,7 @@ class EVMHandler {
             }
           } else if (tokenAddress === 'NATIVE') {
             // Looking for native transfers directly
-            paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+            paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
             console.log('[getRecentDepositSender] Querying Paxscan API for native token transfers', { url: paxscanUrl });
             
             response = await fetch(paxscanUrl);
@@ -417,7 +433,7 @@ class EVMHandler {
                   expectedToken: tokenAddress.toLowerCase(),
                 });
                 
-                const paxscanUrlAllTokens = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+                const paxscanUrlAllTokens = `${PAXSCAN_API}?module=account&action=tokentx&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
                 
                 try {
                   const allTokensResponse = await fetch(paxscanUrlAllTokens);
@@ -484,7 +500,7 @@ class EVMHandler {
                   botWallet: botWalletAddress,
                 });
                 
-                const paxscanUrlNative = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+                const paxscanUrlNative = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
                 
                 try {
                   const nativeResponse = await fetch(paxscanUrlNative);
@@ -510,9 +526,8 @@ class EVMHandler {
                     flipAge: flipCreatedAtSeconds ? (now - flipCreatedAtSeconds) + ' seconds ago' : 'N/A',
                     targetIsFundingSender,
                     uniqueSenders: Array.from(senderAddresses),
-                    fromBlock,
-                    currentBlock,
-                    blockRange: currentBlock - fromBlock,
+                    paxFromBlock,
+                    paxToBlock,
                     firstFive: nativeData.result.slice(0, 5).map(tx => ({
                       from: tx.from,
                       to: tx.to,
@@ -593,7 +608,7 @@ class EVMHandler {
               if (transfers.length === 0 && knownSender && tokenAddress && tokenAddress !== 'NATIVE') {
                 try {
                   // Paxeer RPC enforces a max 1000-block distance — compute ethLogsFromBlock first.
-                  const ethLogsFromBlock = Math.max(0, currentBlock - 999);
+                  const ethLogsFromBlock = Math.max(0, await getBlockNumber() - 999);
                   console.log('[getRecentDepositSender] Fallback 3: eth_getLogs (Paxscan may not index this token)', {
                     targetSender,
                     tokenAddress,
@@ -819,10 +834,12 @@ class EVMHandler {
           // Paxscan returned non-JSON (e.g. HTML error page) — fall back to eth_getLogs directly
           if (knownSender && tokenAddress && tokenAddress !== 'NATIVE') {
             try {
+              const ethFallbackCurrent = await getBlockNumber();
+              const ethFallbackFromBlock = Math.max(0, ethFallbackCurrent - 10000);
               console.log('[getRecentDepositSender] Paxscan unavailable — falling back to eth_getLogs', {
                 targetSender: knownSender.toLowerCase(),
                 tokenAddress,
-                fromBlock,
+                fromBlock: ethFallbackFromBlock,
               });
 
               const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
@@ -832,7 +849,7 @@ class EVMHandler {
               const rawLogs = await this.provider.getLogs({
                 address: tokenAddress,
                 topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
-                fromBlock,
+                fromBlock: ethFallbackFromBlock,
                 toBlock: 'latest',
               });
 
@@ -895,7 +912,7 @@ class EVMHandler {
       } else if (tokenAddress === 'NATIVE') {
         // Handle native PAX token deposits via txlist API
         try {
-          const paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${fromBlock}&endblock=${toBlock}&sort=desc`;
+          const paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWalletAddress}&startblock=${paxFromBlock}&endblock=${paxToBlock}&sort=desc`;
           console.log('[getRecentDepositSender] Querying Paxscan API for native token transfers', { url: paxscanUrl });
 
           const response = await fetch(paxscanUrl);
@@ -930,7 +947,11 @@ class EVMHandler {
 
               const isToBot = txRecipientLower === botWalletAddress.toLowerCase();
               const isFromTarget = !targetSender || txSenderLower === targetSender;
-              const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+              // For an exact knownSender match, allow deposits up to 30 minutes before flip
+              // creation — covers the common case where a user prefunds the bot before creating
+              // the flip. For unknown senders keep the strict >= filter.
+              const graceSecs = targetSender ? 1800 : 0;
+              const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= (flipCreatedAtSeconds - graceSecs);
 
               if (isToBot && isFromTarget && isAfterFlipCreation) {
                 const txAmount = parseFloat(ethers.formatUnits(tx.value, 18));
