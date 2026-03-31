@@ -217,7 +217,10 @@ class ExecutionHandler {
       flip.flipResult = flipResultEnum;
       flip.winnerId = winnerId;
       flip.winningTxHash = winningTxHash;
-      flip.claimedByWinner = true; // Mark as claimed since we sent it automatically
+      // Only mark as claimed if the payout transaction actually landed.
+      // If sendWinnings threw and winningTxHash is null, leave claimedByWinner=false
+      // so the winner can still use the manual claim flow to recover their funds.
+      flip.claimedByWinner = winningTxHash !== null;
       flip.status = 'COMPLETED';
       // Clear deposit wallet addresses and accumulated amounts for next session
       flip.creatorDepositWalletAddress = null;

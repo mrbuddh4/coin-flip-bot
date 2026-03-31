@@ -997,6 +997,10 @@ class EVMHandler {
                 expectedAmount: expectedDisplayAmount,
               });
 
+              // Use the same 30-minute backward grace period as the primary lookup so
+              // pre-funded deposits aren't missed just because the sender doesn't match the
+              // registered deposit wallet.
+              const fallbackGraceSecs = 1800;
               for (const tx of data.result) {
                 const txSenderLower = tx.from.toLowerCase();
                 const txRecipientLower = tx.to?.toLowerCase() || '';
@@ -1005,7 +1009,7 @@ class EVMHandler {
                 const isToBot = txRecipientLower === botWalletAddress.toLowerCase();
                 const isNotBotSelf = txSenderLower !== botWalletAddress.toLowerCase();
                 const isNotExcluded = !excludeSenderLower || txSenderLower !== excludeSenderLower;
-                const isAfterFlip = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                const isAfterFlip = !flipCreatedAtSeconds || txTimestamp >= (flipCreatedAtSeconds - fallbackGraceSecs);
 
                 if (isToBot && isNotBotSelf && isNotExcluded && isAfterFlip) {
                   const txAmount = parseFloat(ethers.formatUnits(tx.value, 18));
