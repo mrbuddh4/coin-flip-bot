@@ -91,7 +91,7 @@ class ExecutionHandler {
       }
 
       // Perform coin flip (0 = creator wins, 1 = challenger wins)
-      const result = performCoinFlip();
+      const result = await performCoinFlip();
       const winnerId = result === 0 ? flip.creatorId : flip.challengerId;
       const flipResultEnum = result === 0 ? 'CREATOR' : 'CHALLENGER';
       const winnerDepositAddress = result === 0 ? flip.creatorDepositWalletAddress : flip.challengerDepositWalletAddress;

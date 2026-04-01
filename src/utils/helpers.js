@@ -1,9 +1,37 @@
 /**
- * Perform a random coin flip
- * Returns 0 (creator) or 1 (challenger)
+ * Perform a cryptographically secure coin flip.
+ * Returns 0 (creator wins) or 1 (challenger wins).
+ *
+ * Primary source: FLIP_SERVICE_URL Python microservice (secrets.randbelow).
+ * Fallback: Node.js crypto.randomInt — still CSPRNG-backed, used only when
+ * the service is unreachable so flips are never blocked by service downtime.
  */
-const performCoinFlip = () => {
-  return Math.random() < 0.5 ? 0 : 1;
+const performCoinFlip = async () => {
+  const serviceUrl = process.env.FLIP_SERVICE_URL;
+  const apiKey = process.env.FLIP_SERVICE_API_KEY;
+
+  if (serviceUrl && apiKey) {
+    try {
+      const res = await fetch(`${serviceUrl}/flip`, {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.result === 0 || data.result === 1) return data.result;
+      throw new Error(`Unexpected result value: ${data.result}`);
+    } catch (err) {
+      // Log but don't throw — fall through to local CSPRNG so the flip
+      // still executes even if the service is temporarily down.
+      const logger = require('./logger');
+      logger.error('[performCoinFlip] Flip service unavailable, using local CSPRNG fallback', { error: err.message });
+    }
+  }
+
+  // Fallback: crypto.randomInt is CSPRNG-backed (unlike Math.random)
+  const { randomInt } = require('crypto');
+  return randomInt(2);
 };
 
 /**
