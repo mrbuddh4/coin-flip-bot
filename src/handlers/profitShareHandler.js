@@ -272,87 +272,40 @@ class ProfitShareHandler {
     const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
     const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_ABI, provider);
 
-    // ── Step 1: try Paxscan tokenholderlist (paginated) ──────────────────────
-    // tokenholderlist is on the public explorer paxscan.io — the internal
-    // paxscan.paxeer.app API returns "Unknown action" for this endpoint.
-    const PAXSCAN_BASE = process.env.PAXSCAN_API_URL || 'https://paxscan.io/api';
-    let paxscanAddresses = [];
+    // ── Step 1: collect all FLIP Transfer recipients via Paxscan getLogs API ─
+    // paxscan.paxeer.app supports module=logs&action=getLogs which returns all
+    // Transfer events for the token — this gives every address that ever received
+    // FLIP. tokenholderlist is NOT supported by this API.
+    const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
+    const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+    const rpcAddresses = new Set();
+    let apiAddressCount = 0;
     try {
       let page = 1;
-      const offset = 500;
+      const offset = 1000;
       while (true) {
-        const url = `${PAXSCAN_BASE}?module=token&action=tokenholderlist&contractaddress=${FLIP_TOKEN_ADDRESS}&page=${page}&offset=${offset}`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        const url = `${PAXSCAN_API}?module=logs&action=getLogs&address=${FLIP_TOKEN_ADDRESS}&topic0=${TRANSFER_TOPIC}&fromBlock=0&toBlock=latest&page=${page}&offset=${offset}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
         const json = await res.json();
         if (json.status !== '1' || !Array.isArray(json.result) || json.result.length === 0) break;
-        for (const item of json.result) {
-          const addr = (item.TokenHolderAddress || item.address || '').toLowerCase();
-          if (addr && /^0x[a-f0-9]{40}$/.test(addr)) paxscanAddresses.push(addr);
+        for (const log of json.result) {
+          // topics[2] is the indexed 'to' address, zero-padded to 32 bytes
+          if (log.topics && log.topics[2]) {
+            const addr = ('0x' + log.topics[2].slice(26)).toLowerCase();
+            if (/^0x[a-f0-9]{40}$/.test(addr)) rpcAddresses.add(addr);
+          }
         }
         if (json.result.length < offset) break; // last page
         page++;
       }
-      if (paxscanAddresses.length > 0) {
-        logger.info('[ProfitShare] $FLIP holder addresses from Paxscan tokenholderlist', { count: paxscanAddresses.length });
+      apiAddressCount = rpcAddresses.size;
+      if (apiAddressCount > 0) {
+        logger.info('[ProfitShare] $FLIP recipient addresses from Paxscan getLogs', { count: apiAddressCount });
       } else {
-        logger.warn('[ProfitShare] Paxscan tokenholderlist returned no holders, will rely on eth_getLogs + DB');
+        logger.warn('[ProfitShare] Paxscan getLogs returned no Transfer events');
       }
     } catch (err) {
-      logger.warn('[ProfitShare] Paxscan tokenholderlist failed', { error: err.message });
-    }
-
-    // ── Step 1.5: eth_getLogs Transfer scan — catches holders Paxscan misses ─
-    // Scan all FLIP Transfer events to collect every address that ever received
-    // FLIP tokens. We then verify their current balance in Step 3.
-    const rpcAddresses = new Set(paxscanAddresses);
-    try {
-      const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
-      const currentBlock = await provider.getBlockNumber();
-      const CHUNK = 50000;
-      let rpcNewCount = 0;
-
-      for (let fromBlock = 0; fromBlock <= currentBlock; fromBlock += CHUNK) {
-        const toBlock = Math.min(fromBlock + CHUNK - 1, currentBlock);
-        try {
-          const logs = await provider.getLogs({
-            address: FLIP_TOKEN_ADDRESS,
-            topics: [TRANSFER_TOPIC],
-            fromBlock,
-            toBlock,
-          });
-          for (const log of logs) {
-            // topics[2] is the 'to' address (indexed), zero-padded to 32 bytes
-            if (log.topics[2]) {
-              const addr = ('0x' + log.topics[2].slice(26)).toLowerCase();
-              if (/^0x[a-f0-9]{40}$/.test(addr) && !rpcAddresses.has(addr)) {
-                rpcAddresses.add(addr);
-                rpcNewCount++;
-              }
-            }
-          }
-        } catch (chunkErr) {
-          // Some RPC nodes don't support ranged eth_getLogs (e.g. "maximum [from, to] blocks distance: 0").
-          // If this is one of those nodes, break immediately rather than retrying every chunk.
-          if (chunkErr.message && chunkErr.message.includes('blocks distance')) {
-            logger.warn('[ProfitShare] eth_getLogs not supported by this RPC node, skipping scan', { error: chunkErr.message });
-            break;
-          }
-          logger.warn('[ProfitShare] eth_getLogs chunk failed', { fromBlock, toBlock, error: chunkErr.message });
-        }
-      }
-
-      if (rpcNewCount > 0) {
-        logger.info('[ProfitShare] eth_getLogs discovered additional FLIP recipient addresses', {
-          newAddresses: rpcNewCount,
-          totalAfterScan: rpcAddresses.size,
-        });
-      } else {
-        logger.info('[ProfitShare] eth_getLogs scan complete, no new addresses beyond Paxscan', {
-          total: rpcAddresses.size,
-        });
-      }
-    } catch (err) {
-      logger.warn('[ProfitShare] eth_getLogs FLIP holder scan failed', { error: err.message });
+      logger.warn('[ProfitShare] Paxscan getLogs failed', { error: err.message });
     }
 
     // ── Step 2: merge with DB addresses (ensures manually-added ones are included) ─
@@ -363,8 +316,7 @@ class ProfitShareHandler {
     const allAddresses = [...rpcAddresses];
 
     logger.info('[ProfitShare] $FLIP holder addresses fetched', {
-      fromPaxscan: paxscanAddresses.length,
-      fromRpc: rpcAddresses.size - paxscanAddresses.length - dbAddresses.filter(a => !rpcAddresses.has(a)).length,
+      fromApi: apiAddressCount,
       fromDb: dbAddresses.length,
       total: allAddresses.length,
     });
