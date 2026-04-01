@@ -29,6 +29,10 @@ const EXCLUDED_ADDRESSES = new Set([
   FLIP_TOKEN_ADDRESS.toLowerCase(),
   // Sidiora.fun exchange pool — holds liquidity, not a real holder
   (process.env.SIDIORA_EXCHANGE_ADDRESS || '0xA0Cd0F92f12f881aeBaFF9e0fb3144511c9ebF6c').toLowerCase(),
+  // Bot hot wallet — temporarily holds deposits during active flips
+  ...(process.env.EVM_BOT_WALLET_ADDRESS ? [process.env.EVM_BOT_WALLET_ADDRESS.toLowerCase()] : []),
+  // Dev wallet — is the distribution source, not a recipient
+  ...(process.env.EVM_DEV_WALLET ? [process.env.EVM_DEV_WALLET.toLowerCase()] : []),
   ..._extraExclusions,
 ]);
 
