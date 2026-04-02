@@ -1,7 +1,7 @@
 const { ethers } = require('ethers');
 const config = require('../config');
 
-const PAXSCAN_API = 'https://paxscan.paxeer.app/api';
+const PAXSCAN_API = 'https://api.paxportwallet.com/api';
 
 class EVMHandler {
   constructor() {
