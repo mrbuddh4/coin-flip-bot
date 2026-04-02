@@ -3020,6 +3020,80 @@ async function initBot() {
       }
     });
 
+    // ── My Tokens: open list ───────────────────────────────────────────────────
+    bot.action('open_my_tokens', async (ctx) => {
+      try {
+        await showMyTokensMenu(ctx, false);
+        await ctx.answerCbQuery();
+      } catch (error) {
+        logger.error('Error opening my tokens', { error: error.message });
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
+    // ── My Tokens: remove a favorite by index ─────────────────────────────────
+    bot.action(/^remove_fav_token_(\d+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const idx = parseInt(ctx.match[1], 10);
+        const userId = ctx.from.id;
+        const profile = await models.UserProfile.findByPk(userId);
+        if (!profile) return ctx.answerCbQuery('❌ Profile not found');
+
+        const favorites = Array.isArray(profile.favoriteTokens) ? profile.favoriteTokens : [];
+        if (idx < 0 || idx >= favorites.length) return ctx.answerCbQuery('❌ Token not found');
+
+        const removed = favorites[idx];
+        profile.favoriteTokens = favorites.filter((_, i) => i !== idx);
+        await profile.save();
+
+        await ctx.answerCbQuery(`🗑️ ${removed.symbol} removed`);
+        await showMyTokensMenu(ctx, true);
+      } catch (error) {
+        logger.error('Error removing favorite token', { error: error.message });
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
+    // ── My Tokens: prompt to add a new token via CA ───────────────────────────
+    bot.action('add_fav_token', async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+
+        await models.BotSession.destroy({
+          where: { userId: String(userId), sessionType: 'MANAGING_FAVORITES' },
+        });
+        await models.BotSession.create({
+          userId: String(userId),
+          sessionType: 'MANAGING_FAVORITES',
+          currentStep: 'AWAITING_FAV_CA',
+          data: {},
+        });
+
+        await ctx.editMessageText(
+          '➕ <b>Add Favorite Token</b>\n\nSend the EVM contract address (<code>0x…</code>) of the token you want to add to your favorites.\n\nOr /cancel to go back.',
+          { parse_mode: 'HTML' }
+        );
+        await ctx.answerCbQuery();
+      } catch (error) {
+        logger.error('Error starting add favorite flow', { error: error.message });
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
+    // ── My Tokens: back to start dashboard ────────────────────────────────────
+    bot.action('back_to_start_dashboard', async (ctx) => {
+      try {
+        await ctx.deleteMessage().catch(() => {});
+        await handlers.start(ctx);
+        await ctx.answerCbQuery();
+      } catch (error) {
+        logger.error('Error going back to start dashboard', { error: error.message });
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
     logger.info('Bot initialized successfully');
     console.log('✅ Bot ready!');
   } catch (error) {
@@ -3494,6 +3568,9 @@ const handlers = {
             ],
             [
               Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
+              Markup.button.callback('⭐ My Tokens', 'open_my_tokens'),
+            ],
+            [
               Markup.button.callback('❓ Help', 'show_help_action'),
             ],
           ]).reply_markup,
@@ -3678,6 +3755,10 @@ For each network (Paxeer & Solana) you need:
       } else if (activeSession.sessionType === 'CLAIMING_WINNINGS') {
         logger.info('Processing payout address');
         await ExecutionHandler.processPayoutAddress(ctx);
+      } else if (activeSession.sessionType === 'MANAGING_FAVORITES') {
+        if (activeSession.currentStep === 'AWAITING_FAV_CA') {
+          await handleFavCAInput(ctx, activeSession);
+        }
       } else {
         logger.warn('Unknown session type', { sessionType: activeSession.sessionType });
       }
@@ -4030,6 +4111,91 @@ async function showTokenSelectionMenu(ctx, session, editMessage = false) {
  * Handle the text message where the user types an EVM contract address for a custom token.
  * Validates the address, resolves on-chain metadata, then shows a confirmation message.
  */
+/** Show (or edit to) the My Tokens management page. */
+async function showMyTokensMenu(ctx, editMessage = false) {
+  const { models } = getDB();
+  const userId = ctx.from?.id;
+  const profile = await models.UserProfile.findByPk(userId);
+  const favorites = Array.isArray(profile?.favoriteTokens) ? profile.favoriteTokens : [];
+
+  let msgText = '⭐ <b>My Tokens</b>\n\n';
+  const rows = [];
+
+  if (favorites.length === 0) {
+    msgText += 'You have no saved tokens yet.\n\nTap <b>Add Token</b> to save an EVM token by its contract address.';
+  } else {
+    msgText += 'Your saved favorite tokens:\n\n';
+    favorites.forEach((token, idx) => {
+      msgText += `${idx + 1}. <b>${token.symbol}</b> — ${token.network}\n   <code>${token.address}</code>\n`;
+      rows.push([Markup.button.callback(`🗑️ Remove ${token.symbol}`, `remove_fav_token_${idx}`)]);
+    });
+    msgText += '\nFavorite tokens appear in your token picker when starting a flip.';
+  }
+
+  rows.push([Markup.button.callback('➕ Add Token', 'add_fav_token')]);
+  rows.push([Markup.button.callback('◀ Back to Menu', 'back_to_start_dashboard')]);
+
+  const opts = { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(rows).reply_markup };
+  if (editMessage) {
+    await ctx.editMessageText(msgText, opts);
+  } else {
+    await ctx.reply(msgText, opts);
+  }
+}
+
+/** Handle a contract address sent in DM during the MANAGING_FAVORITES flow. */
+async function handleFavCAInput(ctx, session) {
+  const { ethers } = require('ethers');
+  const { models } = getDB();
+  const input = ctx.message.text.trim();
+
+  if (!ethers.isAddress(input)) {
+    await ctx.reply(
+      '❌ <b>Invalid address</b>\n\nThat doesn\'t look like a valid EVM contract address.\n\nPlease send a valid <code>0x…</code> address.',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  const address = ethers.getAddress(input);
+  await ctx.reply('🔍 Resolving token info…');
+
+  try {
+    const blockchainManager = getBlockchainManager();
+    const tokenInfo = await blockchainManager.getTokenInfo('EVM', address);
+
+    const userId = ctx.from.id;
+    let profile = await models.UserProfile.findByPk(userId);
+    if (!profile) profile = await models.UserProfile.create({ userId });
+    const existing = Array.isArray(profile.favoriteTokens) ? profile.favoriteTokens : [];
+    const alreadySaved = existing.some(f => (f.address || '').toLowerCase() === address.toLowerCase());
+
+    if (!alreadySaved) {
+      profile.favoriteTokens = [...existing, {
+        network: 'EVM',
+        address,
+        symbol: tokenInfo.symbol,
+        decimals: tokenInfo.decimals,
+      }];
+      await profile.save();
+    }
+
+    await session.destroy();
+
+    const statusText = alreadySaved
+      ? `ℹ️ <b>${tokenInfo.symbol}</b> is already in your favorites.`
+      : `❤️ <b>${tokenInfo.symbol}</b> added to your favorites!`;
+    await ctx.reply(statusText, { parse_mode: 'HTML' });
+    await showMyTokensMenu(ctx, false);
+  } catch (err) {
+    logger.error('[handleFavCAInput] Failed to resolve token', { address, error: err.message });
+    await ctx.reply(
+      `❌ <b>Could not resolve token</b>\n\nMake sure this is a valid ERC-20 contract on the Paxeer EVM network.\n\nError: ${err.message}`,
+      { parse_mode: 'HTML' }
+    );
+  }
+}
+
 async function handleCustomCAInput(ctx, session) {
   const { ethers } = require('ethers');
   const input = ctx.message.text.trim();
