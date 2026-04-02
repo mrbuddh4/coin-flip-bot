@@ -37,9 +37,20 @@ class EVMHandler {
   }
 
   /**
-   * Get native ETH balance
+   * Resolve on-chain metadata for an ERC20 token contract.
+   * Returns { symbol, decimals } or throws if the address is not a valid ERC20.
    */
-  async getNativeBalance(walletAddress) {
+  async getTokenInfo(tokenAddress) {
+    const erc20ABI = [
+      'function symbol() view returns (string)',
+      'function decimals() view returns (uint8)',
+    ];
+    const contract = new ethers.Contract(tokenAddress, erc20ABI, this.provider);
+    const [symbol, decimals] = await Promise.all([contract.symbol(), contract.decimals()]);
+    return { symbol: symbol.toString(), decimals: Number(decimals) };
+  }
+
+  /**
     try {
       const balance = await this.provider.getBalance(walletAddress);
       return {

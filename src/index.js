@@ -2684,6 +2684,146 @@ async function initBot() {
       }
     });
 
+    // ── Custom Token: "Enter Contract Address" button ────────────────────────────
+    bot.action(/^custom_token_(.+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const sessionId = ctx.match[1];
+        const userId = ctx.from.id;
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || parseInt(session.userId) !== parseInt(userId)) {
+          return ctx.answerCbQuery('❌ Session not found');
+        }
+
+        session.currentStep = 'AWAITING_CA';
+        await session.save();
+
+        await ctx.editMessageText(
+          '🔍 <b>Enter Contract Address</b>\n\n' +
+          'Send me the EVM contract address of the token you want to flip.\n\n' +
+          'Example: <code>0x86949e4cdb89496490890b67c9cff63ed8efb4b1</code>\n\n' +
+          'Must be a valid ERC-20 on the Paxeer EVM network.',
+          { parse_mode: 'HTML' }
+        );
+        await ctx.answerCbQuery();
+      } catch (error) {
+        logger.error('Error handling custom_token button', { error: error.message });
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
+    // ── Custom Token: confirm and proceed to wager (without saving) ─────────────
+    bot.action(/^confirm_custom_token_(.+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const sessionId = ctx.match[1];
+        const userId = ctx.from.id;
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || parseInt(session.userId) !== parseInt(userId)) {
+          return ctx.answerCbQuery('❌ Session not found');
+        }
+
+        const token = session.data?.pendingCustomToken;
+        if (!token) {
+          await ctx.answerCbQuery('❌ Token data lost — please try again');
+          return;
+        }
+
+        session.data = { ...session.data, tokenInfo: token, pendingCustomToken: null };
+        session.currentStep = 'AWAITING_WAGER';
+        await session.save();
+
+        await ctx.editMessageText(
+          `💰 <b>Enter Wager Amount</b>\n\n` +
+          `Token: ${token.symbol}\n` +
+          `Network: ${token.network}\n\n` +
+          `Just reply with the amount.\n` +
+          `Example: <code>10</code> or <code>100.5</code>`,
+          { parse_mode: 'HTML' }
+        );
+        await ctx.answerCbQuery();
+      } catch (error) {
+        logger.error('Error confirming custom token', { error: error.message });
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
+    // ── Custom Token: save to favorites, then proceed to wager ──────────────────
+    bot.action(/^save_and_use_custom_token_(.+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const sessionId = ctx.match[1];
+        const userId = ctx.from.id;
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || parseInt(session.userId) !== parseInt(userId)) {
+          return ctx.answerCbQuery('❌ Session not found');
+        }
+
+        const token = session.data?.pendingCustomToken;
+        if (!token) {
+          await ctx.answerCbQuery('❌ Token data lost — please try again');
+          return;
+        }
+
+        // Persist to favorites
+        let profile = await models.UserProfile.findByPk(userId);
+        if (!profile) profile = await models.UserProfile.create({ userId });
+        const existing = Array.isArray(profile.favoriteTokens) ? profile.favoriteTokens : [];
+        const alreadySaved = existing.some(
+          f => (f.address || '').toLowerCase() === token.address.toLowerCase()
+        );
+        if (!alreadySaved) {
+          profile.favoriteTokens = [...existing, token];
+          await profile.save();
+        }
+
+        session.data = { ...session.data, tokenInfo: token, pendingCustomToken: null };
+        session.currentStep = 'AWAITING_WAGER';
+        await session.save();
+
+        await ctx.editMessageText(
+          `${alreadySaved ? '✅' : '❤️ Saved!'}\n\n` +
+          `💰 <b>Enter Wager Amount</b>\n\n` +
+          `Token: ${token.symbol}\n` +
+          `Network: ${token.network}\n\n` +
+          `Just reply with the amount.\n` +
+          `Example: <code>10</code> or <code>100.5</code>`,
+          { parse_mode: 'HTML' }
+        );
+        await ctx.answerCbQuery(alreadySaved ? 'Already in favorites' : '❤️ Saved to favorites!');
+      } catch (error) {
+        logger.error('Error saving custom token to favorites', { error: error.message });
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
+    // ── Custom Token: go back to token selection menu ────────────────────────────
+    bot.action(/^back_to_token_select_(.+)$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const sessionId = ctx.match[1];
+        const userId = ctx.from.id;
+
+        const session = await models.BotSession.findByPk(sessionId);
+        if (!session || parseInt(session.userId) !== parseInt(userId)) {
+          return ctx.answerCbQuery('❌ Session not found');
+        }
+
+        session.currentStep = 'SELECTING_TOKEN';
+        session.data = { ...session.data, pendingCustomToken: null };
+        await session.save();
+
+        await showTokenSelectionMenu(ctx, session, true);
+        await ctx.answerCbQuery();
+      } catch (error) {
+        logger.error('Error going back to token selection', { error: error.message });
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
     // Handle wallet menu button from /start
     bot.action('open_wallet_menu', async (ctx) => {
       try {
@@ -3253,26 +3393,7 @@ const handlers = {
             }
 
             // Valid flip session, send token selection
-            const supportedTokens = await getSupportedTokensList();
-            
-            // Store the token list in the session to ensure consistent ordering
-            session.data.tokensList = supportedTokens;
-            await session.save();
-            
-            const tokenButtons = supportedTokens.map((token, idx) => [
-              Markup.button.callback(
-                `${token.symbol} (${token.network})`,
-                `start_flip_${session.id}_${idx}`
-              ),
-            ]);
-
-            await ctx.reply(
-              '🪙 <b>Select a Token</b>\n\nChoose which token to flip:',
-              {
-                parse_mode: 'HTML',
-                reply_markup: Markup.inlineKeyboard(tokenButtons).reply_markup,
-              }
-            );
+            await showTokenSelectionMenu(ctx, session);
             return;
           }
         } catch (error) {
@@ -3538,9 +3659,16 @@ For each network (Paxeer & Solana) you need:
         if (activeSession.currentStep === 'AWAITING_WAGER') {
           logger.info('Processing wager amount for INITIATING session');
           await FlipHandler.processWagerAmount(ctx);
+        } else if (activeSession.currentStep === 'AWAITING_CA') {
+          // User is entering a custom EVM contract address
+          await handleCustomCAInput(ctx, activeSession);
+        } else if (activeSession.currentStep === 'AWAITING_CA_CONFIRM') {
+          await ctx.reply('⬆️ Please use the buttons above to confirm or go back.');
         } else if (activeSession.currentStep === 'AWAITING_DEPOSIT') {
           logger.warn('INITIATING session AWAITING_DEPOSIT: user should click button, not send text message');
           await ctx.reply('⬆️ Please click the button above when you\'ve sent the tokens.');
+        } else if (activeSession.currentStep === 'SELECTING_TOKEN') {
+          await ctx.reply('⬆️ Please choose a token using the buttons above.');
         } else {
           logger.warn('INITIATING session but unexpected currentStep', { currentStep: activeSession.currentStep });
         }
@@ -3713,22 +3841,7 @@ For each network (Paxeer & Solana) you need:
           },
         });
 
-        const supportedTokens = await getSupportedTokensList();
-        const tokenButtons = supportedTokens.map((token, idx) => [
-          Markup.button.callback(
-            `${token.symbol} (${token.network})`,
-            `start_flip_${session.id}_${idx}`
-          ),
-        ]);
-
-        await ctx.reply(
-          '🪙 <b>Select a Token</b>\n\n' +
-          'Choose which token to flip:',
-          {
-            parse_mode: 'HTML',
-            reply_markup: Markup.inlineKeyboard(tokenButtons).reply_markup,
-          }
-        );
+        await showTokenSelectionMenu(ctx, session);
       }
     } catch (error) {
       console.error('[FLIP_ERROR]', error.message, error.stack);
@@ -3845,6 +3958,133 @@ async function getSupportedTokensList() {
   });
 
   return tokens;
+}
+
+/** Return the user's saved favorite tokens from their UserProfile. */
+async function getUserFavoriteTokens(userId) {
+  const { models } = getDB();
+  const profile = await models.UserProfile.findByPk(userId);
+  return Array.isArray(profile?.favoriteTokens) ? profile.favoriteTokens : [];
+}
+
+/**
+ * Build and send (or edit) the token selection inline keyboard for a session.
+ * Shows ⭐ Featured tokens first, then ❤️ Favorites (if any), then an "Enter CA" button.
+ * Also stores the full ordered token list in session.data.tokensList for consistent indexing.
+ */
+async function showTokenSelectionMenu(ctx, session, editMessage = false) {
+  const userId = parseInt(session.userId, 10);
+  const featured = await getSupportedTokensList();
+  const favorites = await getUserFavoriteTokens(userId);
+
+  // Remove favorites that already appear in featured (matched by lower-case address)
+  const featuredAddressSet = new Set(featured.map(t => (t.address || 'NATIVE').toLowerCase()));
+  const uniqueFavorites = favorites.filter(
+    f => !featuredAddressSet.has((f.address || 'NATIVE').toLowerCase())
+  );
+
+  // The ordered list that will be indexed by start_flip_SESSIONID_IDX
+  const allTokens = [...featured, ...uniqueFavorites];
+  session.data = { ...session.data, tokensList: allTokens };
+  await session.save();
+
+  const rows = [];
+
+  // ⭐ Featured tokens — 2 per row
+  if (featured.length > 0) {
+    const featuredBtns = featured.map((token, idx) =>
+      Markup.button.callback(`⭐ ${token.symbol}`, `start_flip_${session.id}_${idx}`)
+    );
+    for (let i = 0; i < featuredBtns.length; i += 2) {
+      rows.push(featuredBtns.slice(i, i + 2));
+    }
+  }
+
+  // ❤️ Favorite tokens — 2 per row
+  if (uniqueFavorites.length > 0) {
+    const favStartIdx = featured.length;
+    const favBtns = uniqueFavorites.map((token, i) =>
+      Markup.button.callback(`❤️ ${token.symbol}`, `start_flip_${session.id}_${favStartIdx + i}`)
+    );
+    for (let i = 0; i < favBtns.length; i += 2) {
+      rows.push(favBtns.slice(i, i + 2));
+    }
+  }
+
+  rows.push([Markup.button.callback('🔍 Enter Contract Address', `custom_token_${session.id}`)]);
+
+  let msgText = '🪙 <b>Select a Token</b>\n\n';
+  msgText += '⭐ <b>Featured</b> — curated tokens\n';
+  if (uniqueFavorites.length > 0) msgText += '❤️ <b>Favorites</b> — your saved tokens\n';
+  msgText += '\nOr tap <b>Enter Contract Address</b> to flip with any EVM token.';
+
+  const opts = { parse_mode: 'HTML', reply_markup: Markup.inlineKeyboard(rows).reply_markup };
+  if (editMessage) {
+    await ctx.editMessageText(msgText, opts);
+  } else {
+    await ctx.reply(msgText, opts);
+  }
+}
+
+/**
+ * Handle the text message where the user types an EVM contract address for a custom token.
+ * Validates the address, resolves on-chain metadata, then shows a confirmation message.
+ */
+async function handleCustomCAInput(ctx, session) {
+  const { ethers } = require('ethers');
+  const input = ctx.message.text.trim();
+
+  if (!ethers.isAddress(input)) {
+    await ctx.reply(
+      '❌ <b>Invalid address</b>\n\nThat doesn\'t look like a valid EVM contract address.\n\nPlease send a valid <code>0x…</code> address, or type /cancel to go back.',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  const address = ethers.getAddress(input); // checksummed
+
+  await ctx.reply('🔍 Resolving token info…');
+
+  try {
+    const blockchainManager = getBlockchainManager();
+    const tokenInfo = await blockchainManager.getTokenInfo('EVM', address);
+
+    // Store resolved token in session for the confirmation step
+    session.data = {
+      ...session.data,
+      pendingCustomToken: {
+        network: 'EVM',
+        address,
+        symbol: tokenInfo.symbol,
+        decimals: tokenInfo.decimals,
+      },
+    };
+    session.currentStep = 'AWAITING_CA_CONFIRM';
+    await session.save();
+
+    await ctx.reply(
+      `✅ <b>Token Found</b>\n\n` +
+      `Symbol: <b>${tokenInfo.symbol}</b>\n` +
+      `Decimals: ${tokenInfo.decimals}\n` +
+      `Contract: <code>${address}</code>\n\n` +
+      `<b>Use this token for your flip?</b>`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback(`✅ Use ${tokenInfo.symbol}`, `confirm_custom_token_${session.id}`)],
+          [Markup.button.callback(`❤️ Save & Use`, `save_and_use_custom_token_${session.id}`)],
+          [Markup.button.callback('← Back to Token List', `back_to_token_select_${session.id}`)],
+        ]).reply_markup,
+      }
+    );
+  } catch (err) {
+    logger.error('[handleCustomCAInput] Failed to resolve token', { address, error: err.message });
+    await ctx.reply(
+      `❌ <b>Could not resolve token</b>\n\nMake sure the contract address is a valid ERC-20 token on the Paxeer EVM network.\n\nError: ${err.message}`,
+      { parse_mode: 'HTML' }
+    );
+  }
 }
 
 /**

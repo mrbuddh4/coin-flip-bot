@@ -75,6 +75,20 @@ class BlockchainManager {
   }
 
   /**
+   * Resolve on-chain token metadata for a contract address.
+   * Currently supports EVM only (Paxeer network).
+   * Returns { symbol, decimals, network, address }.
+   */
+  async getTokenInfo(network, tokenAddress) {
+    const handler = this.getHandler(network);
+    if (typeof handler.getTokenInfo !== 'function') {
+      throw new Error(`getTokenInfo not supported for network: ${network}`);
+    }
+    const info = await handler.getTokenInfo(tokenAddress);
+    return { ...info, network, address: tokenAddress };
+  }
+
+  /**
    * Check if deposit has been received (by verifying blockchain transaction)
    */
   async verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender = null, flipCreatedAt = null, excludeSender = null) {

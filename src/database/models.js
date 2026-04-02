@@ -157,6 +157,11 @@ const defineModels = (sequelize) => {
     flipHoldingWalletAddress: DataTypes.STRING, // EVM wallet where user holds $FLIP (used for profit share share calculation); defaults to evmWalletAddress if not set
     evmDepositWalletAddress: DataTypes.STRING,  // User's wallet for sending EVM deposits
     solanaDepositWalletAddress: DataTypes.STRING, // User's wallet for sending Solana deposits
+    favoriteTokens: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+      comment: 'Array of { network, address, symbol, decimals } objects saved by the user',
+    },
     createdAt: DataTypes.DATE,
     updatedAt: DataTypes.DATE,
   });
