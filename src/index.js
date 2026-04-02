@@ -3023,7 +3023,7 @@ async function initBot() {
     // ── My Tokens: open list ───────────────────────────────────────────────────
     bot.action('open_my_tokens', async (ctx) => {
       try {
-        await showMyTokensMenu(ctx, false);
+        await showMyTokensMenu(ctx, true);
         await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error opening my tokens', { error: error.message });
@@ -3085,8 +3085,7 @@ async function initBot() {
     // ── My Tokens: back to start dashboard ────────────────────────────────────
     bot.action('back_to_start_dashboard', async (ctx) => {
       try {
-        await ctx.deleteMessage().catch(() => {});
-        await handlers.start(ctx);
+        await showStartDashboard(ctx, true);
         await ctx.answerCbQuery();
       } catch (error) {
         logger.error('Error going back to start dashboard', { error: error.message });
@@ -3501,81 +3500,7 @@ const handlers = {
       }
       
       // User already has wallets - show dashboard
-      // userProfile is already loaded from the check above
-      if (!userProfile) {
-        const newProfile = await models.UserProfile.create({ userId });
-        await ctx.reply('✅ Wallet profile created!', { parse_mode: 'HTML' });
-      }
-
-      // Get user stats for quick display
-      const stats = await DatabaseUtils.getEnhancedUserStats(userId);
-      
-      // Build dashboard message
-      let dashboardMsg = `🏠 <b>Coin Flip Dashboard</b>\n\n`;
-      
-      if (stats.totalFlips > 0) {
-        dashboardMsg += `<b>Quick Stats:</b>\n`;
-        dashboardMsg += `📊 Flips: ${stats.totalFlips} | Win Rate: ${stats.winRate}%\n`;
-        dashboardMsg += `💰 Earnings: ${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 4 })}\n\n`;
-      } else {
-        dashboardMsg += `Welcome! Ready to start flipping? 🪙\n\n`;
-      }
-
-      dashboardMsg += `🌐 <b>Wallets Configured:</b>\n`;
-      
-      // Format EVM wallets
-      if (userProfile.evmWalletAddress) {
-        const evmReceive = userProfile.evmWalletAddress.substring(0, 6) + '...' + userProfile.evmWalletAddress.substring(userProfile.evmWalletAddress.length - 4);
-        dashboardMsg += `✅ <b>Paxeer Receive:</b> <code>${evmReceive}</code>\n`;
-      } else {
-        dashboardMsg += `❌ <b>Paxeer Receive:</b> Not set\n`;
-      }
-      
-      if (userProfile.evmDepositWalletAddress) {
-        const evmDeposit = userProfile.evmDepositWalletAddress.substring(0, 6) + '...' + userProfile.evmDepositWalletAddress.substring(userProfile.evmDepositWalletAddress.length - 4);
-        dashboardMsg += `✅ <b>Paxeer Send:</b> <code>${evmDeposit}</code>\n`;
-      } else {
-        dashboardMsg += `❌ <b>Paxeer Send:</b> Not set\n`;
-      }
-
-      dashboardMsg += `\n`;
-      
-      // Format Solana wallets
-      if (userProfile.solanaWalletAddress) {
-        const solReceive = userProfile.solanaWalletAddress.substring(0, 6) + '...' + userProfile.solanaWalletAddress.substring(userProfile.solanaWalletAddress.length - 4);
-        dashboardMsg += `✅ <b>Solana Receive:</b> <code>${solReceive}</code>\n`;
-      } else {
-        dashboardMsg += `❌ <b>Solana Receive:</b> Not set\n`;
-      }
-      
-      if (userProfile.solanaDepositWalletAddress) {
-        const solDeposit = userProfile.solanaDepositWalletAddress.substring(0, 6) + '...' + userProfile.solanaDepositWalletAddress.substring(userProfile.solanaDepositWalletAddress.length - 4);
-        dashboardMsg += `✅ <b>Solana Send:</b> <code>${solDeposit}</code>\n`;
-      } else {
-        dashboardMsg += `❌ <b>Solana Send:</b> Not set\n`;
-      }
-
-      dashboardMsg += `\n<b>Ready to play?</b> Use the buttons below to get started!`;
-
-      await ctx.reply(
-        dashboardMsg,
-        {
-          parse_mode: 'HTML',
-          reply_markup: Markup.inlineKeyboard([
-            [
-              Markup.button.callback('💳 Wallets', 'open_wallet_menu'),
-              Markup.button.callback('📊 My Stats', 'show_stats'),
-            ],
-            [
-              Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
-              Markup.button.callback('⭐ My Tokens', 'open_my_tokens'),
-            ],
-            [
-              Markup.button.callback('❓ Help', 'show_help_action'),
-            ],
-          ]).reply_markup,
-        }
-      );
+      await showStartDashboard(ctx, false);
     } else {
       // In group chat — /start does nothing
       return;
@@ -4107,10 +4032,77 @@ async function showTokenSelectionMenu(ctx, session, editMessage = false) {
   }
 }
 
-/**
- * Handle the text message where the user types an EVM contract address for a custom token.
- * Validates the address, resolves on-chain metadata, then shows a confirmation message.
- */
+/** Render (or edit to) the main /start dashboard card. */
+async function showStartDashboard(ctx, editMessage = false) {
+  const { models } = getDB();
+  const userId = ctx.from?.id;
+  const userProfile = await models.UserProfile.findByPk(userId);
+  const stats = await DatabaseUtils.getEnhancedUserStats(userId);
+
+  let dashboardMsg = `🏠 <b>Coin Flip Dashboard</b>\n\n`;
+
+  if (stats.totalFlips > 0) {
+    dashboardMsg += `<b>Quick Stats:</b>\n`;
+    dashboardMsg += `📊 Flips: ${stats.totalFlips} | Win Rate: ${stats.winRate}%\n`;
+    dashboardMsg += `💰 Earnings: ${parseFloat(stats.totalEarnings).toLocaleString('en-US', { maximumFractionDigits: 4 })}\n\n`;
+  } else {
+    dashboardMsg += `Welcome! Ready to start flipping? 🪙\n\n`;
+  }
+
+  dashboardMsg += `🌐 <b>Wallets Configured:</b>\n`;
+
+  if (userProfile?.evmWalletAddress) {
+    const s = userProfile.evmWalletAddress;
+    dashboardMsg += `✅ <b>Paxeer Receive:</b> <code>${s.substring(0, 6)}...${s.substring(s.length - 4)}</code>\n`;
+  } else {
+    dashboardMsg += `❌ <b>Paxeer Receive:</b> Not set\n`;
+  }
+  if (userProfile?.evmDepositWalletAddress) {
+    const s = userProfile.evmDepositWalletAddress;
+    dashboardMsg += `✅ <b>Paxeer Send:</b> <code>${s.substring(0, 6)}...${s.substring(s.length - 4)}</code>\n`;
+  } else {
+    dashboardMsg += `❌ <b>Paxeer Send:</b> Not set\n`;
+  }
+  dashboardMsg += `\n`;
+  if (userProfile?.solanaWalletAddress) {
+    const s = userProfile.solanaWalletAddress;
+    dashboardMsg += `✅ <b>Solana Receive:</b> <code>${s.substring(0, 6)}...${s.substring(s.length - 4)}</code>\n`;
+  } else {
+    dashboardMsg += `❌ <b>Solana Receive:</b> Not set\n`;
+  }
+  if (userProfile?.solanaDepositWalletAddress) {
+    const s = userProfile.solanaDepositWalletAddress;
+    dashboardMsg += `✅ <b>Solana Send:</b> <code>${s.substring(0, 6)}...${s.substring(s.length - 4)}</code>\n`;
+  } else {
+    dashboardMsg += `❌ <b>Solana Send:</b> Not set\n`;
+  }
+
+  dashboardMsg += `\n<b>Ready to play?</b> Use the buttons below to get started!`;
+
+  const opts = {
+    parse_mode: 'HTML',
+    reply_markup: Markup.inlineKeyboard([
+      [
+        Markup.button.callback('💳 Wallets', 'open_wallet_menu'),
+        Markup.button.callback('📊 My Stats', 'show_stats'),
+      ],
+      [
+        Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
+        Markup.button.callback('⭐ My Tokens', 'open_my_tokens'),
+      ],
+      [
+        Markup.button.callback('❓ Help', 'show_help_action'),
+      ],
+    ]).reply_markup,
+  };
+
+  if (editMessage) {
+    await ctx.editMessageText(dashboardMsg, opts);
+  } else {
+    await ctx.reply(dashboardMsg, opts);
+  }
+}
+
 /** Show (or edit to) the My Tokens management page. */
 async function showMyTokensMenu(ctx, editMessage = false) {
   const { models } = getDB();
