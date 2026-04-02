@@ -427,44 +427,6 @@ class EVMHandler {
                 });
               }
             }
-
-            // Any-sender sub-fallback: the primary query already filtered to the expected token contract,
-            // so every result here IS the correct token. If the registered wallet sent nothing but another
-            // address did (e.g. user sent from a different wallet), accept it.
-            if (transfers.length === 0 && !queriedAllTokens && !isNativeTransferResult) {
-              for (const tx of data.result) {
-                const txSenderLower = tx.from.toLowerCase();
-                const txRecipientLower = tx.to?.toLowerCase() || '';
-                const txTimestamp = parseInt(tx.timeStamp, 10);
-                const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
-
-                const isToBot = txRecipientLower === botWalletAddress.toLowerCase();
-                const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
-                const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
-
-                if (isToBot && isCorrectToken && isAfterFlipCreation) {
-                  const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
-                  totalAmount += txAmount;
-                  if (!latestTxForReturn) latestTxForReturn = tx;
-                  if (transfers.length === 0) targetSender = txSenderLower; // track actual sender
-                  transfers.push({
-                    amount: txAmount,
-                    hash: tx.hash,
-                    blockNumber: tx.blockNumber,
-                    timestamp: txTimestamp,
-                    contractAddress: txContractAddressLower,
-                    isNativeTransfer: false,
-                    wrongToken: null,
-                  });
-                  console.log('[getRecentDepositSender] Accepted correct token from unexpected sender', {
-                    actualSender: txSenderLower,
-                    registeredWallet: knownSender,
-                    amount: txAmount,
-                    txHash: tx.hash,
-                  });
-                }
-              }
-            }
             
             if (transfers.length === 0) {
               console.warn('[getRecentDepositSender] No transfers from target sender via current query', { 
