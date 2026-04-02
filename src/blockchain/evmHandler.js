@@ -842,6 +842,11 @@ class EVMHandler {
               })),
             });
 
+            // Collect all matching txs from sender after flip creation (strict — no grace period).
+            // Then pick the best match: most recent tx whose amount meets expectedAmount (within
+            // 1% variance). Falls back to most recent candidate so insufficient-deposit tracking
+            // still works when the user genuinely under-deposited.
+            const nativeCandidates = [];
             for (const tx of data.result) {
               const txSenderLower = tx.from.toLowerCase();
               const txRecipientLower = tx.to?.toLowerCase() || '';
@@ -849,33 +854,41 @@ class EVMHandler {
 
               const isToBot = txRecipientLower === botWalletAddress.toLowerCase();
               const isFromTarget = txSenderLower === targetSender;
-              // Allow deposits up to 30 minutes before flip creation to cover pre-funded wallets.
-              const graceSecs = 1800;
-              const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= (flipCreatedAtSeconds - graceSecs);
+              // Strict: only deposits AFTER flip creation are valid (no grace period).
+              const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
 
               if (isToBot && isFromTarget && isAfterFlipCreation) {
                 const txAmount = parseFloat(ethers.formatUnits(tx.value, 18));
-
-                console.log('[getRecentDepositSender] Matched native transfer', {
-                  from: txSenderLower,
-                  to: txRecipientLower,
-                  amount: txAmount,
-                  txHash: tx.hash,
-                  timestamp: txTimestamp,
-                  isAfterFlipCreation,
-                });
-
-                return {
-                  sender: txSenderLower,
-                  amount: txAmount.toString(),
-                  transactionHash: tx.hash,
-                  blockNumber: tx.blockNumber,
-                  transferCount: 1,
-                  hasWrongTokens: false,
-                  wrongToken: null,
-                  amountIsDisplayFormat: true,
-                };
+                nativeCandidates.push({ sender: txSenderLower, amount: txAmount, tx });
               }
+            }
+
+            if (nativeCandidates.length > 0) {
+              // Pick best: first candidate (most recent, sorted desc) >= expected amount within 1%.
+              // If none qualify, fall back to most recent so the caller can show the shortfall.
+              const expectedAmountFloat = parseFloat(expectedAmount);
+              const variance = expectedAmountFloat * 0.01;
+              const bestMatch = nativeCandidates.find(c => c.amount >= (expectedAmountFloat - variance)) || nativeCandidates[0];
+
+              console.log('[getRecentDepositSender] Matched native transfer', {
+                from: bestMatch.sender,
+                amount: bestMatch.amount,
+                txHash: bestMatch.tx.hash,
+                timestamp: parseInt(bestMatch.tx.timeStamp, 10),
+                totalCandidates: nativeCandidates.length,
+                expectedAmount: expectedAmountFloat,
+              });
+
+              return {
+                sender: bestMatch.sender,
+                amount: bestMatch.amount.toString(),
+                transactionHash: bestMatch.tx.hash,
+                blockNumber: bestMatch.tx.blockNumber,
+                transferCount: 1,
+                hasWrongTokens: false,
+                wrongToken: null,
+                amountIsDisplayFormat: true,
+              };
             }
 
             console.warn('[getRecentDepositSender] No native transfers from target sender', {
