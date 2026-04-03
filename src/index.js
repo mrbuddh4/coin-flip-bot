@@ -3843,13 +3843,19 @@ For each network (Paxeer & Solana) you need:
         }
       }
 
-      // If no mention, look up the last person who timed out in this group
+      // If no mention, look up the last confirmed clicker-without-funds in this group.
+      // Only count flips where the bot never detected any deposit (accumulatedDeposit = 0
+      // or null) — excludes cases where the user sent funds but detection failed.
       if (!targetDisplay) {
         const lastTimedOut = await models.CoinFlip.findOne({
           where: {
             groupChatId: ctx.chat.id.toString(),
             status: 'CANCELLED',
             challengerTimedOut: true,
+            [Op.or]: [
+              { challengerAccumulatedDeposit: null },
+              { challengerAccumulatedDeposit: 0 },
+            ],
           },
           order: [['updatedAt', 'DESC']],
         });

@@ -138,8 +138,13 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
         }
       }
 
+      // Only shame if the bot never detected any deposit from the challenger.
+      // If challengerAccumulatedDeposit > 0, they genuinely tried but the bot
+      // may have had a detection issue — don't publicly shame them for that.
+      const neverDepositedAnything = parseFloat(flip.challengerAccumulatedDeposit || 0) === 0;
+
       // Notify group with shame message for the challenger who clicked without funds
-      if (flip.groupChatId) {
+      if (flip.groupChatId && neverDepositedAnything) {
         try {
           const { getDB } = require('../database');
           const { models: shameModels } = getDB();
