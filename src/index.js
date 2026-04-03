@@ -3905,16 +3905,12 @@ For each network (Paxeer & Solana) you need:
     try {
       const { models } = getDB();
 
-      // All confirmed click-and-runners (never clicked the button AND bot never saw funds)
+      // Only count flips that were positively confirmed as click-without-funds
+      // by the deposit timeout handler (confirmedShame=true). This excludes
+      // historical records from before the feature was deployed.
       const shameFlips = await models.CoinFlip.findAll({
         where: {
-          status: 'CANCELLED',
-          challengerTimedOut: true,
-          challengerClaimedDeposit: false,
-          [Op.or]: [
-            { challengerAccumulatedDeposit: null },
-            { challengerAccumulatedDeposit: 0 },
-          ],
+          confirmedShame: true,
         },
         attributes: ['challengerId'],
         raw: true,

@@ -91,6 +91,13 @@ const defineModels = (sequelize) => {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
+    confirmedShame: {
+      // Set to true ONLY when depositTimeout fires and positively confirms the
+      // challenger never sent any funds (on-chain check passes). Used by
+      // /wallofshame so that pre-feature historical records are never counted.
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
     messageId: DataTypes.INTEGER,
     messageIdGroupChat: DataTypes.INTEGER,
     data: {

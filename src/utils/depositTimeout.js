@@ -229,6 +229,12 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
         }
       }
 
+      // Stamp the flip so /wallofshame can count only positively-confirmed cases
+      if (confirmedClickWithoutFunds) {
+        flip.confirmedShame = true;
+        await flip.save();
+      }
+
       // Notify group with shame message only for confirmed click-without-funds
       if (flip.groupChatId && confirmedClickWithoutFunds) {
         try {
