@@ -262,8 +262,9 @@ class ProfitShareHandler {
   /**
    * Fetch all $FLIP holders, querying their on-chain balances.
    *
-   * Primary source: Paxscan tokenholderlist API (paginated).
-   * Fallback: DB FlipHolderAddress table (manually/auto-registered addresses).
+   * Primary source: direct RPC eth_getLogs with block-range chunking (most reliable).
+   * Secondary source: Paxscan getLogs API (catches any gaps).
+   * Tertiary source: DB FlipHolderAddress table (manually-added addresses).
    *
    * Returns array of { address: string, balance: BigInt }.
    */
@@ -272,15 +273,51 @@ class ProfitShareHandler {
     const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
     const contract = new ethers.Contract(FLIP_TOKEN_ADDRESS, ERC20_ABI, provider);
 
-    // ── Step 1: collect all FLIP Transfer recipients via Paxscan getLogs API ─
-    // paxscan.paxeer.app supports module=logs&action=getLogs which returns all
-    // Transfer events for the token — this gives every address that ever received
-    // FLIP. tokenholderlist is NOT supported by this API.
-    const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
     const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
     const rpcAddresses = new Set();
+
+    // ── Step 1: direct RPC eth_getLogs in block-range chunks ─────────────────
+    // This is the most reliable path — it interrogates the node directly without
+    // depending on the Paxscan indexer's result limits.  We chunk by 5 000 blocks
+    // to stay inside any per-request limit the RPC node enforces.
+    try {
+      const latestBlock = await provider.getBlockNumber();
+      const CHUNK = 5000;
+      let rpcFetchErrors = 0;
+      for (let from = 0; from <= latestBlock; from += CHUNK) {
+        const to = Math.min(from + CHUNK - 1, latestBlock);
+        try {
+          const logs = await provider.getLogs({
+            address: FLIP_TOKEN_ADDRESS,
+            topics: [TRANSFER_TOPIC],
+            fromBlock: from,
+            toBlock: to,
+          });
+          for (const log of logs) {
+            if (log.topics && log.topics[2]) {
+              const addr = ('0x' + log.topics[2].slice(26)).toLowerCase();
+              if (/^0x[a-f0-9]{40}$/.test(addr)) rpcAddresses.add(addr);
+            }
+          }
+        } catch (chunkErr) {
+          rpcFetchErrors++;
+          logger.warn('[ProfitShare] RPC getLogs chunk failed', { from, to, error: chunkErr.message });
+        }
+      }
+      logger.info('[ProfitShare] $FLIP Transfer recipients via direct RPC', {
+        latestBlock,
+        uniqueAddresses: rpcAddresses.size,
+        chunkErrors: rpcFetchErrors,
+      });
+    } catch (rpcErr) {
+      logger.warn('[ProfitShare] Direct RPC getLogs failed entirely', { error: rpcErr.message });
+    }
+
+    // ── Step 2: Paxscan getLogs API (catches addresses missed by RPC) ─────────
+    const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
     let apiAddressCount = 0;
     try {
+      const sizeBeforePaxscan = rpcAddresses.size;
       let page = 1;
       const offset = 1000;
       while (true) {
@@ -298,17 +335,16 @@ class ProfitShareHandler {
         if (json.result.length < offset) break; // last page
         page++;
       }
-      apiAddressCount = rpcAddresses.size;
-      if (apiAddressCount > 0) {
-        logger.info('[ProfitShare] $FLIP recipient addresses from Paxscan getLogs', { count: apiAddressCount });
-      } else {
-        logger.warn('[ProfitShare] Paxscan getLogs returned no Transfer events');
-      }
+      apiAddressCount = rpcAddresses.size - sizeBeforePaxscan;
+      logger.info('[ProfitShare] Paxscan getLogs done', {
+        newAddressesAdded: apiAddressCount,
+        totalSoFar: rpcAddresses.size,
+      });
     } catch (err) {
       logger.warn('[ProfitShare] Paxscan getLogs failed', { error: err.message });
     }
 
-    // ── Step 2: merge with DB addresses (ensures manually-added ones are included) ─
+    // ── Step 3: merge with DB addresses (ensures manually-added ones are included) ─
     const dbRows = await models.FlipHolderAddress.findAll();
     const dbAddresses = dbRows.map(r => r.address.toLowerCase());
     for (const addr of dbAddresses) rpcAddresses.add(addr);
@@ -316,7 +352,7 @@ class ProfitShareHandler {
     const allAddresses = [...rpcAddresses];
 
     logger.info('[ProfitShare] $FLIP holder addresses fetched', {
-      fromApi: apiAddressCount,
+      fromRpc: rpcAddresses.size - dbAddresses.length,
       fromDb: dbAddresses.length,
       total: allAddresses.length,
     });
