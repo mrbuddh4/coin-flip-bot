@@ -451,6 +451,104 @@ async function deleteOldFlipMessage(groupId, telegram) {
 // which would spawn parallel Paxscan request chains and trigger rate-limiting.
 const pendingVerifications = new Set();
 
+/**
+ * Idempotent enqueue for automatic refunds — deduped by the deposit txHash.
+ * Safe to call fire-and-forget (.catch is handled internally for non-critical paths).
+ */
+async function enqueueRefund({ txHash, network, tokenAddress, amount, senderAddress, reason, flipId = null }) {
+  const { models } = getDB();
+  const [, created] = await models.PendingRefund.findOrCreate({
+    where: { txHash },
+    defaults: { network, tokenAddress, amount, senderAddress, reason, flipId },
+  });
+  if (created) {
+    logger.info('[enqueueRefund] Queued refund', { txHash, senderAddress, amount, reason, flipId });
+  } else {
+    logger.debug('[enqueueRefund] Already queued (dedup)', { txHash, reason });
+  }
+}
+
+/**
+ * Look up ERC20 token decimals.
+ * Checks SUPPORTED_TOKENS config first, then falls back to an on-chain call.
+ */
+async function getRefundTokenDecimals(network, tokenAddress) {
+  if (!tokenAddress || tokenAddress === 'NATIVE') return 18;
+  const tokens = config.supportedTokens || {};
+  for (const key of Object.keys(tokens)) {
+    if (tokens[key].address?.toLowerCase() === tokenAddress.toLowerCase()) {
+      return tokens[key].decimals ?? 18;
+    }
+  }
+  if (network === 'EVM') {
+    try {
+      const blockchainManager = getBlockchainManager();
+      const handler = blockchainManager.getHandler('EVM');
+      const { ethers } = require('ethers');
+      const contract = new ethers.Contract(tokenAddress, ['function decimals() view returns (uint8)'], handler.provider);
+      return Number(await contract.decimals());
+    } catch (_) { /* fall through */ }
+  }
+  return 6; // safe default — all Paxeer ERC20s use 6 decimals
+}
+
+/**
+ * Background worker: drains the PendingRefund queue every 60 s.
+ * Processes up to 5 refunds per tick, one at a time to avoid EVM nonce collisions.
+ * Uses a setTimeout chain (not setInterval) so the next tick never starts before the current one finishes.
+ */
+function startRefundWorker() {
+  const { Op } = require('sequelize');
+
+  const tick = async () => {
+    try {
+      const { models } = getDB();
+      const pending = await models.PendingRefund.findAll({
+        where: { status: 'PENDING', attempts: { [Op.lt]: 5 } },
+        order: [['createdAt', 'ASC']],
+        limit: 5,
+      });
+
+      for (const refund of pending) {
+        // Mark as PROCESSING so a concurrent worker won't pick it up
+        await refund.update({ status: 'PROCESSING', attempts: refund.attempts + 1 });
+        try {
+          const decimals = await getRefundTokenDecimals(refund.network, refund.tokenAddress);
+          const blockchainManager = getBlockchainManager();
+          const result = await blockchainManager.sendWinnings(
+            refund.network,
+            refund.tokenAddress,
+            refund.senderAddress,
+            parseFloat(refund.amount),
+            decimals,
+          );
+          await refund.update({ status: 'REFUNDED', refundTxHash: result?.txHash || null });
+          logger.info('[refundWorker] Refund sent', {
+            id: refund.id, origTxHash: refund.txHash, refundTx: result?.txHash,
+            senderAddress: refund.senderAddress, amount: refund.amount, reason: refund.reason,
+          });
+        } catch (err) {
+          const isFinal = refund.attempts >= 5;
+          await refund.update({ status: isFinal ? 'FAILED' : 'PENDING', errorMessage: err.message });
+          logger.error('[refundWorker] Refund attempt failed', {
+            id: refund.id, attempt: refund.attempts, error: err.message, final: isFinal,
+          });
+        }
+      }
+
+      if (pending.length > 0) {
+        logger.info('[refundWorker] Processed batch', { count: pending.length });
+      }
+    } catch (err) {
+      logger.error('[refundWorker] Tick error', { error: err.message });
+    }
+    setTimeout(tick, 60_000);
+  };
+
+  tick();
+  logger.info('[refundWorker] Started — polling every 60s');
+}
+
 async function initBot() {
   try {
     console.log('[INIT_BOT] Starting bot initialization...');
@@ -492,6 +590,9 @@ async function initBot() {
     // Initialize database
     console.log('Initializing database...');
     await initDB();
+
+    // Start the background refund worker (processes PendingRefund queue every 60s)
+    startRefundWorker();
 
     // Create bot instance
     console.log('Creating Telegraf instance...');
@@ -1616,47 +1717,18 @@ async function initBot() {
             }
           }
           
-          // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
-          // But only attempt ONCE per flip to prevent duplicate transactions
-          const hasAttemptedRefund = flip.data?.refundAttempted === true;
-          if (verification.isWrongToken && verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE' && !hasAttemptedRefund) {
-            try {
-              const blockchainManager = getBlockchainManager();
-              logger.info('[deposit_confirmed] Attempting to refund incorrect tokens from challenger', { 
-                flipId, 
-                expectedToken: flip.tokenAddress, 
-                sender: verification.depositSender 
-              });
-              
-              // Mark that we've attempted refund to prevent duplicate calls
-              flip.data = { ...flip.data, refundAttempted: true };
-              await flip.save();
-              
-              // Wait 10 seconds before calling refund to let RPC recover from rate limiting
-              logger.info('[deposit_confirmed] Waiting 10s before attempting refund to avoid RPC rate limits', { flipId });
-              await new Promise(resolve => setTimeout(resolve, 10000));
-              
-              // Call refund with RPC back-off
-              const refundResults = await blockchainManager.refundIncorrectTokens(
-                flip.tokenNetwork,
-                flip.tokenAddress,
-                verification.depositSender,
-                flip.createdAt
-              );
-
-              if (refundResults && refundResults.length > 0) {
-                logger.info('[deposit_confirmed] Refunded incorrect tokens to challenger', { 
-                  flipId, 
-                  refundCount: refundResults.length,
-                  refunds: refundResults 
-                });
-              }
-            } catch (refundErr) {
-              logger.error('[deposit_confirmed] Error refunding incorrect tokens', { 
-                flipId, 
-                error: refundErr.message 
-              });
-            }
+          // Enqueue a refund for the wrong token — idempotent via txHash dedup.
+          // The background worker will send it back within 60 s.
+          if (verification.isWrongToken && verification.depositSender && verification.depositTransaction) {
+            enqueueRefund({
+              txHash: verification.depositTransaction,
+              network: flip.tokenNetwork,
+              tokenAddress: verification.wrongToken === 'NATIVE' ? 'NATIVE' : (verification.wrongToken || flip.tokenAddress),
+              amount: verification.amountDisplay ?? parseFloat(verification.amount ?? '0'),
+              senderAddress: verification.depositSender,
+              reason: 'wrong_token',
+              flipId: flip.id,
+            }).catch(err => logger.error('[deposit_confirmed] Failed to enqueue wrong-token refund', { error: err.message, flipId }));
           }
           
           // Check if notification already sent for this verification attempt (separate from refund logic)
@@ -1797,6 +1869,22 @@ async function initBot() {
             logger.error('[deposit_confirmed] ERROR saving flip after insufficient deposit', { flipId, error: saveErr.message, stack: saveErr.stack });
           }
           
+          // Enqueue refunds for any correct-token deposits from unregistered wallets (wrong-wallet scenario)
+          if (verification.unmatchedDeposits?.length > 0) {
+            logger.info('[deposit_confirmed] Enqueueing wrong-wallet refunds', { flipId, count: verification.unmatchedDeposits.length });
+            for (const dep of verification.unmatchedDeposits) {
+              enqueueRefund({
+                txHash: dep.txHash,
+                network: flip.tokenNetwork,
+                tokenAddress: dep.tokenAddress || flip.tokenAddress,
+                amount: dep.amount,
+                senderAddress: dep.senderAddress,
+                reason: 'wrong_wallet',
+                flipId: flip.id,
+              }).catch(err => logger.error('[deposit_confirmed] Failed to enqueue wrong-wallet refund', { error: err.message, flipId }));
+            }
+          }
+
           return;
         }
 
@@ -2277,47 +2365,18 @@ async function initBot() {
             logger.info('[creator_deposit_confirmed] Skipping duplicate notification (sent within last 30s)', { flipId });
           }
           
-          // CRITICAL: Attempt to refund any incorrect tokens that were sent (not throttled by time)
-          // But only attempt ONCE per flip to prevent duplicate transactions
-          const hasAttemptedRefund = flip.data?.refundAttempted === true;
-          if (verification.isWrongToken && verification.depositSender && flip.tokenAddress && flip.tokenAddress !== 'NATIVE' && !hasAttemptedRefund) {
-            try {
-              const blockchainManager = getBlockchainManager();
-              logger.info('[creator_deposit_confirmed] Attempting to refund incorrect tokens from creator', { 
-                flipId, 
-                expectedToken: flip.tokenAddress, 
-                sender: verification.depositSender 
-              });
-              
-              // Mark that we've attempted refund to prevent duplicate calls
-              flip.data = { ...flip.data, refundAttempted: true };
-              await flip.save();
-              
-              // Wait 10 seconds before calling refund to let RPC recover from rate limiting
-              logger.info('[creator_deposit_confirmed] Waiting 10s before attempting refund to avoid RPC rate limits', { flipId });
-              await new Promise(resolve => setTimeout(resolve, 10000));
-              
-              // Call refund with RPC back-off
-              const refundResults = await blockchainManager.refundIncorrectTokens(
-                flip.tokenNetwork,
-                flip.tokenAddress,
-                verification.depositSender,
-                flip.createdAt
-              );
-
-              if (refundResults && refundResults.length > 0) {
-                logger.info('[creator_deposit_confirmed] Refunded incorrect tokens to creator', { 
-                  flipId, 
-                  refundCount: refundResults.length,
-                  refunds: refundResults 
-                });
-              }
-            } catch (refundErr) {
-              logger.error('[creator_deposit_confirmed] Error refunding incorrect tokens', { 
-                flipId, 
-                error: refundErr.message 
-              });
-            }
+          // Enqueue a refund for the wrong token — idempotent via txHash dedup.
+          // The background worker will send it back within 60 s.
+          if (verification.isWrongToken && verification.depositSender && verification.depositTransaction) {
+            enqueueRefund({
+              txHash: verification.depositTransaction,
+              network: flip.tokenNetwork,
+              tokenAddress: verification.wrongToken === 'NATIVE' ? 'NATIVE' : (verification.wrongToken || flip.tokenAddress),
+              amount: verification.amountDisplay ?? parseFloat(verification.amount ?? '0'),
+              senderAddress: verification.depositSender,
+              reason: 'wrong_token',
+              flipId: flip.id,
+            }).catch(err => logger.error('[creator_deposit_confirmed] Failed to enqueue wrong-token refund', { error: err.message, flipId }));
           }
           
           // CRITICAL: Save the sender address before returning if we just detected it
@@ -2330,6 +2389,22 @@ async function initBot() {
             }
           }
           
+          // Enqueue refunds for any correct-token deposits from unregistered wallets (wrong-wallet scenario)
+          if (verification.unmatchedDeposits?.length > 0) {
+            logger.info('[creator_deposit_confirmed] Enqueueing wrong-wallet refunds', { flipId, count: verification.unmatchedDeposits.length });
+            for (const dep of verification.unmatchedDeposits) {
+              enqueueRefund({
+                txHash: dep.txHash,
+                network: flip.tokenNetwork,
+                tokenAddress: dep.tokenAddress || flip.tokenAddress,
+                amount: dep.amount,
+                senderAddress: dep.senderAddress,
+                reason: 'wrong_wallet',
+                flipId: flip.id,
+              }).catch(err => logger.error('[creator_deposit_confirmed] Failed to enqueue wrong-wallet refund', { error: err.message, flipId }));
+            }
+          }
+
           return;
         }
 

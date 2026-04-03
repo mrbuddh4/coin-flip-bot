@@ -706,6 +706,44 @@ class EVMHandler {
                 }
               }
 
+              // Before giving up: scan the original Paxscan result for correct-token deposits
+              // that came from wallets OTHER than the registered knownSender.
+              // These are "wrong-wallet" deposits — the right token arrived but from an unregistered address.
+              // Surface them so the caller can enqueue a refund instead of silently dropping them.
+              if (targetSender && tokenAddress && tokenAddress !== 'NATIVE') {
+                const unmatchedDeposits = [];
+                for (const tx of data.result) {
+                  const txSenderLower = tx.from.toLowerCase();
+                  const txRecipientLower = tx.to?.toLowerCase() || '';
+                  const txTimestamp = parseInt(tx.timeStamp, 10);
+                  const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
+                  const isToBotWallet = txRecipientLower === botWalletAddress.toLowerCase();
+                  const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
+                  const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                  const isWrongSender = txSenderLower !== targetSender;
+                  const isNotBotWallet = txSenderLower !== botWalletAddress.toLowerCase();
+                  if (isToBotWallet && isCorrectToken && isAfterFlipCreation && isWrongSender && isNotBotWallet) {
+                    const txAmount = parseFloat(ethers.formatUnits(tx.value, decimals));
+                    unmatchedDeposits.push({
+                      txHash: tx.hash,
+                      senderAddress: txSenderLower,
+                      amount: txAmount,
+                      tokenAddress: txContractAddressLower,
+                      blockNumber: tx.blockNumber,
+                      timestamp: txTimestamp,
+                    });
+                  }
+                }
+                if (unmatchedDeposits.length > 0) {
+                  console.warn('[getRecentDepositSender] Correct-token deposits from unregistered wallets — surfacing for refund queue', {
+                    knownSender,
+                    unmatchedCount: unmatchedDeposits.length,
+                    unmatchedDeposits,
+                  });
+                  return { sender: null, unmatchedDeposits, amountIsDisplayFormat: true };
+                }
+              }
+
               // No deposits found from the registered wallet — always return null.
               console.warn('[getRecentDepositSender] No deposits found from registered wallet - returning null', {
                 knownSender,

@@ -227,6 +227,61 @@ const defineModels = (sequelize) => {
     indexes: [{ unique: true, fields: ['network', 'tokenAddress'] }],
   });
 
+  // PendingRefund Model - queue for automatic refunds (wrong token, wrong wallet, overpayment)
+  // txHash is the unique dedup key so the same deposit can never be enqueued twice.
+  const PendingRefund = sequelize.define('PendingRefund', {
+    id: {
+      type: DataTypes.UUID,
+      primaryKey: true,
+      defaultValue: DataTypes.UUIDV4,
+    },
+    txHash: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      unique: true,
+    },
+    network: {
+      type: DataTypes.STRING, // 'EVM' | 'Solana'
+      allowNull: false,
+    },
+    tokenAddress: {
+      type: DataTypes.STRING, // 'NATIVE' or ERC20/SPL contract address
+      allowNull: false,
+    },
+    amount: {
+      type: DataTypes.DECIMAL(36, 18), // display units (already converted via ethers.formatUnits)
+      allowNull: false,
+    },
+    senderAddress: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    reason: DataTypes.STRING, // 'wrong_token' | 'wrong_wallet' | 'overpayment'
+    flipId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    status: {
+      type: DataTypes.STRING, // 'PENDING' | 'PROCESSING' | 'REFUNDED' | 'FAILED'
+      defaultValue: 'PENDING',
+    },
+    refundTxHash: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    errorMessage: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    attempts: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+    },
+  }, {
+    timestamps: true,
+    indexes: [{ unique: true, fields: ['txHash'] }],
+  });
+
   return {
     User,
     CoinFlip,
@@ -235,6 +290,7 @@ const defineModels = (sequelize) => {
     UserProfile,
     FlipHolderAddress,
     ProfitSharePool,
+    PendingRefund,
     sequelize, // Export sequelize so handlers can use it for queries
   };
 };

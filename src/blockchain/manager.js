@@ -109,6 +109,14 @@ class BlockchainManager {
       // Primary verification: Check blockchain for actual deposit transaction
       let depositInfo = await handler.getRecentDepositSender(botWallet, expectedAmount, tokenAddress, knownSender, flipCreatedAt, excludeSender);
 
+      // Surface wrong-wallet deposits: getRecentDepositSender returns { sender: null, unmatchedDeposits }
+      // when it finds correct-token transfers from unregistered wallets. Treat as "not found" for
+      // verification but preserve the list so the caller can enqueue refunds.
+      const unmatchedDeposits = depositInfo?.unmatchedDeposits || [];
+      if (depositInfo?.sender === null && unmatchedDeposits.length > 0) {
+        depositInfo = null;
+      }
+
       if (depositInfo) {
         // Transaction found on blockchain
         const receivedAmountRaw = parseFloat(depositInfo.amount); // Amount returned from handler
@@ -210,6 +218,7 @@ class BlockchainManager {
         depositSender: null,
         depositTransaction: null,
         verified: 'blockchain', // Require blockchain verification only
+        unmatchedDeposits, // deposits from correct token but wrong (unregistered) wallet
         error: 'No transaction found from depositor'
       };
     } catch (error) {
