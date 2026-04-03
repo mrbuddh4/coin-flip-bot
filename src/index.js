@@ -520,6 +520,16 @@ async function initBot() {
       throw err;
     }
 
+    // Global error handler: prevents unhandled update errors from propagating to bot.launch()
+    // and crashing the process. Falls back to the middleware errorHandler for user-facing messages.
+    bot.catch((error, ctx) => {
+      logger.error('[bot.catch] Unhandled error in update processing', {
+        error: error.message,
+        name: error.name,
+        update_id: ctx.update?.update_id,
+      });
+    });
+
     // Middleware setup
     console.log('Setting up middleware...');
     bot.use(middleware.errorHandler);

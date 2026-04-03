@@ -638,7 +638,7 @@ class EVMHandler {
                     address: tokenAddress,
                     topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
                     fromBlock: ethLogsFromBlock,
-                    toBlock: 'latest',
+                    toBlock: _currentBlock, // use cached block to guarantee ≤999-block range (Paxeer limit)
                   });
 
                   console.log('[getRecentDepositSender] eth_getLogs result', { logCount: rawLogs.length, tokenAddress });

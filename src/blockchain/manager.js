@@ -225,27 +225,28 @@ class BlockchainManager {
    * Verify deposit with retries (accounts for blockchain indexing delay)
    */
   async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 3, retryDelayMs = 15000, knownSender = null, flipCreatedAt = null, excludeSender = null) {
+    let lastResult;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const result = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt, excludeSender);
+      lastResult = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt, excludeSender);
       
       // CRITICAL: Only return on success
-      if (result.received) {
+      if (lastResult.received) {
         console.log(`Deposit verified on attempt ${attempt}/${maxRetries}`);
-        return result;
+        return lastResult;
       }
       
       // CRITICAL: If we FOUND a deposit but it's underpaid/wrong-token, return immediately
       // Don't retry - we found the transaction, it's just not enough or wrong token
-      if (result.depositSender) {
+      if (lastResult.depositSender) {
         console.log(`Deposit transaction found but validation failed (underpayment or wrong token), returning without retry`, {
           attempt,
-          depositSender: result.depositSender,
-          received: result.received,
-          isWrongToken: result.isWrongToken,
-          amount: result.amount,
-          expected: result.expected,
+          depositSender: lastResult.depositSender,
+          received: lastResult.received,
+          isWrongToken: lastResult.isWrongToken,
+          amount: lastResult.amount,
+          expected: lastResult.expected,
         });
-        return result;
+        return lastResult;
       }
 
       // ONLY retry if we found NO transaction at all (null depositSender)
@@ -255,9 +256,9 @@ class BlockchainManager {
       }
     }
 
-    // After all retries, return the last result
+    // After all retries, return the last result (no extra API call)
     console.log('Deposit verification failed after all retries');
-    return await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt, excludeSender);
+    return lastResult;
   }
 
   /**
