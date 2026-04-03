@@ -638,6 +638,7 @@ async function initBot() {
         { command: 'wallet', description: '💳 Manage wallet addresses' },
         { command: 'leaderboard', description: '🏆 Top winners and losers' },
         { command: 'shame', description: '😂 Shame a click-without-funds offender' },
+        { command: 'wallofshame', description: '🏴 Hall of shame — serial click-without-funds offenders' },
       ]);
       console.log('✅ Commands menu set');
     } catch (err) {
@@ -676,6 +677,8 @@ async function initBot() {
     bot.command('leaderboard', handlers.leaderboard);
     console.log('[CMD] Registering /shame');
     bot.command('shame', handlers.shame);
+    console.log('[CMD] Registering /wallofshame');
+    bot.command('wallofshame', handlers.wallofshame);
     console.log('✅ Commands registered successfully');
 
     // Admin commands
@@ -3894,6 +3897,71 @@ For each network (Paxeer & Solana) you need:
       );
     } catch (error) {
       logger.error('[shame] Error', { error: error.message });
+    }
+  },
+
+  wallofshame: async (ctx) => {
+    console.log('[HANDLER] /wallofshame called');
+    try {
+      const { models } = getDB();
+
+      // All confirmed click-and-runners (never clicked the button AND bot never saw funds)
+      const shameFlips = await models.CoinFlip.findAll({
+        where: {
+          status: 'CANCELLED',
+          challengerTimedOut: true,
+          challengerClaimedDeposit: false,
+          [Op.or]: [
+            { challengerAccumulatedDeposit: null },
+            { challengerAccumulatedDeposit: 0 },
+          ],
+        },
+        attributes: ['challengerId'],
+        raw: true,
+      });
+
+      // Count offences per user
+      const countByUser = {};
+      for (const flip of shameFlips) {
+        if (flip.challengerId) {
+          countByUser[flip.challengerId] = (countByUser[flip.challengerId] || 0) + 1;
+        }
+      }
+
+      // Sort descending by count, take top 10
+      const sorted = Object.entries(countByUser)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 10);
+
+      let msg = `😂 <b>Wall of Shame</b>\n`;
+      msg += `<i>Most click-without-funds offences</i>\n\n`;
+
+      if (sorted.length === 0) {
+        msg += `No offenders yet! 🎉\nEveryone here actually pays up. 💪`;
+      } else {
+        // Look up user names
+        const userIds = sorted.map(([id]) => id);
+        const users = await models.User.findAll({
+          where: { telegramId: { [Op.in]: userIds } },
+          attributes: ['telegramId', 'firstName', 'username'],
+          raw: true,
+        });
+        const userMap = {};
+        users.forEach(u => { userMap[String(u.telegramId)] = u; });
+
+        const medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+        const getName = u => u?.username ? `@${u.username}` : (u?.firstName || 'Unknown');
+
+        sorted.forEach(([id, count], i) => {
+          const u = userMap[String(id)];
+          const times = count === 1 ? '1 time' : `${count} times`;
+          msg += `${medals[i]} ${getName(u)} — <b>${times}</b>\n`;
+        });
+      }
+
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.error('[wallofshame] Error', { error: error.message });
     }
   },
 
