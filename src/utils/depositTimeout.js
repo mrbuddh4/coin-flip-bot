@@ -138,13 +138,31 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
         }
       }
 
-      // Notify group
+      // Notify group with shame message for the challenger who clicked without funds
       if (flip.groupChatId) {
         try {
+          const { getDB } = require('../database');
+          const { models: shameModels } = getDB();
+          const challenger = await shameModels.User.findByPk(flip.challengerId);
+          const challengerDisplay = challenger?.username
+            ? `@${challenger.username}`
+            : challenger?.firstName || 'The challenger';
+
+          const shameLines = [
+            `😂 <b>CLICK WITHOUT FUNDS DETECTED!</b>`,
+            `😹 <b>ALL BARK, NO BITE!</b>`,
+            `🤡 <b>WINDOW SHOPPER ALERT!</b>`,
+            `💀 <b>BROKE BOT CAUGHT!</b>`,
+            `🫵 <b>ANOTHER ONE BITES THE DUST!</b>`,
+          ];
+          const shameLine = shameLines[Math.floor(Math.random() * shameLines.length)];
+
           await telegram.sendMessage(
             flip.groupChatId,
-            `❌ <b>Challenge Cancelled</b>\n\n` +
-            `The challenger didn't deposit within 3 minutes. The <b>${formattedWager} ${flip.tokenSymbol}</b> challenge has been cancelled.`,
+            `${shameLine}\n\n` +
+            `${challengerDisplay} accepted the <b>${formattedWager} ${flip.tokenSymbol}</b> challenge ` +
+            `but couldn't back it up with funds. The challenge has been cancelled.\n\n` +
+            `🏃‍♂️ <i>A shame for those that click without funds!</i>`,
             { parse_mode: 'HTML' }
           );
         } catch (err) {

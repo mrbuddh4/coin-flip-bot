@@ -673,6 +673,8 @@ async function initBot() {
     bot.command('wallet', handlers.wallet);
     console.log('[CMD] Registering /leaderboard');
     bot.command('leaderboard', handlers.leaderboard);
+    console.log('[CMD] Registering /shame');
+    bot.command('shame', handlers.shame);
     console.log('✅ Commands registered successfully');
 
     // Admin commands
@@ -3801,6 +3803,82 @@ For each network (Paxeer & Solana) you need:
   leaderboard: async (ctx) => {
     console.log('[HANDLER] /leaderboard called');
     await LeaderboardHandler.showLeaderboard(ctx);
+  },
+
+  shame: async (ctx) => {
+    console.log('[HANDLER] /shame called');
+    if (ctx.chat.type === 'private') {
+      await ctx.reply('😅 /shame only works in a group chat!');
+      return;
+    }
+
+    try {
+      const { models } = getDB();
+
+      // Check if a user was mentioned (@username or reply)
+      let targetDisplay = null;
+      let targetUserId = null;
+
+      // Reply-to target
+      if (ctx.message.reply_to_message) {
+        const from = ctx.message.reply_to_message.from;
+        if (from && !from.is_bot) {
+          targetDisplay = from.username ? `@${from.username}` : from.first_name;
+          targetUserId = from.id;
+        }
+      }
+
+      // Inline mention (@username as command arg)
+      if (!targetDisplay && ctx.message.entities) {
+        for (const entity of ctx.message.entities) {
+          if (entity.type === 'mention') {
+            targetDisplay = ctx.message.text.slice(entity.offset, entity.offset + entity.length);
+            break;
+          } else if (entity.type === 'text_mention' && entity.user) {
+            targetDisplay = entity.user.username ? `@${entity.user.username}` : entity.user.first_name;
+            targetUserId = entity.user.id;
+            break;
+          }
+        }
+      }
+
+      // If no mention, look up the last person who timed out in this group
+      if (!targetDisplay) {
+        const lastTimedOut = await models.CoinFlip.findOne({
+          where: {
+            groupChatId: ctx.chat.id.toString(),
+            status: 'CANCELLED',
+            challengerTimedOut: true,
+          },
+          order: [['updatedAt', 'DESC']],
+        });
+
+        if (lastTimedOut?.challengerId) {
+          const user = await models.User.findByPk(lastTimedOut.challengerId);
+          targetDisplay = user?.username ? `@${user.username}` : user?.firstName || 'the last clicker';
+        }
+      }
+
+      const shameLines = [
+        `😱 A SHAME FOR THOSE THAT CLICK WITHOUT FUNDS!`,
+        `😹 ALL BARK, NO BITE!`,
+        `🤡 WINDOW SHOPPER DETECTED!`,
+        `💀 BROKE AND BOLD!`,
+        `🫵 FINGERS FASTER THAN THE WALLET!`,
+        `🏃‍♂️ RUNNING FROM THE CONSEQUENCES!`,
+      ];
+      const shameLine = shameLines[Math.floor(Math.random() * shameLines.length)];
+
+      const target = targetDisplay ? `${targetDisplay} ` : '';
+      await ctx.reply(
+        `📢 ${shameLine}\n\n` +
+        `${target}has been summoned to the Wall of Shame. ` +
+        `Don't click the Accept button if your wallet can't cash the check! 💸`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (error) {
+      logger.error('[shame] Error', { error: error.message });
+    }
   },
 
   dmMessageHandler: async (ctx) => {
