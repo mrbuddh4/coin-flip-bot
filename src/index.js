@@ -637,6 +637,7 @@ async function initBot() {
         { command: 'flip', description: '🪙 Start a coin flip' },
         { command: 'wallet', description: '💳 Manage wallet addresses' },
         { command: 'leaderboard', description: '🏆 Top winners and losers' },
+        { command: 'shame', description: '😂 Shame a click-without-funds offender' },
       ]);
       console.log('✅ Commands menu set');
     } catch (err) {
