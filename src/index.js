@@ -227,6 +227,24 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                   stored: savedFlip?.data?.expiredNoticeMessageId,
                   verified: savedFlip?.data?.expiredNoticeMessageId === expiredMsg.message_id
                 });
+                // Send DM to creator notifying them the challenge expired
+                try {
+                  await telegram.sendMessage(
+                    flipCheck.creatorId,
+                    `⏰ <b>Your Challenge Expired</b>\n\n` +
+                    `No one accepted your challenge for <b>${formattedWager} ${flipCheck.tokenSymbol}</b> within 4 minutes.\n\n` +
+                    `Your deposit is being refunded to your wallet. Would you like to start a new challenge?`,
+                    {
+                      parse_mode: 'HTML',
+                      reply_markup: Markup.inlineKeyboard([
+                        [Markup.button.url('🪙 Start New Challenge', deeplink)],
+                      ]).reply_markup,
+                    }
+                  );
+                  logger.info('[challengeTimeout] Sent expiry DM to creator', { flipId, creatorId: flipCheck.creatorId });
+                } catch (dmErr) {
+                  logger.warn('[challengeTimeout] Failed to send expiry DM to creator', { flipId, creatorId: flipCheck.creatorId, error: dmErr.message });
+                }
               } catch (msgErr) {
                 logger.error('[challengeTimeout] Failed to send expiration message', { flipId, error: msgErr.message });
               }
@@ -236,7 +254,12 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
               (async () => {
                 try {
                   const creator = await models.User.findByPk(flipCheck.creatorId);
-                  const creatorDepositWallet = flipCheck.creatorDepositWalletAddress;
+                  const creatorProfile = await models.UserProfile.findByPk(flipCheck.creatorId);
+                  const profileDepositWallet = flipCheck.tokenNetwork === 'EVM'
+                    ? creatorProfile?.evmDepositWalletAddress
+                    : creatorProfile?.solanaDepositWalletAddress;
+                  const creatorDepositWallet = flipCheck.creatorDepositWalletAddress || profileDepositWallet;
+                  const refundAmount = flipCheck.creatorAccumulatedDeposit || flipCheck.wagerAmount;
 
                   if (creator && creatorDepositWallet) {
                     const blockchainManager = getBlockchainManager();
@@ -256,7 +279,7 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                       flipCheck.tokenNetwork,
                       tokenAddress,
                       creatorDepositWallet,
-                      flipCheck.creatorAccumulatedDeposit,
+                      refundAmount,
                       tokenDecimals
                     );
 
@@ -264,7 +287,7 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                       flipId,
                       creatorId: flipCheck.creatorId,
                       depositWallet: creatorDepositWallet,
-                      amount: flipCheck.creatorAccumulatedDeposit,
+                      amount: refundAmount,
                       token: flipCheck.tokenSymbol,
                       txHash,
                     });
@@ -706,6 +729,24 @@ async function initBot() {
           flip.data = { ...flip.data, expiredNoticeMessageId: expiredMsg.message_id };
           flip.changed('data', true);
           await flip.save();
+          // Send DM to creator notifying them the challenge expired
+          try {
+            await bot.telegram.sendMessage(
+              flip.creatorId,
+              `⏰ <b>Your Challenge Expired</b>\n\n` +
+              `No one accepted your challenge for <b>${formattedWager} ${flip.tokenSymbol}</b> within 4 minutes.\n\n` +
+              `Your deposit is being refunded to your wallet. Would you like to start a new challenge?`,
+              {
+                parse_mode: 'HTML',
+                reply_markup: Markup.inlineKeyboard([
+                  [Markup.button.url('🪙 Start New Challenge', deeplink)],
+                ]).reply_markup,
+              }
+            );
+            logger.info('[startup] Sent expiry DM to creator', { flipId: flip.id, creatorId: flip.creatorId });
+          } catch (dmErr) {
+            logger.warn('[startup] Failed to send expiry DM to creator', { flipId: flip.id, creatorId: flip.creatorId, error: dmErr.message });
+          }
         } catch (msgErr) {
           logger.error('[startup] Failed to send expiration message', { flipId: flip.id, error: msgErr.message });
         }
@@ -714,7 +755,12 @@ async function initBot() {
         (async () => {
           try {
             const creator = await models.User.findByPk(flip.creatorId);
-            const creatorDepositWallet = flip.creatorDepositWalletAddress;
+            const creatorProfile = await models.UserProfile.findByPk(flip.creatorId);
+            const profileDepositWallet = flip.tokenNetwork === 'EVM'
+              ? creatorProfile?.evmDepositWalletAddress
+              : creatorProfile?.solanaDepositWalletAddress;
+            const creatorDepositWallet = flip.creatorDepositWalletAddress || profileDepositWallet;
+            const refundAmount = flip.creatorAccumulatedDeposit || flip.wagerAmount;
             if (creator && creatorDepositWallet) {
               const blockchainManager = getBlockchainManager();
               const supportedTokens = config.supportedTokens;
@@ -727,8 +773,8 @@ async function initBot() {
                   break;
                 }
               }
-              const txHash = await blockchainManager.sendWinnings(flip.tokenNetwork, tokenAddress, creatorDepositWallet, flip.creatorAccumulatedDeposit, tokenDecimals);
-              logger.info('[startup] Refunded creator deposit', { flipId: flip.id, creatorId: flip.creatorId, depositWallet: creatorDepositWallet, amount: flip.creatorAccumulatedDeposit, txHash });
+              const txHash = await blockchainManager.sendWinnings(flip.tokenNetwork, tokenAddress, creatorDepositWallet, refundAmount, tokenDecimals);
+              logger.info('[startup] Refunded creator deposit', { flipId: flip.id, creatorId: flip.creatorId, depositWallet: creatorDepositWallet, amount: refundAmount, txHash });
             } else {
               logger.warn('[startup] Creator or deposit wallet missing for refund', { flipId: flip.id, hasDepositWallet: !!flip.creatorDepositWalletAddress });
             }
@@ -778,6 +824,24 @@ async function initBot() {
                 flipCheck.data = { ...flipCheck.data, expiredNoticeMessageId: expiredMsg.message_id };
                 flipCheck.changed('data', true);
                 await flipCheck.save();
+                // Send DM to creator notifying them the challenge expired
+                try {
+                  await bot.telegram.sendMessage(
+                    flipCheck.creatorId,
+                    `⏰ <b>Your Challenge Expired</b>\n\n` +
+                    `No one accepted your challenge for <b>${formattedWager} ${flipCheck.tokenSymbol}</b> within 4 minutes.\n\n` +
+                    `Your deposit is being refunded to your wallet. Would you like to start a new challenge?`,
+                    {
+                      parse_mode: 'HTML',
+                      reply_markup: Markup.inlineKeyboard([
+                        [Markup.button.url('🪙 Start New Challenge', deeplink)],
+                      ]).reply_markup,
+                    }
+                  );
+                  logger.info('[startup-timeout] Sent expiry DM to creator', { flipId: flip.id, creatorId: flipCheck.creatorId });
+                } catch (dmErr) {
+                  logger.warn('[startup-timeout] Failed to send expiry DM to creator', { flipId: flip.id, creatorId: flipCheck.creatorId, error: dmErr.message });
+                }
               } catch (msgErr) {
                 logger.error('[startup-timeout] Failed to send expiration message', { flipId: flip.id, error: msgErr.message });
               }
@@ -786,7 +850,12 @@ async function initBot() {
               (async () => {
                 try {
                   const creator = await models.User.findByPk(flipCheck.creatorId);
-                  const creatorDepositWallet = flipCheck.creatorDepositWalletAddress;
+                  const creatorProfile = await models.UserProfile.findByPk(flipCheck.creatorId);
+                  const profileDepositWallet = flipCheck.tokenNetwork === 'EVM'
+                    ? creatorProfile?.evmDepositWalletAddress
+                    : creatorProfile?.solanaDepositWalletAddress;
+                  const creatorDepositWallet = flipCheck.creatorDepositWalletAddress || profileDepositWallet;
+                  const refundAmount = flipCheck.creatorAccumulatedDeposit || flipCheck.wagerAmount;
                   if (creator && creatorDepositWallet) {
                     const blockchainManager = getBlockchainManager();
                     const supportedTokens = config.supportedTokens;
@@ -799,8 +868,8 @@ async function initBot() {
                         break;
                       }
                     }
-                    const txHash = await blockchainManager.sendWinnings(flipCheck.tokenNetwork, tokenAddress, creatorDepositWallet, flipCheck.creatorAccumulatedDeposit, tokenDecimals);
-                    logger.info('[startup-timeout] Refunded creator deposit', { flipId: flip.id, creatorId: flipCheck.creatorId, depositWallet: creatorDepositWallet, amount: flipCheck.creatorAccumulatedDeposit, txHash });
+                    const txHash = await blockchainManager.sendWinnings(flipCheck.tokenNetwork, tokenAddress, creatorDepositWallet, refundAmount, tokenDecimals);
+                    logger.info('[startup-timeout] Refunded creator deposit', { flipId: flip.id, creatorId: flipCheck.creatorId, depositWallet: creatorDepositWallet, amount: refundAmount, txHash });
                   } else {
                     logger.warn('[startup-timeout] Creator or deposit wallet missing for refund', { flipId: flip.id, hasDepositWallet: !!flipCheck.creatorDepositWalletAddress });
                   }
@@ -905,6 +974,24 @@ async function initBot() {
                       flipFinal.data = { ...flipFinal.data, expiredNoticeMessageId: expiredMsg.message_id };
                       flipFinal.changed('data', true);
                       await flipFinal.save();
+                      // Send DM to creator notifying them the challenge expired
+                      try {
+                        await bot.telegram.sendMessage(
+                          flipFinal.creatorId,
+                          `⏰ <b>Your Challenge Expired</b>\n\n` +
+                          `No one accepted your challenge for <b>${formattedWager} ${flipFinal.tokenSymbol}</b> within 4 minutes.\n\n` +
+                          `Your deposit is being refunded to your wallet. Would you like to start a new challenge?`,
+                          {
+                            parse_mode: 'HTML',
+                            reply_markup: Markup.inlineKeyboard([
+                              [Markup.button.url('🪙 Start New Challenge', deeplink)],
+                            ]).reply_markup,
+                          }
+                        );
+                        logger.info('[startup-timeout] Sent expiry DM to creator', { flipId: flip.id, creatorId: flipFinal.creatorId });
+                      } catch (dmErr) {
+                        logger.warn('[startup-timeout] Failed to send expiry DM to creator', { flipId: flip.id, creatorId: flipFinal.creatorId, error: dmErr.message });
+                      }
                     } catch (msgErr) {
                       logger.error('[startup-timeout] Failed to send expiration message', { flipId: flip.id, error: msgErr.message });
                     }
@@ -913,7 +1000,12 @@ async function initBot() {
                     (async () => {
                       try {
                         const creator = await models.User.findByPk(flipFinal.creatorId);
-                        const creatorDepositWallet = flipFinal.creatorDepositWalletAddress;
+                        const creatorProfile = await models.UserProfile.findByPk(flipFinal.creatorId);
+                        const profileDepositWallet = flipFinal.tokenNetwork === 'EVM'
+                          ? creatorProfile?.evmDepositWalletAddress
+                          : creatorProfile?.solanaDepositWalletAddress;
+                        const creatorDepositWallet = flipFinal.creatorDepositWalletAddress || profileDepositWallet;
+                        const refundAmount = flipFinal.creatorAccumulatedDeposit || flipFinal.wagerAmount;
                         if (creator && creatorDepositWallet) {
                           const blockchainManager = getBlockchainManager();
                           const supportedTokens = config.supportedTokens;
@@ -926,8 +1018,8 @@ async function initBot() {
                               break;
                             }
                           }
-                          const txHash = await blockchainManager.sendWinnings(flipFinal.tokenNetwork, tokenAddress, creatorDepositWallet, flipFinal.creatorAccumulatedDeposit, tokenDecimals);
-                          logger.info('[startup-timeout] Refunded creator deposit', { flipId: flip.id, creatorId: flipFinal.creatorId, depositWallet: creatorDepositWallet, amount: flipFinal.creatorAccumulatedDeposit, txHash });
+                          const txHash = await blockchainManager.sendWinnings(flipFinal.tokenNetwork, tokenAddress, creatorDepositWallet, refundAmount, tokenDecimals);
+                          logger.info('[startup-timeout] Refunded creator deposit', { flipId: flip.id, creatorId: flipFinal.creatorId, depositWallet: creatorDepositWallet, amount: refundAmount, txHash });
                         } else {
                           logger.warn('[startup-timeout] Creator or deposit wallet missing for refund', { flipId: flip.id, hasDepositWallet: !!flipFinal.creatorDepositWalletAddress });
                         }
@@ -3256,6 +3348,9 @@ const handlers = {
           flip.challengerId = userId;
           flip.status = 'WAITING_CHALLENGER_DEPOSIT';
           await flip.save();
+
+          // Clear in-memory expiry timeout now that a challenger has accepted
+          clearChallengeTimeout(flipId);
 
           logger.info('[start] Accepted flip via deeplink', { flipId, userId, groupChatId: flip.groupChatId, groupMessageId: flip.groupMessageId });
 
