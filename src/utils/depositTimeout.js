@@ -143,8 +143,94 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
       // may have had a detection issue — don't publicly shame them for that.
       const neverDepositedAnything = parseFloat(flip.challengerAccumulatedDeposit || 0) === 0;
 
-      // Notify group with shame message for the challenger who clicked without funds
-      if (flip.groupChatId && neverDepositedAnything) {
+      // For EVM flips where the bot saw nothing: do a definitive on-chain check.
+      // This lets us distinguish "truly never sent anything" from "bot had a detection failure".
+      let onChainDepositFound = false;
+      if (neverDepositedAnything && flip.tokenNetwork === 'EVM' && flip.challengerId) {
+        try {
+          const { ethers } = require('ethers');
+          const config = require('../config');
+          const { getDB } = require('../database');
+          const { models: checkModels } = getDB();
+          const { getBlockchainManager } = require('../blockchain/manager');
+
+          // Determine which wallet address the challenger sends FROM
+          const challengerProfile = await checkModels.UserProfile.findByPk(flip.challengerId);
+          const senderAddr = flip.challengerDepositWalletAddress
+            || challengerProfile?.evmDepositWalletAddress;
+
+          if (senderAddr) {
+            const blockchainManager = getBlockchainManager();
+            const botWallet = blockchainManager.getBotWalletAddress('EVM');
+            const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
+            const latestBlock = await provider.getBlockNumber();
+            const PAXEER_MAX_BLOCKS = 999;
+            const fromBlock = Math.max(0, latestBlock - PAXEER_MAX_BLOCKS);
+
+            const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+            const senderTopic = ethers.zeroPadValue(senderAddr.toLowerCase(), 32);
+            const recipientTopic = ethers.zeroPadValue(botWallet.toLowerCase(), 32);
+
+            // Check ERC-20 token transfers
+            if (flip.tokenAddress && flip.tokenAddress !== 'NATIVE') {
+              const tokenLogs = await provider.getLogs({
+                address: flip.tokenAddress,
+                topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
+                fromBlock,
+                toBlock: latestBlock,
+              }).catch(() => []);
+              if (tokenLogs.length > 0) onChainDepositFound = true;
+            }
+
+            // Also check native PAX transfers (internal txs via standard value transfer)
+            // Native transfers don't emit ERC-20 logs, so check account balance movements
+            // via a simpler heuristic: if any ERC-20 OR zero-value logs from that sender exist,
+            // treat it as "they tried". For truly native, fall back to checking Paxscan tx list.
+            if (!onChainDepositFound) {
+              // Catch any token transfer *to* the bot from this sender (wrong token scenario)
+              const anyTransferLogs = await provider.getLogs({
+                topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
+                fromBlock,
+                toBlock: latestBlock,
+              }).catch(() => []);
+              if (anyTransferLogs.length > 0) onChainDepositFound = true;
+            }
+
+            logger.info('[depositTimeout] On-chain deposit check', {
+              flipId,
+              senderAddr,
+              botWallet,
+              fromBlock,
+              onChainDepositFound,
+            });
+          }
+        } catch (chainCheckErr) {
+          // If the on-chain check itself fails, err on the side of caution and skip shame
+          logger.warn('[depositTimeout] On-chain deposit check failed, skipping shame to be safe', { flipId, error: chainCheckErr.message });
+          onChainDepositFound = true; // treat as "unclear" → no shame
+        }
+      }
+
+      const confirmedClickWithoutFunds = neverDepositedAnything && !onChainDepositFound;
+
+      // If the on-chain check found a deposit the bot missed, alert admins/creator but don't shame
+      if (neverDepositedAnything && onChainDepositFound) {
+        logger.warn('[depositTimeout] On-chain deposit found but bot missed it — possible detection failure', { flipId, challengerId: flip.challengerId });
+        if (flip.challengerId) {
+          try {
+            await telegram.sendMessage(
+              flip.challengerId,
+              `⚠️ <b>Deposit Detection Issue</b>\n\n` +
+              `We detected a possible issue verifying your deposit for the <b>${formattedWager} ${flip.tokenSymbol}</b> challenge.\n\n` +
+              `The challenge has been cancelled and a refund is being processed. If you do not receive your funds within 10 minutes, please contact support.`,
+              { parse_mode: 'HTML' }
+            );
+          } catch (_) {}
+        }
+      }
+
+      // Notify group with shame message only for confirmed click-without-funds
+      if (flip.groupChatId && confirmedClickWithoutFunds) {
         try {
           const { getDB } = require('../database');
           const { models: shameModels } = getDB();

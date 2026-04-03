@@ -1739,7 +1739,14 @@ async function initBot() {
           }
           return;
         }
-        
+        // Stamp the flip immediately so we know the challenger at least *claimed* to have
+        // sent funds. This lets the timeout shame-logic distinguish "never tried" from
+        // "tried but bot missed it".
+        if (!flip.challengerClaimedDeposit) {
+          flip.challengerClaimedDeposit = true;
+          await flip.save();
+        }
+
         // Edit the button message to show processing
         const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
         try {
@@ -3845,13 +3852,15 @@ For each network (Paxeer & Solana) you need:
 
       // If no mention, look up the last confirmed clicker-without-funds in this group.
       // Only count flips where the bot never detected any deposit (accumulatedDeposit = 0
-      // or null) — excludes cases where the user sent funds but detection failed.
+      // or null) AND the challenger never even clicked "I Sent the Deposit" -- that button
+      // click means they believed they sent funds (possible bot detection failure)
       if (!targetDisplay) {
         const lastTimedOut = await models.CoinFlip.findOne({
           where: {
             groupChatId: ctx.chat.id.toString(),
             status: 'CANCELLED',
             challengerTimedOut: true,
+            challengerClaimedDeposit: false,
             [Op.or]: [
               { challengerAccumulatedDeposit: null },
               { challengerAccumulatedDeposit: 0 },

@@ -84,6 +84,13 @@ const defineModels = (sequelize) => {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
+    challengerClaimedDeposit: {
+      // Set to true the moment the challenger clicks "I Sent the Deposit".
+      // If this is true but challengerAccumulatedDeposit is 0, the bot likely
+      // had a detection failure rather than the user never sending anything.
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
     messageId: DataTypes.INTEGER,
     messageIdGroupChat: DataTypes.INTEGER,
     data: {
