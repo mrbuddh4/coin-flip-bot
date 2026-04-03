@@ -4584,12 +4584,48 @@ async function handleCustomCAInput(ctx, session) {
 }
 
 /**
+ * Acquire a PostgreSQL session-level advisory lock so only one bot instance
+ * runs at a time. The lock is automatically released when the process exits
+ * and its DB connection closes — no manual release needed.
+ *
+ * If another instance already holds the lock this will wait (pg_try_advisory_lock
+ * returns false immediately; pg_advisory_lock blocks). We use the try variant
+ * so Railway doesn't stall the health-check: if we can't get the lock within
+ * the retry window we exit, letting Railway restart us once the old instance dies.
+ */
+async function acquireSingleInstanceLock() {
+  const { sequelize } = getDB();
+  const LOCK_ID = 42424242; // arbitrary stable integer for this bot
+  const MAX_WAIT_MS = 30_000;
+  const RETRY_MS = 1_000;
+  const start = Date.now();
+
+  while (true) {
+    const [[{ acquired }]] = await sequelize.query(
+      `SELECT pg_try_advisory_lock(${LOCK_ID}) AS acquired`
+    );
+    if (acquired) {
+      logger.info('[lock] Acquired single-instance advisory lock');
+      return;
+    }
+    const elapsed = Date.now() - start;
+    if (elapsed + RETRY_MS > MAX_WAIT_MS) {
+      logger.error('[lock] Could not acquire single-instance lock within timeout — another instance is still running');
+      process.exit(1);
+    }
+    logger.info(`[lock] Lock held by another instance, retrying in ${RETRY_MS}ms…`);
+    await new Promise(r => setTimeout(r, RETRY_MS));
+  }
+}
+
+/**
  * Main entry point
  */
 async function main() {
   try {
     await initBot();
-    await bot.launch();
+    await acquireSingleInstanceLock();
+    await bot.launch({ dropPendingUpdates: true });
 
     console.log('🚀 Bot launched successfully');
 
