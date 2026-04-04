@@ -146,6 +146,7 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
       // For EVM flips where the bot saw nothing: do a definitive on-chain check.
       // This lets us distinguish "truly never sent anything" from "bot had a detection failure".
       let onChainDepositFound = false;
+      let missedDepositRefundAddr = null; // challenger's wallet address if we need to refund a missed deposit
       if (neverDepositedAnything && flip.tokenNetwork === 'EVM' && flip.challengerId) {
         try {
           const { ethers } = require('ethers');
@@ -158,6 +159,7 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
           const challengerProfile = await checkModels.UserProfile.findByPk(flip.challengerId);
           const senderAddr = flip.challengerDepositWalletAddress
             || challengerProfile?.evmDepositWalletAddress;
+          if (senderAddr) missedDepositRefundAddr = senderAddr;
 
           if (senderAddr) {
             const blockchainManager = getBlockchainManager();
@@ -213,16 +215,48 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
 
       const confirmedClickWithoutFunds = neverDepositedAnything && !onChainDepositFound;
 
-      // If the on-chain check found a deposit the bot missed, alert admins/creator but don't shame
+      // If the on-chain check found a deposit the bot missed, refund the challenger and alert them
       if (neverDepositedAnything && onChainDepositFound) {
         logger.warn('[depositTimeout] On-chain deposit found but bot missed it — possible detection failure', { flipId, challengerId: flip.challengerId });
+
+        // Refund the full wager to the challenger since we confirmed their deposit arrived
+        if (missedDepositRefundAddr) {
+          try {
+            const blockchainManager = getBlockchainManager();
+            const supportedTokens = config.supportedTokens;
+            let tokenAddress = 'NATIVE';
+            let tokenDecimals = 18;
+            for (const key in supportedTokens) {
+              if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
+                tokenAddress = supportedTokens[key].address || 'NATIVE';
+                tokenDecimals = supportedTokens[key].decimals || 18;
+                break;
+              }
+            }
+            await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              tokenAddress,
+              missedDepositRefundAddr,
+              parseFloat(flip.wagerAmount),
+              tokenDecimals
+            );
+            logger.info('[depositTimeout] Refunded missed challenger deposit', {
+              flipId,
+              amount: flip.wagerAmount,
+              to: missedDepositRefundAddr,
+            });
+          } catch (refundErr) {
+            logger.error('[depositTimeout] Failed to refund missed challenger deposit', { flipId, error: refundErr.message });
+          }
+        }
+
         if (flip.challengerId) {
           try {
             await telegram.sendMessage(
               flip.challengerId,
               `⚠️ <b>Deposit Detection Issue</b>\n\n` +
               `We detected a possible issue verifying your deposit for the <b>${formattedWager} ${flip.tokenSymbol}</b> challenge.\n\n` +
-              `The challenge has been cancelled and a refund is being processed. If you do not receive your funds within 10 minutes, please contact support.`,
+              `The challenge has been cancelled and your deposit is being refunded. If you do not receive your funds within 10 minutes, please contact support.`,
               { parse_mode: 'HTML' }
             );
           } catch (_) {}
