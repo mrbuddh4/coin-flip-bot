@@ -1265,6 +1265,11 @@ async function initBot() {
         return;
       }
 
+      if (flip.status !== 'WAITING_CHALLENGER') {
+        await ctx.answerCbQuery(flip.status === 'CANCELLED' ? '❌ This challenge has expired' : '❌ This flip is no longer available');
+        return;
+      }
+
       try {
         logger.info('[accept_flip] Action triggered', { flipId, userId, hasGroupChatId: !!flip.groupChatId });
         
@@ -1659,6 +1664,13 @@ async function initBot() {
         // Verify user is the challenger
         if (parseInt(flip.challengerId) !== userId) {
           await ctx.answerCbQuery('❌ This is not your challenge');
+          return;
+        }
+
+        // Guard against verifying deposits on a flip that is no longer active
+        if (flip.status !== 'WAITING_CHALLENGER_DEPOSIT') {
+          logger.warn('[deposit_confirmed] Flip is not in expected status', { flipId, status: flip.status });
+          await ctx.answerCbQuery('❌ This challenge is no longer active');
           return;
         }
 
@@ -3298,10 +3310,19 @@ const handlers = {
             },
           });
 
-          // Set the challengerId
-          flip.challengerId = userId;
-          flip.status = 'WAITING_CHALLENGER_DEPOSIT';
-          await flip.save();
+          // Atomically claim the flip: only succeed if it is still WAITING_CHALLENGER.
+          // This prevents a race with the 4-minute challenge-timeout callback which
+          // also reads WAITING_CHALLENGER and sets CANCELLED.
+          const [rowsClaimed] = await models.CoinFlip.update(
+            { challengerId: String(userId), status: 'WAITING_CHALLENGER_DEPOSIT' },
+            { where: { id: flipId, status: 'WAITING_CHALLENGER' } }
+          );
+          if (rowsClaimed === 0) {
+            // The timeout won the race and already cancelled the flip
+            logger.warn('[start] Flip was cancelled before the accept could be saved (race)', { flipId, userId });
+            await ctx.reply('❌ This challenge has just expired — no one was fast enough!');
+            return;
+          }
 
           // Clear in-memory expiry timeout now that a challenger has accepted
           clearChallengeTimeout(flipId);

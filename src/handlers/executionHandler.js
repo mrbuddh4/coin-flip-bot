@@ -97,6 +97,19 @@ class ExecutionHandler {
       const winnerDepositAddress = result === 0 ? flip.creatorDepositWalletAddress : flip.challengerDepositWalletAddress;
       const winnerName = result === 0 ? creator.firstName : challenger.firstName;
 
+      // Guard: if the winner's payout address is missing the flip is in an inconsistent
+      // state (e.g. due to a timeout / accept race).  Abort before touching anything.
+      if (!winnerDepositAddress) {
+        logger.error('[executeFlip] ABORT — winner deposit address is null, cannot send winnings', {
+          flipId,
+          flipResultEnum,
+          winnerId,
+          creatorDepositWallet: flip.creatorDepositWalletAddress,
+          challengerDepositWallet: flip.challengerDepositWalletAddress,
+        });
+        return;
+      }
+
       // Calculate winnings
       const totalPool = parseFloat(flip.wagerAmount) * 2;
       const winnerPrize = totalPool * 0.9; // 90% to winner, 10% fees
