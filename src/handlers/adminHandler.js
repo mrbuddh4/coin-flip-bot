@@ -366,7 +366,6 @@ class AdminHandler {
       let skipped = 0;
       for (const profile of profiles) {
         const addrs = [
-          profile.flipHoldingWalletAddress,
           profile.evmWalletAddress,
         ].filter(a => a && /^0x[a-fA-F0-9]{40}$/i.test(a));
         for (const addr of addrs) {

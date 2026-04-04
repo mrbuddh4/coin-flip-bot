@@ -164,16 +164,11 @@ class ProfitShareHandler {
     }
 
     // Find bot users who have saved a Solana wallet (to receive the payout) and at least
-    // one EVM wallet for the $FLIP balance check (flipHoldingWalletAddress preferred,
-    // falling back to evmWalletAddress).
+    // one EVM wallet for the $FLIP balance check.
     const profiles = await models.UserProfile.findAll({
       where: {
         solanaWalletAddress: { [Op.not]: null },
-        // Must have at least one EVM address to check FLIP balance against
-        [Op.or]: [
-          { flipHoldingWalletAddress: { [Op.not]: null } },
-          { evmWalletAddress: { [Op.not]: null } },
-        ],
+        evmWalletAddress: { [Op.not]: null },
       },
     });
 
@@ -203,7 +198,7 @@ class ProfitShareHandler {
     for (const profile of profiles) {
       // Use the dedicated FLIP holding wallet if set; otherwise fall back to the
       // Paxeer receive wallet (evmWalletAddress).
-      const holdingAddr = (profile.flipHoldingWalletAddress || profile.evmWalletAddress || '').toLowerCase();
+      const holdingAddr = (profile.evmWalletAddress || '').toLowerCase();
       if (!holdingAddr || EXCLUDED_ADDRESSES.has(holdingAddr)) continue;
 
       let flipBalance;

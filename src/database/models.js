@@ -167,7 +167,6 @@ const defineModels = (sequelize) => {
       allowNull: false,
     },
     evmWalletAddress: DataTypes.STRING,         // Paxeer address to receive winnings & profit share
-    flipHoldingWalletAddress: DataTypes.STRING, // EVM wallet where user holds $FLIP (used for profit share share calculation); defaults to evmWalletAddress if not set
     evmDepositWalletAddress: DataTypes.STRING,  // User's wallet for sending EVM deposits
     favoriteTokens: {
       type: DataTypes.JSON,
