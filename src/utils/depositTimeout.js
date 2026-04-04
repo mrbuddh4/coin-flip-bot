@@ -43,17 +43,8 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
       if (flip.creatorDepositConfirmed && flip.creatorDepositWalletAddress) {
         try {
           const blockchainManager = getBlockchainManager();
-          const supportedTokens = config.supportedTokens;
-          let tokenAddress = 'NATIVE';
-          let tokenDecimals = 18;
-
-          for (const key in supportedTokens) {
-            if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
-              tokenAddress = supportedTokens[key].address || 'NATIVE';
-              tokenDecimals = supportedTokens[key].decimals || 18;
-              break;
-            }
-          }
+          const tokenAddress = flip.tokenAddress || 'NATIVE';
+          const tokenDecimals = flip.tokenDecimals || 18;
 
           await blockchainManager.sendWinnings(
             flip.tokenNetwork,
@@ -77,17 +68,8 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
       if (flip.challengerDepositWalletAddress && parseFloat(flip.challengerAccumulatedDeposit || 0) > 0) {
         try {
           const blockchainManager = getBlockchainManager();
-          const supportedTokens = config.supportedTokens;
-          let tokenAddress = 'NATIVE';
-          let tokenDecimals = 18;
-
-          for (const key in supportedTokens) {
-            if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
-              tokenAddress = supportedTokens[key].address || 'NATIVE';
-              tokenDecimals = supportedTokens[key].decimals || 18;
-              break;
-            }
-          }
+          const tokenAddress = flip.tokenAddress || 'NATIVE';
+          const tokenDecimals = flip.tokenDecimals || 18;
 
           await blockchainManager.sendWinnings(
             flip.tokenNetwork,
@@ -223,16 +205,8 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
         if (missedDepositRefundAddr) {
           try {
             const blockchainManager = getBlockchainManager();
-            const supportedTokens = config.supportedTokens;
-            let tokenAddress = 'NATIVE';
-            let tokenDecimals = 18;
-            for (const key in supportedTokens) {
-              if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
-                tokenAddress = supportedTokens[key].address || 'NATIVE';
-                tokenDecimals = supportedTokens[key].decimals || 18;
-                break;
-              }
-            }
+            const tokenAddress = flip.tokenAddress || 'NATIVE';
+            const tokenDecimals = flip.tokenDecimals || 18;
             await blockchainManager.sendWinnings(
               flip.tokenNetwork,
               tokenAddress,

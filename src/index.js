@@ -261,17 +261,8 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
 
                   if (creator && creatorDepositWallet) {
                     const blockchainManager = getBlockchainManager();
-                    const supportedTokens = config.supportedTokens;
-                    let tokenAddress = 'NATIVE';
-                    let tokenDecimals = 18;
-
-                    for (const key in supportedTokens) {
-                      if (supportedTokens[key].symbol === flipCheck.tokenSymbol && supportedTokens[key].network === flipCheck.tokenNetwork) {
-                        tokenAddress = supportedTokens[key].address || 'NATIVE';
-                        tokenDecimals = supportedTokens[key].decimals || 18;
-                        break;
-                      }
-                    }
+                    const tokenAddress = flipCheck.tokenAddress || 'NATIVE';
+                    const tokenDecimals = flipCheck.tokenDecimals || 18;
 
                     const txHash = await blockchainManager.sendWinnings(
                       flipCheck.tokenNetwork,
