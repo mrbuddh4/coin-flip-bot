@@ -43,6 +43,9 @@ function parseSupportedTokens(tokenString) {
     const parts = token.trim().split(':');
     if (parts.length === 4) {
       const [network, address, decimals, symbol] = parts;
+      const key = `${network}_${symbol}`;
+      tokens[key] = {
+        network,
         address,
         decimals: parseInt(decimals),
         symbol,
