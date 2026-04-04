@@ -21,10 +21,6 @@ class WalletHandler {
         `);
         await models.sequelize.query(`
           ALTER TABLE "UserProfiles" 
-          ADD COLUMN IF NOT EXISTS "solanaDepositWalletAddress" VARCHAR(255)
-        `);
-        await models.sequelize.query(`
-          ALTER TABLE "UserProfiles" 
           ADD COLUMN IF NOT EXISTS "flipHoldingWalletAddress" VARCHAR(255)
         `);
         logger.info(`[WALLET] Migration complete for user ${userId}`);
@@ -42,25 +38,19 @@ class WalletHandler {
       }
 
       const evmAddress = profile.evmWalletAddress || '(not set)';
-      const solAddress = profile.solanaWalletAddress || '(not set)';
       const flipHoldingWallet = profile.flipHoldingWalletAddress || '(same as Paxeer receive wallet)';
       const evmDepositWallet = profile.evmDepositWalletAddress || '(not set)';
-      const solDepositWallet = profile.solanaDepositWalletAddress || '(not set)';
 
       logger.info(`[WALLET] Sending reply to user ${userId}`, {
         evm: evmAddress,
-        sol: solAddress,
         flipHolding: flipHoldingWallet,
         evmDeposit: evmDepositWallet,
-        solDeposit: solDepositWallet,
       });
 
       const text =
         `<b>💳 Your Wallet Addresses</b>\n\n` +
         `<b>Paxeer Network - Receive Winnings:</b>\n<code>${evmAddress}</code>\n\n` +
         `<b>Paxeer Network - Send Deposits:</b>\n<code>${evmDepositWallet}</code>\n\n` +
-        `<b>Solana Network - Receive Winnings:</b>\n<code>${solAddress}</code>\n\n` +
-        `<b>Solana Network - Send Deposits:</b>\n<code>${solDepositWallet}</code>\n\n` +
         `<b>$FLIP Holding Wallet (profit share):</b>\n<code>${flipHoldingWallet}</code>\n` +
         `<i>The EVM wallet where you hold $FLIP. Leave unset to use your Paxeer receive wallet.</i>\n\n` +
         `Choose what you'd like to do:`;
@@ -68,8 +58,6 @@ class WalletHandler {
       const keyboard = Markup.inlineKeyboard([
         [Markup.button.callback('✏️ Update Paxeer Receive Wallet', 'update_evm_wallet')],
         [Markup.button.callback('✏️ Update Paxeer Sending Wallet', 'update_evm_deposit_wallet')],
-        [Markup.button.callback('✏️ Update Solana Receive Wallet', 'update_solana_wallet')],
-        [Markup.button.callback('✏️ Update Solana Sending Wallet', 'update_solana_deposit_wallet')],
         [Markup.button.callback('✏️ Update $FLIP Holding Wallet', 'update_flip_holding_wallet')],
         [Markup.button.callback('❌ Remove All', 'remove_all_wallets')],
         [Markup.button.callback('🏠 Home', 'back_to_home')],
@@ -124,47 +112,6 @@ class WalletHandler {
       );
     } catch (error) {
       logger.error('Error in handleUpdateEVM:', error);
-      await ctx.answerCbQuery('Error updating wallet', true);
-    }
-  }
-
-  static async handleUpdateSolana(ctx) {
-    const userId = ctx.from.id;
-    const models = ctx.state.models;
-
-    try {
-      // Ensure user exists before creating session
-      await models.User.findOrCreate({
-        where: { telegramId: userId },
-        defaults: {
-          username: ctx.from.username,
-          firstName: ctx.from.first_name,
-          lastName: ctx.from.last_name,
-        },
-      });
-
-      // Create session to prompt for Solana address
-      await models.BotSession.destroy({
-        where: { userId, sessionType: 'UPDATING_WALLET' },
-      });
-
-      const session = await models.BotSession.create({
-        userId,
-        sessionType: 'UPDATING_WALLET',
-        currentStep: 'AWAITING_SOLANA_ADDRESS',
-        expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minute expiry
-      });
-
-      await ctx.editMessageText(
-        `<b>Enter your Solana wallet address:</b>\n\n` +
-        `Send me your Solana wallet address (e.g., ABC123def...)`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: { inline_keyboard: [] }, // Clear keyboard
-        }
-      );
-    } catch (error) {
-      logger.error('Error in handleUpdateSolana:', error);
       await ctx.answerCbQuery('Error updating wallet', true);
     }
   }
@@ -254,48 +201,6 @@ class WalletHandler {
     }
   }
 
-  static async handleUpdateSolanaDeposit(ctx) {
-    const userId = ctx.from.id;
-    const models = ctx.state.models;
-
-    try {
-      // Ensure user exists before creating session
-      await models.User.findOrCreate({
-        where: { telegramId: userId },
-        defaults: {
-          username: ctx.from.username,
-          firstName: ctx.from.first_name,
-          lastName: ctx.from.last_name,
-        },
-      });
-
-      // Create session to prompt for Solana deposit address
-      await models.BotSession.destroy({
-        where: { userId, sessionType: 'UPDATING_WALLET' },
-      });
-
-      const session = await models.BotSession.create({
-        userId,
-        sessionType: 'UPDATING_WALLET',
-        currentStep: 'AWAITING_SOLANA_DEPOSIT_ADDRESS',
-        expiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minute expiry
-      });
-
-      await ctx.editMessageText(
-        `<b>Set your Solana sending wallet:</b>\n\n` +
-        `This is the wallet address you'll send payments FROM.\n\n` +
-        `Send me your Solana wallet address (e.g., ABC123def...)`,
-        {
-          parse_mode: 'HTML',
-          reply_markup: { inline_keyboard: [] }, // Clear keyboard
-        }
-      );
-    } catch (error) {
-      logger.error('Error in handleUpdateSolanaDeposit:', error);
-      await ctx.answerCbQuery('Error updating sending wallet', true);
-    }
-  }
-
   static async handleRemoveAll(ctx) {
     const userId = ctx.from.id;
     const models = ctx.state.models;
@@ -304,10 +209,8 @@ class WalletHandler {
       const profile = await models.UserProfile.findByPk(userId);
       if (profile) {
         profile.evmWalletAddress = null;
-        profile.solanaWalletAddress = null;
         profile.flipHoldingWalletAddress = null;
         profile.evmDepositWalletAddress = null;
-        profile.solanaDepositWalletAddress = null;
         await profile.save();
       }
 
@@ -366,8 +269,6 @@ class WalletHandler {
           profileId: profile.id,
           evmWallet: profile.evmWalletAddress,
           evmDepositWallet: profile.evmDepositWalletAddress,
-          solanaWallet: profile.solanaWalletAddress,
-          solanaDepositWallet: profile.solanaDepositWalletAddress,
         });
       }
 
@@ -400,28 +301,6 @@ class WalletHandler {
 
         await this.handleWalletCommand(ctx, models);
         await this.continueFlipAfterWallet(ctx, userId, models, 'EVM');
-
-        return true;
-      } else if (session.currentStep === 'AWAITING_SOLANA_ADDRESS') {
-        // Basic validation for Solana address (Base58: no I, O, l, o)
-        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(message)) {
-          await ctx.reply(
-            `❌ Invalid Solana address format.\n\n` +
-            `Please provide a valid Solana wallet address (Base58 encoded, 32-44 characters)`,
-            { parse_mode: 'HTML' }
-          );
-          return true;
-        }
-
-        profile.solanaWalletAddress = message;
-        await profile.save();
-
-        await models.BotSession.destroy({
-          where: { id: session.id },
-        });
-
-        await this.handleWalletCommand(ctx, models);
-        await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');
 
         return true;
       } else if (session.currentStep === 'AWAITING_FLIP_HOLDING_ADDRESS') {
@@ -489,47 +368,6 @@ class WalletHandler {
 
         // Find and continue any pending flip
         await this.continueFlipAfterWallet(ctx, userId, models, 'EVM');
-
-        return true;
-      } else if (session.currentStep === 'AWAITING_SOLANA_DEPOSIT_ADDRESS') {
-        // Basic validation for Solana address (Base58: no I, O, l, o)
-        if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(message)) {
-          await ctx.reply(
-            `❌ Invalid Solana address format.\n\n` +
-            `Please provide a valid Solana wallet address (Base58 encoded, 32-44 characters)`,
-            { parse_mode: 'HTML' }
-          );
-          return true;
-        }
-
-        logger.info('[processWalletAddressInput] Updating solanaDepositWalletAddress', {
-          userId,
-          oldValue: profile.solanaDepositWalletAddress,
-          newValue: message,
-          profileId: profile.id,
-        });
-        
-        profile.solanaDepositWalletAddress = message;
-        await profile.save();
-
-        // Verify it was saved by re-fetching
-        const reloadedProfile = await models.UserProfile.findByPk(userId);
-        logger.info('[processWalletAddressInput] Verified wallet save', {
-          userId,
-          savedValue: reloadedProfile?.solanaDepositWalletAddress,
-          expectedValue: message,
-          wasSuccessful: reloadedProfile?.solanaDepositWalletAddress === message,
-        });
-
-        await models.BotSession.destroy({
-          where: { id: session.id },
-        });
-        
-        // Show wallet menu again instead of confirmation
-        await this.handleWalletCommand(ctx, models);
-
-        // Find and continue any pending flip
-        await this.continueFlipAfterWallet(ctx, userId, models, 'Solana');
 
         return true;
       }

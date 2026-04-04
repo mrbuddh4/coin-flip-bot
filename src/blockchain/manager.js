@@ -1,15 +1,12 @@
 const crypto = require('crypto');
 const EVMHandler = require('./evmHandler');
-const SolanaHandler = require('./solanaHandler');
 const config = require('../config');
 
 class BlockchainManager {
   constructor() {
     this.evmHandler = new EVMHandler();
-    this.solanaHandler = new SolanaHandler();
     // Track last seen balances for deposit detection
     this.lastSeenEVMBalance = {};
-    this.lastSeenSolanaBalance = {};
   }
 
   /**
@@ -18,8 +15,6 @@ class BlockchainManager {
   getHandler(network) {
     if (network === 'EVM') {
       return this.evmHandler;
-    } else if (network === 'Solana') {
-      return this.solanaHandler;
     }
     throw new Error(`Unknown network: ${network}`);
   }
@@ -46,30 +41,6 @@ class BlockchainManager {
       const { ethers } = require('ethers');
       const wallet = new ethers.Wallet(config.evm.privateKey);
       return wallet.address;
-    } else if (network === 'Solana') {
-      // Return explicit address if set, otherwise derive from private key
-      if (config.solana.walletAddress) {
-        return config.solana.walletAddress;
-      }
-      // Derive from private key
-      const { Keypair } = require('@solana/web3.js');
-      const bs58 = require('bs58');
-      
-      let secretKey;
-      try {
-        // Try parsing as JSON array first
-        secretKey = new Uint8Array(JSON.parse(config.solana.privateKey));
-      } catch {
-        // If not JSON, assume base58 encoded
-        try {
-          secretKey = new Uint8Array(bs58.decode(config.solana.privateKey));
-        } catch (err) {
-          throw new Error(`Failed to decode Solana private key. Expected JSON array or base58 string. Error: ${err.message}`);
-        }
-      }
-      
-      const keypair = Keypair.fromSecretKey(secretKey);
-      return keypair.publicKey.toBase58();
     }
     throw new Error(`Unknown network: ${network}`);
   }
@@ -282,7 +253,7 @@ class BlockchainManager {
       console.error(`[sendWinnings] Before winnings logic`);
       
       let result;
-      const botPrivateKey = fromPrivateKey || (network === 'EVM' ? config.evm.privateKey : config.solana.privateKey);
+      const botPrivateKey = fromPrivateKey || config.evm.privateKey;
       
       if (tokenAddress === 'NATIVE') {
         console.error('[sendWinnings] Transferring NATIVE');

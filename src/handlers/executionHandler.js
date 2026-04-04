@@ -130,10 +130,8 @@ class ExecutionHandler {
       const devFeeAmount = totalPool * 0.05;  // 5% to $FLIP holders
       const burnFeeAmount = totalPool * 0.05; // 5% to burn
 
-      // Burn addresses for each network
-      const burnAddress = flip.tokenNetwork === 'EVM'
-        ? '0x000000000000000000000000000000000000dEaD' // EVM burn address (dead address)
-        : '1nc1nerator11111111111111111111111111111111'; // Solana SPL incinerator address
+      // Burn address for EVM
+      const burnAddress = '0x000000000000000000000000000000000000dEaD';
 
       // Accumulate dev fee in DB immediately (fast DB write) so the midnight scheduler
       // always has an accurate pending amount even if the background send hasn't landed yet.
@@ -143,7 +141,7 @@ class ExecutionHandler {
           flip.tokenSymbol,
           flip.tokenDecimals,
           devFeeAmount.toString(),
-          flip.tokenNetwork === 'EVM' ? 'EVM' : 'Solana'
+          'EVM'
         );
         logger.info('[executeFlip] Dev fee accumulated for $FLIP distribution', { flipId, devFeeAmount, token: flip.tokenSymbol, network: flip.tokenNetwork });
       } catch (accErr) {
@@ -152,7 +150,7 @@ class ExecutionHandler {
 
       // Fire dev fee + burn fee sends in the background so they don't block the result message.
       // The winner already received their payout above — fees are housekeeping and can settle async.
-      const devWalletAddress = flip.tokenNetwork === 'EVM' ? config.evm.devWallet : config.solana.devWallet;
+      const devWalletAddress = config.evm.devWallet;
       (async () => {
         try {
           if (devWalletAddress) {
@@ -179,12 +177,6 @@ class ExecutionHandler {
           logger.error('[executeFlip] ERROR processing dev fee', { flipId, devFeeAmount, error: devFeeError.message });
         }
 
-        // Add delay before burn on Solana to avoid RPC rate limiting (429)
-        if (flip.tokenNetwork === 'Solana') {
-          logger.info('[executeFlip] Waiting 15s before burn fee to avoid RPC rate limit', { flipId });
-          await new Promise(resolve => setTimeout(resolve, 15000));
-        }
-
         try {
           const blockchainManager = getBlockchainManager();
           const safeBurnFee = flip.tokenAddress === 'NATIVE'
@@ -201,8 +193,7 @@ class ExecutionHandler {
         } catch (burnFeeError) {
           logger.error('[executeFlip] ERROR SENDING BURN FEE (attempt 1)', { flipId, burnAddress, burnFeeAmount, error: burnFeeError.message });
           // Retry once after a delay
-          const retryDelay = flip.tokenNetwork === 'Solana' ? 20000 : 5000;
-          await new Promise(r => setTimeout(r, retryDelay));
+          await new Promise(r => setTimeout(r, 5000));
           try {
             const blockchainManager = getBlockchainManager();
             const burnRetry = await blockchainManager.sendWinnings(
@@ -261,10 +252,8 @@ class ExecutionHandler {
         }
       }
 
-      // Generate transaction link based on network
-      const txLink = flip.tokenNetwork === 'EVM'
-        ? `https://paxscan.io/tx/${winningTxHash}`
-        : `https://solscan.io/tx/${winningTxHash}`;
+      // Generate transaction link
+      const txLink = `https://paxscan.io/tx/${winningTxHash}`;
 
       // Send result to group chat by editing the existing message
       const txLinkMessage = winningTxHash 
@@ -383,9 +372,7 @@ class ExecutionHandler {
             const updatedFlip = await models.CoinFlip.findByPk(flipId);
             
             if (updatedFlip && updatedFlip.winningTxHash) {
-              const txLinkUpdated = updatedFlip.tokenNetwork === 'EVM'
-                ? `https://paxscan.io/tx/${updatedFlip.winningTxHash}`
-                : `https://solscan.io/tx/${updatedFlip.winningTxHash}`;
+              const txLinkUpdated = `https://paxscan.io/tx/${updatedFlip.winningTxHash}`;
               
               const updatedMessage = 
                 `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
@@ -535,9 +522,7 @@ class ExecutionHandler {
       const botWalletAddress = blockchainManager.getBotWalletAddress(flip.tokenNetwork);
 
       // Get burn address for this network
-      const burnAddress = flip.tokenNetwork === 'EVM'
-        ? '0x000000000000000000000000000000000000dEaD' // EVM burn address (dead address)
-        : '1nc1nerator11111111111111111111111111111111'; // Solana SPL incinerator address
+      const burnAddress = '0x000000000000000000000000000000000000dEaD';
 
       // Send winner payout (90%)
       const winnerTx = await blockchainManager.sendWinnings(
@@ -551,7 +536,7 @@ class ExecutionHandler {
       // Fire-and-forget: dev fee and burn fee sends — do NOT block the payout reply
       (async () => {
         // Send 5% dev fee to dev wallet on-chain, then accumulate in DB for midnight distribution
-        const devWallet = flip.tokenNetwork === 'EVM' ? config.evm.devWallet : config.solana.devWallet;
+      const devWallet = config.evm.devWallet;
         let devTx = null;
         try {
           if (devWallet) {
@@ -580,7 +565,7 @@ class ExecutionHandler {
             flip.tokenSymbol,
             flip.tokenDecimals,
             devAmount,
-            flip.tokenNetwork === 'EVM' ? 'EVM' : 'Solana'
+            'EVM'
           );
           logger.info('[confirmPayoutAddress] Dev fee accumulated for $FLIP distribution', { flipId, amount: devAmount, token: flip.tokenSymbol, network: flip.tokenNetwork });
         } catch (devFeeError) {
@@ -590,7 +575,6 @@ class ExecutionHandler {
         // Send burn fee (5%)
         let burnTx = null;
         try {
-          if (flip.tokenNetwork === 'Solana') await new Promise(r => setTimeout(r, 15000));
           // For native tokens, cap the send to preserve gas reserve
           const safeBurnAmount = flip.tokenAddress === 'NATIVE'
             ? await safeNativeAmount(flip.tokenNetwork, parseFloat(burnAmount))
@@ -604,21 +588,18 @@ class ExecutionHandler {
           );
         } catch (burnFeeError) {
           logger.error('[confirmPayoutAddress] ERROR SENDING BURN FEE (attempt 1)', { flipId, burnAddress, burnAmount, error: burnFeeError.message });
-          // Retry once after a longer delay
-          if (flip.tokenNetwork === 'Solana') {
-            logger.info('[confirmPayoutAddress] Retrying burn fee after 20s', { flipId });
-            await new Promise(r => setTimeout(r, 20000));
-            try {
-              burnTx = await blockchainManager.sendWinnings(
-                flip.tokenNetwork,
-                flip.tokenAddress,
-                burnAddress,
-                burnAmount,
-                flip.tokenDecimals
-              );
-            } catch (burnRetryError) {
-              logger.error('[confirmPayoutAddress] ERROR SENDING BURN FEE (retry failed)', { flipId, burnAddress, burnAmount, error: burnRetryError.message });
-            }
+          // Retry once after a delay
+          await new Promise(r => setTimeout(r, 5000));
+          try {
+            burnTx = await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              flip.tokenAddress,
+              burnAddress,
+              burnAmount,
+              flip.tokenDecimals
+            );
+          } catch (burnRetryError) {
+            logger.error('[confirmPayoutAddress] ERROR SENDING BURN FEE (retry failed)', { flipId, burnAddress, burnAmount, error: burnRetryError.message });
           }
         }
 

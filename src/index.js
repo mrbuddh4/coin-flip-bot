@@ -16,7 +16,7 @@ const logger = require('./utils/logger');
 const { validateConfig, formatNetworkName, getVideoDuration } = require('./utils/helpers');
 const { setDepositTimeout, clearDepositTimeout, depositTimeouts } = require('./utils/depositTimeout');
 
-// Known token symbols for common Solana tokens
+// Known token symbols
 const KNOWN_TOKENS = {
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
   'Es9vMFrzaCERmJfrF4H2FYD9DUwRzTk67cBrTSsiv31': 'USDT',
@@ -255,9 +255,7 @@ function setChallengeTimeout(flipId, groupId, groupMessageId, telegram) {
                 try {
                   const creator = await models.User.findByPk(flipCheck.creatorId);
                   const creatorProfile = await models.UserProfile.findByPk(flipCheck.creatorId);
-                  const profileDepositWallet = flipCheck.tokenNetwork === 'EVM'
-                    ? creatorProfile?.evmDepositWalletAddress
-                    : creatorProfile?.solanaDepositWalletAddress;
+                  const profileDepositWallet = creatorProfile?.evmDepositWalletAddress;
                   const creatorDepositWallet = flipCheck.creatorDepositWalletAddress || profileDepositWallet;
                   const refundAmount = flipCheck.creatorAccumulatedDeposit || flipCheck.wagerAmount;
 
@@ -597,18 +595,13 @@ async function initBot() {
     console.log('Validating blockchain wallets...');
     const blockchainManager = getBlockchainManager();
     const evmWallet = blockchainManager.getBotWalletAddress('EVM');
-    const solanaWallet = blockchainManager.getBotWalletAddress('Solana');
     
     if (!evmWallet || evmWallet === '0x' || evmWallet === 'undefined') {
       throw new Error('Failed to derive EVM bot wallet - check EVM_PRIVATE_KEY environment variable');
     }
-    if (!solanaWallet || solanaWallet === 'undefined') {
-      throw new Error('Failed to derive Solana bot wallet - check SOLANA_PRIVATE_KEY environment variable');
-    }
 
     console.log('✅ Bot wallets validated');
     console.log(`   EVM wallet: ${evmWallet}`);
-    console.log(`   Solana wallet: ${solanaWallet}`);
 
     // Initialize database
     console.log('Initializing database...');
@@ -762,9 +755,7 @@ async function initBot() {
           try {
             const creator = await models.User.findByPk(flip.creatorId);
             const creatorProfile = await models.UserProfile.findByPk(flip.creatorId);
-            const profileDepositWallet = flip.tokenNetwork === 'EVM'
-              ? creatorProfile?.evmDepositWalletAddress
-              : creatorProfile?.solanaDepositWalletAddress;
+            const profileDepositWallet = creatorProfile?.evmDepositWalletAddress;
             const creatorDepositWallet = flip.creatorDepositWalletAddress || profileDepositWallet;
             const refundAmount = flip.creatorAccumulatedDeposit || flip.wagerAmount;
             if (creator && creatorDepositWallet) {
@@ -857,9 +848,7 @@ async function initBot() {
                 try {
                   const creator = await models.User.findByPk(flipCheck.creatorId);
                   const creatorProfile = await models.UserProfile.findByPk(flipCheck.creatorId);
-                  const profileDepositWallet = flipCheck.tokenNetwork === 'EVM'
-                    ? creatorProfile?.evmDepositWalletAddress
-                    : creatorProfile?.solanaDepositWalletAddress;
+                  const profileDepositWallet = creatorProfile?.evmDepositWalletAddress;
                   const creatorDepositWallet = flipCheck.creatorDepositWalletAddress || profileDepositWallet;
                   const refundAmount = flipCheck.creatorAccumulatedDeposit || flipCheck.wagerAmount;
                   if (creator && creatorDepositWallet) {
@@ -1007,9 +996,7 @@ async function initBot() {
                       try {
                         const creator = await models.User.findByPk(flipFinal.creatorId);
                         const creatorProfile = await models.UserProfile.findByPk(flipFinal.creatorId);
-                        const profileDepositWallet = flipFinal.tokenNetwork === 'EVM'
-                          ? creatorProfile?.evmDepositWalletAddress
-                          : creatorProfile?.solanaDepositWalletAddress;
+                        const profileDepositWallet = creatorProfile?.evmDepositWalletAddress;
                         const creatorDepositWallet = flipFinal.creatorDepositWalletAddress || profileDepositWallet;
                         const refundAmount = flipFinal.creatorAccumulatedDeposit || flipFinal.wagerAmount;
                         if (creator && creatorDepositWallet) {
@@ -1183,16 +1170,6 @@ async function initBot() {
       }
     });
 
-    bot.action('update_solana_wallet', async (ctx) => {
-      try {
-        ctx.state.models = getDB().models;
-        await WalletHandler.handleUpdateSolana(ctx);
-      } catch (error) {
-        logger.error('Error updating Solana wallet', error);
-        await ctx.answerCbQuery('Error', true);
-      }
-    });
-
     bot.action('remove_all_wallets', async (ctx) => {
       try {
         ctx.state.models = getDB().models;
@@ -1209,16 +1186,6 @@ async function initBot() {
         await WalletHandler.handleUpdateEVMDeposit(ctx);
       } catch (error) {
         logger.error('Error updating Paxeer deposit wallet', error);
-        await ctx.answerCbQuery('Error', true);
-      }
-    });
-
-    bot.action('update_solana_deposit_wallet', async (ctx) => {
-      try {
-        ctx.state.models = getDB().models;
-        await WalletHandler.handleUpdateSolanaDeposit(ctx);
-      } catch (error) {
-        logger.error('Error updating Solana deposit wallet', error);
         await ctx.answerCbQuery('Error', true);
       }
     });
@@ -1455,8 +1422,8 @@ async function initBot() {
 
         // Check if user has both required wallet addresses in their profile
         const userProfile = await models.UserProfile.findByPk(userId);
-        const receiveWalletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
-        const depositWalletField = flip.tokenNetwork === 'EVM' ? 'evmDepositWalletAddress' : 'solanaDepositWalletAddress';
+        const receiveWalletField = 'evmWalletAddress';
+        const depositWalletField = 'evmDepositWalletAddress';
         
         const receiveWallet = userProfile?.[receiveWalletField];
         const depositWallet = userProfile?.[depositWalletField];
@@ -1707,12 +1674,8 @@ async function initBot() {
         
         // GET USER'S WALLETS - Both required for flip
         const userProfile = await models.UserProfile.findByPk(userId);
-        const receiveWallet = flip.tokenNetwork === 'EVM' 
-          ? userProfile?.evmWalletAddress 
-          : userProfile?.solanaWalletAddress;
-        const depositWallet = flip.tokenNetwork === 'EVM' 
-          ? userProfile?.evmDepositWalletAddress 
-          : userProfile?.solanaDepositWalletAddress;
+        const receiveWallet = userProfile?.evmWalletAddress;
+        const depositWallet = userProfile?.evmDepositWalletAddress;
         
         logger.info('[deposit_confirmed] Wallets loaded from UserProfile', {
           userId,
@@ -1722,8 +1685,6 @@ async function initBot() {
           allProfileData: {
             evmWalletAddress: userProfile?.evmWalletAddress,
             evmDepositWalletAddress: userProfile?.evmDepositWalletAddress,
-            solanaWalletAddress: userProfile?.solanaWalletAddress,
-            solanaDepositWalletAddress: userProfile?.solanaDepositWalletAddress,
           },
         });
         
@@ -1807,7 +1768,7 @@ async function initBot() {
               // On retry, update accumulated amount (query returns cumulative from that sender)
               const previousAccumulated = parseFloat(flip.challengerAccumulatedDeposit || 0);
               // CRITICAL: Use amountDisplay when available (already in display units, e.g. native PAX).
-              // Only divide by tokenDecimals for raw-unit amounts (Solana SPL tokens).
+              // Only divide by tokenDecimals for raw-unit amounts.
               const tokenDecimals = flip.tokenDecimals || 18;
               const currentTotalRaw = parseFloat(verification.amount || 0);
               const currentTotal = verification.amountDisplay !== undefined ? verification.amountDisplay : (verification.isWrongToken ? currentTotalRaw : (currentTotalRaw / Math.pow(10, tokenDecimals)));
@@ -1856,7 +1817,7 @@ async function initBot() {
               // Determine correct native token name based on network
               let wrongTokenName = verification.wrongToken;
               if (verification.wrongToken === 'NATIVE') {
-                wrongTokenName = verification.network === 'Solana' ? 'SOL (native)' : 'PAX (native)';
+                wrongTokenName = 'PAX (native)';
               } else {
                 // For SPL tokens, lookup the symbol from mint address
                 wrongTokenName = getTokenSymbol(verification.wrongToken);
@@ -2288,12 +2249,8 @@ async function initBot() {
         
         // GET USER'S WALLETS - Both required for flip
         const userProfile = await models.UserProfile.findByPk(userId);
-        const receiveWallet = flip.tokenNetwork === 'EVM' 
-          ? userProfile?.evmWalletAddress 
-          : userProfile?.solanaWalletAddress;
-        const depositWallet = flip.tokenNetwork === 'EVM' 
-          ? userProfile?.evmDepositWalletAddress 
-          : userProfile?.solanaDepositWalletAddress;
+        const receiveWallet = userProfile?.evmWalletAddress;
+        const depositWallet = userProfile?.evmDepositWalletAddress;
         
         logger.info('[creator_deposit_confirmed] Wallets loaded from UserProfile', {
           userId,
@@ -2303,8 +2260,6 @@ async function initBot() {
           allProfileData: {
             evmWalletAddress: userProfile?.evmWalletAddress,
             evmDepositWalletAddress: userProfile?.evmDepositWalletAddress,
-            solanaWalletAddress: userProfile?.solanaWalletAddress,
-            solanaDepositWalletAddress: userProfile?.solanaDepositWalletAddress,
           },
         });
         
@@ -2381,7 +2336,7 @@ async function initBot() {
               // On retry, update accumulated amount (query returns cumulative from that sender)
               const previousAccumulated = parseFloat(flip.creatorAccumulatedDeposit || 0);
               // CRITICAL: Use amountDisplay when available (already in display units, e.g. native PAX).
-              // Only divide by tokenDecimals for raw-unit amounts (Solana SPL tokens).
+              // Only divide by tokenDecimals for raw-unit amounts.
               const tokenDecimals = flip.tokenDecimals || 18;
               const currentTotalRaw = parseFloat(verification.amount || 0);
               const currentTotal = verification.amountDisplay !== undefined ? verification.amountDisplay : (verification.isWrongToken ? currentTotalRaw : (currentTotalRaw / Math.pow(10, tokenDecimals)));
@@ -2416,7 +2371,7 @@ async function initBot() {
               // Determine correct native token name based on network
               let wrongTokenName = verification.wrongToken;
               if (verification.wrongToken === 'NATIVE') {
-                wrongTokenName = verification.network === 'Solana' ? 'SOL (native)' : 'PAX (native)';
+                wrongTokenName = 'PAX (native)';
               } else {
                 // For SPL tokens, lookup the symbol from mint address
                 wrongTokenName = getTokenSymbol(verification.wrongToken);
@@ -3160,20 +3115,6 @@ async function initBot() {
 
         dashboardMsg += `\n`;
 
-        if (userProfile?.solanaWalletAddress) {
-          const solReceive = userProfile.solanaWalletAddress.substring(0, 6) + '...' + userProfile.solanaWalletAddress.substring(userProfile.solanaWalletAddress.length - 4);
-          dashboardMsg += `✅ <b>Solana Receive:</b> <code>${solReceive}</code>\n`;
-        } else {
-          dashboardMsg += `❌ <b>Solana Receive:</b> Not set\n`;
-        }
-
-        if (userProfile?.solanaDepositWalletAddress) {
-          const solDeposit = userProfile.solanaDepositWalletAddress.substring(0, 6) + '...' + userProfile.solanaDepositWalletAddress.substring(userProfile.solanaDepositWalletAddress.length - 4);
-          dashboardMsg += `✅ <b>Solana Send:</b> <code>${solDeposit}</code>\n`;
-        } else {
-          dashboardMsg += `❌ <b>Solana Send:</b> Not set\n`;
-        }
-
         dashboardMsg += `\n<b>Ready to play?</b> Use the buttons below to get started!`;
 
         await ctx.editMessageText(
@@ -3414,8 +3355,8 @@ const handlers = {
 
           // Check if user has both required wallet addresses in their profile
           const userProfile = await models.UserProfile.findByPk(userId);
-          const receiveWalletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
-          const depositWalletField = flip.tokenNetwork === 'EVM' ? 'evmDepositWalletAddress' : 'solanaDepositWalletAddress';
+          const receiveWalletField = 'evmWalletAddress';
+          const depositWalletField = 'evmDepositWalletAddress';
           
           const receiveWallet = userProfile?.[receiveWalletField];
           const depositWallet = userProfile?.[depositWalletField];
@@ -3509,8 +3450,8 @@ const handlers = {
 
             // Check if user has both required wallet addresses in their profile
             const userProfile = await models.UserProfile.findByPk(userId);
-            const receiveWalletField = flip.tokenNetwork === 'EVM' ? 'evmWalletAddress' : 'solanaWalletAddress';
-            const depositWalletField = flip.tokenNetwork === 'EVM' ? 'evmDepositWalletAddress' : 'solanaDepositWalletAddress';
+            const receiveWalletField = 'evmWalletAddress';
+            const depositWalletField = 'evmDepositWalletAddress';
             
             const receiveWallet = userProfile?.[receiveWalletField];
             const depositWallet = userProfile?.[depositWalletField];
@@ -3612,8 +3553,8 @@ const handlers = {
             const depositWalletField = 'evmDepositWalletAddress'; // For sending deposits
             
             // No need to check network-specific here - user needs both for any flip
-            const hasReceiveWallet = userProfile?.evmWalletAddress || userProfile?.solanaWalletAddress;
-            const hasDepositWallet = userProfile?.evmDepositWalletAddress || userProfile?.solanaDepositWalletAddress;
+            const hasReceiveWallet = userProfile?.evmWalletAddress;
+            const hasDepositWallet = userProfile?.evmDepositWalletAddress;
             
             if (!hasReceiveWallet || !hasDepositWallet) {
               // Missing wallets - prompt to set up
@@ -3671,8 +3612,8 @@ const handlers = {
       
       // Check if user has BOTH required wallet addresses
       const userProfile = await models.UserProfile.findByPk(userId);
-      const hasReceiveWallet = userProfile?.evmWalletAddress || userProfile?.solanaWalletAddress;
-      const hasDepositWallet = userProfile?.evmDepositWalletAddress || userProfile?.solanaDepositWalletAddress;
+      const hasReceiveWallet = userProfile?.evmWalletAddress;
+      const hasDepositWallet = userProfile?.evmDepositWalletAddress;
       
       if (!hasReceiveWallet || !hasDepositWallet) {
         // Missing wallets - prompt to set up
@@ -3720,10 +3661,9 @@ const handlers = {
 
 <b>Supported Tokens:</b>
 🌐 <b>Paxeer Network:</b> PAX (Native), SID
-◎ <b>Solana Network:</b> SID
 
 <b>Wallet Setup:</b>
-For each network (Paxeer & Solana) you need:
+For Paxeer network you need:
 💰 <b>Receive Wallet</b> - Where your winnings are sent
 🏦 <b>Sending Wallet</b> - Address you send deposits from
 (You only need to configure networks you plan to use)
@@ -4400,19 +4340,6 @@ async function showStartDashboard(ctx, editMessage = false) {
     dashboardMsg += `✅ <b>Paxeer Send:</b> <code>${s.substring(0, 6)}...${s.substring(s.length - 4)}</code>\n`;
   } else {
     dashboardMsg += `❌ <b>Paxeer Send:</b> Not set\n`;
-  }
-  dashboardMsg += `\n`;
-  if (userProfile?.solanaWalletAddress) {
-    const s = userProfile.solanaWalletAddress;
-    dashboardMsg += `✅ <b>Solana Receive:</b> <code>${s.substring(0, 6)}...${s.substring(s.length - 4)}</code>\n`;
-  } else {
-    dashboardMsg += `❌ <b>Solana Receive:</b> Not set\n`;
-  }
-  if (userProfile?.solanaDepositWalletAddress) {
-    const s = userProfile.solanaDepositWalletAddress;
-    dashboardMsg += `✅ <b>Solana Send:</b> <code>${s.substring(0, 6)}...${s.substring(s.length - 4)}</code>\n`;
-  } else {
-    dashboardMsg += `❌ <b>Solana Send:</b> Not set\n`;
   }
 
   dashboardMsg += `\n<b>Ready to play?</b> Use the buttons below to get started!`;

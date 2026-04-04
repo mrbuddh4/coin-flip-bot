@@ -64,20 +64,15 @@ const validateConfig = () => {
   const required = [
     'TELEGRAM_BOT_TOKEN',
     'EVM_RPC_URL',
-    'SOLANA_RPC_URL',
   ];
 
-  // Check for bot private keys - accept either naming convention
+  // Check for bot private key - accept either naming convention
   const hasEVMKey = process.env.EVM_BOT_PRIVATE_KEY || process.env.EVM_PRIVATE_KEY;
-  const hasSolanaKey = process.env.SOL_BOT_PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY;
 
   const missing = required.filter(key => !process.env[key]);
   
   if (!hasEVMKey) {
     missing.push('EVM_BOT_PRIVATE_KEY (or EVM_PRIVATE_KEY)');
-  }
-  if (!hasSolanaKey) {
-    missing.push('SOL_BOT_PRIVATE_KEY (or SOLANA_PRIVATE_KEY)');
   }
 
   if (missing.length > 0) {
@@ -150,7 +145,6 @@ const retryWithBackoff = async (fn, maxRetries = 3, delay = 1000) => {
 const formatNetworkName = (network) => {
   const networkMap = {
     'EVM': 'Paxeer',
-    'SOLANA': 'Solana',
   };
   return networkMap[network] || network;
 };

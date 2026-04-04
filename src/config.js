@@ -21,16 +21,6 @@ module.exports = {
     devWallet: process.env.EVM_DEV_WALLET,
     devPrivateKey: process.env.EVM_DEV_PRIVATE_KEY,
   },
-  solana: {
-    rpcUrl: process.env.SOLANA_RPC_URL,
-    heliusUrl: process.env.SOLANA_HELIUS_API_URL || `https://api.helius.xyz/v0/addresses/${process.env.SOL_BOT_WALLET_ADDRESS}/transactions?api-key=${process.env.SOLANA_HELIUS_API_KEY}`,
-    heliusApiKey: process.env.SOLANA_HELIUS_API_KEY,
-    privateKey: process.env.SOL_BOT_PRIVATE_KEY || process.env.SOLANA_PRIVATE_KEY,
-    walletAddress: process.env.SOL_BOT_WALLET_ADDRESS, // Optional: explicit address (derived from private key if not set)
-    sidTokenATA: process.env.SOL_SID_TOKEN_ATA || 'BoyaYRYtLtCbKdGFLP3aMhdPm3asfUCMbeo7sh1YHfzk', // Pre-computed ATA for SID token
-    devWallet: process.env.SOL_DEV_WALLET,
-    devPrivateKey: process.env.SOL_DEV_PRIVATE_KEY,
-  },
   bot: {
     walletAddress: process.env.BOT_WALLET_ADDRESS,
     flipTimeoutSeconds: parseInt(process.env.FLIP_TIMEOUT_SECONDS) || 180,
@@ -52,14 +42,7 @@ function parseSupportedTokens(tokenString) {
   tokenList.forEach(token => {
     const parts = token.trim().split(':');
     if (parts.length === 4) {
-      let [network, address, decimals, symbol] = parts;
-      // Normalize network names to match database enum values
-      if (network?.toUpperCase() === 'SOLANA') {
-        network = 'Solana';
-      }
-      const key = `${network}:${address}`;
-      tokens[key] = {
-        network,
+      const [network, address, decimals, symbol] = parts;
         address,
         decimals: parseInt(decimals),
         symbol,
