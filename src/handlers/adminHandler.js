@@ -3,6 +3,7 @@ const { getDB } = require('../database');
 const DatabaseUtils = require('../database/utils');
 const logger = require('../utils/logger');
 const config = require('../config');
+const botState = require('../utils/botState');
 
 class AdminHandler {
   static adminIds = (process.env.ADMIN_IDS || '').split(',').map(id => parseInt(id));
@@ -405,7 +406,31 @@ class AdminHandler {
     }
   }
 
+  static async sleep(ctx) {
+    if (ctx.chat.type !== 'private') return;
+    if (!this.isAdmin(ctx.from.id)) {
+      await ctx.reply('❌ Not authorized.');
+      return;
+    }
+    botState.asleep = true;
+    logger.info('[AdminHandler] Bot put to sleep', { by: ctx.from.id });
+    await ctx.reply('😴 Bot is now <b>asleep</b>. New flips are disabled.\n\nUse /wake to re-enable.', { parse_mode: 'HTML' });
+  }
+
+  static async wake(ctx) {
+    if (ctx.chat.type !== 'private') return;
+    if (!this.isAdmin(ctx.from.id)) {
+      await ctx.reply('❌ Not authorized.');
+      return;
+    }
+    botState.asleep = false;
+    logger.info('[AdminHandler] Bot woken up', { by: ctx.from.id });
+    await ctx.reply('✅ Bot is now <b>awake</b>. Flips are enabled again.', { parse_mode: 'HTML' });
+  }
+
   static registerCommands(bot) {
+    bot.command('sleep', ctx => this.sleep(ctx));
+    bot.command('wake', ctx => this.wake(ctx));
     bot.command('admin_stats', ctx => this.stats(ctx));
     bot.command('admin_health', ctx => this.health(ctx));
     bot.command('admin_users', ctx => this.users(ctx));

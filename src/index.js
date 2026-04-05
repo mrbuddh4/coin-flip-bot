@@ -15,6 +15,7 @@ const DatabaseUtils = require('./database/utils');
 const logger = require('./utils/logger');
 const { validateConfig, formatNetworkName, getVideoDuration } = require('./utils/helpers');
 const { setDepositTimeout, clearDepositTimeout, depositTimeouts } = require('./utils/depositTimeout');
+const botState = require('./utils/botState');
 
 // Known token symbols
 const KNOWN_TOKENS = {
@@ -3979,6 +3980,15 @@ For Paxeer network you need:
       const { models } = getDB();
       const userId = ctx.from.id;
       const isGroup = ctx.chat.type !== 'private';
+
+      // Sleep mode: block new flips in groups
+      if (isGroup && botState.asleep) {
+        await ctx.reply(
+          `😴 <b>Bot is currently offline for maintenance.</b>\n\nFlips are temporarily disabled. Please try again later!`,
+          { parse_mode: 'HTML' }
+        );
+        return;
+      }
 
       // Ensure user exists
       let user = await models.User.findByPk(userId);
