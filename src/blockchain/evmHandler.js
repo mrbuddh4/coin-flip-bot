@@ -3,6 +3,53 @@ const config = require('../config');
 
 const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
 
+/**
+ * Serialises all outgoing transactions from a single wallet address so they
+ * each get a unique, monotonically-increasing nonce.  Without this, concurrent
+ * sends (winner payout + dev fee + burn from overlapping flips) race to fetch
+ * eth_getTransactionCount and end up submitting the same nonce, causing one of
+ * them to be rejected with "invalid nonce; got N, expected M".
+ */
+class NonceManager {
+  constructor() {
+    this._queues = new Map(); // address -> tail of the promise chain
+    this._nonces = new Map(); // address -> next nonce to use
+  }
+
+  /**
+   * Execute txFn(nonce) with a guaranteed-unique nonce for walletAddress.
+   * Calls are serialised per address; each waits for the previous to finish
+   * before fetching/incrementing its own nonce.
+   */
+  execute(provider, walletAddress, txFn) {
+    const addr = walletAddress.toLowerCase();
+    const prev = this._queues.get(addr) ?? Promise.resolve();
+
+    const task = prev.then(async () => {
+      if (!this._nonces.has(addr)) {
+        const onchain = await provider.getTransactionCount(walletAddress, 'pending');
+        this._nonces.set(addr, onchain);
+      }
+      const nonce = this._nonces.get(addr);
+      try {
+        const result = await txFn(nonce);
+        this._nonces.set(addr, nonce + 1);
+        return result;
+      } catch (err) {
+        // Reset cached nonce so the next call fetches a fresh value from chain
+        this._nonces.delete(addr);
+        throw err;
+      }
+    });
+
+    // Register the tail — use a no-op catch so a failure doesn't stall future txs
+    this._queues.set(addr, task.catch(() => {}));
+    return task;
+  }
+}
+
+const _nonceManager = new NonceManager();
+
 class EVMHandler {
   constructor() {
     this.provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
@@ -67,26 +114,26 @@ class EVMHandler {
    * Transfer ERC20 token from one wallet to another
    */
   async transferToken(tokenAddress, fromPrivateKey, toAddress, amount, decimals) {
+    const fromWallet = new ethers.Wallet(fromPrivateKey, this.provider);
+    const erc20ABI = [
+      'function transfer(address to, uint256 amount) returns (bool)',
+      'function decimals() view returns (uint8)',
+    ];
+    const contract = new ethers.Contract(tokenAddress, erc20ABI, fromWallet);
+    const amountBN = ethers.parseUnits(amount.toString(), decimals);
+
     try {
-      const fromWallet = new ethers.Wallet(fromPrivateKey, this.provider);
-      const erc20ABI = [
-        'function transfer(address to, uint256 amount) returns (bool)',
-        'function decimals() view returns (uint8)',
-      ];
-
-      const contract = new ethers.Contract(tokenAddress, erc20ABI, fromWallet);
-      const amountBN = ethers.parseUnits(amount.toString(), decimals);
-
-      const tx = await contract.transfer(toAddress, amountBN);
-      const receipt = await tx.wait();
-
-      return {
-        txHash: receipt.hash,
-        from: receipt.from,
-        to: receipt.to,
-        blockNumber: receipt.blockNumber,
-        status: receipt.status === 1 ? 'success' : 'failed',
-      };
+      return await _nonceManager.execute(this.provider, fromWallet.address, async (nonce) => {
+        const tx = await contract.transfer(toAddress, amountBN, { nonce });
+        const receipt = await tx.wait();
+        return {
+          txHash: receipt.hash,
+          from: receipt.from,
+          to: receipt.to,
+          blockNumber: receipt.blockNumber,
+          status: receipt.status === 1 ? 'success' : 'failed',
+        };
+      });
     } catch (error) {
       console.error('Error transferring EVM token:', error);
       throw error;
@@ -97,24 +144,25 @@ class EVMHandler {
    * Transfer native ETH from one wallet to another
    */
   async transferNative(fromPrivateKey, toAddress, amountEth) {
+    const fromWallet = new ethers.Wallet(fromPrivateKey, this.provider);
+    const amountBN = ethers.parseEther(amountEth.toString());
+
     try {
-      const fromWallet = new ethers.Wallet(fromPrivateKey, this.provider);
-      const amountBN = ethers.parseEther(amountEth.toString());
-
-      const tx = await fromWallet.sendTransaction({
-        to: toAddress,
-        value: amountBN,
+      return await _nonceManager.execute(this.provider, fromWallet.address, async (nonce) => {
+        const tx = await fromWallet.sendTransaction({
+          to: toAddress,
+          value: amountBN,
+          nonce,
+        });
+        const receipt = await tx.wait();
+        return {
+          txHash: tx.hash,
+          from: receipt.from,
+          to: receipt.to,
+          blockNumber: receipt.blockNumber,
+          status: receipt.status === 1 ? 'success' : 'failed',
+        };
       });
-
-      const receipt = await tx.wait();
-
-      return {
-        txHash: tx.hash,
-        from: receipt.from,
-        to: receipt.to,
-        blockNumber: receipt.blockNumber,
-        status: receipt.status === 1 ? 'success' : 'failed',
-      };
     } catch (error) {
       console.error('Error transferring native EVM:', error);
       throw error;
