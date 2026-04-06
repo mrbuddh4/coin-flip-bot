@@ -605,7 +605,7 @@ async function initBot() {
     // Create bot instance
     console.log('Creating Telegraf instance...');
     try {
-      bot = new Telegraf(config.telegram.token);
+      bot = new Telegraf(config.telegram.token, { handlerTimeout: Infinity });
       console.log('✅ Telegraf instance created');
     } catch (err) {
       console.error('❌ Failed to create Telegraf instance:', err);
@@ -2231,6 +2231,12 @@ async function initBot() {
           return;
         }
 
+        // Guard: only accept deposit confirmation while flip is still awaiting creator deposit
+        if (flip.status !== 'WAITING_CREATOR_DEPOSIT') {
+          await ctx.answerCbQuery('❌ This flip is no longer active');
+          return;
+        }
+
         // Prevent duplicate concurrent verification chains for the same flip
         if (pendingVerifications.has(flipId)) {
           logger.info('[creator_deposit_confirmed] Verification already in progress, ignoring duplicate click', { flipId, userId });
@@ -2285,6 +2291,11 @@ async function initBot() {
         } catch (err) {
           logger.warn('[creator_deposit_confirmed] Failed to edit message to processing state', err.message);
         }
+
+        // Answer the callback query immediately so Telegram's loading spinner clears.
+        // The verification below is long-running (up to ~120s) and must not block the
+        // Telegraf update handler, which has handlerTimeout: Infinity set above.
+        await ctx.answerCbQuery().catch(() => {});
 
         // Verify deposit on blockchain (with retries for blockchain indexing)
         // Use the user's configured deposit wallet as the knownSender
@@ -2535,17 +2546,8 @@ async function initBot() {
             
             if (flip.creatorDepositWalletAddress && flip.creatorAccumulatedDeposit > 0) {
               const blockchainManager = getBlockchainManager();
-              const supportedTokens = config.supportedTokens;
-              let tokenAddress = 'NATIVE';
-              let refundDecimals = 18;
-              
-              for (const key in supportedTokens) {
-                if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
-                  tokenAddress = supportedTokens[key].address || 'NATIVE';
-                  refundDecimals = supportedTokens[key].decimals || 18;
-                  break;
-                }
-              }
+              const tokenAddress = flip.tokenAddress || 'NATIVE';
+              const refundDecimals = flip.tokenDecimals || 18;
 
               // Validate token address before attempting refund
               // Only refund if we have a recognized token with known on-chain validity
