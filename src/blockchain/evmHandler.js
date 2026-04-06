@@ -786,7 +786,8 @@ class EVMHandler {
           if (knownSender && tokenAddress && tokenAddress !== 'NATIVE') {
             try {
               const ethFallbackCurrent = await getBlockNumber();
-              const ethFallbackFromBlock = Math.max(0, ethFallbackCurrent - 10000);
+              // Paxeer RPC enforces a max 1000-block distance — cap the window to 999
+              const ethFallbackFromBlock = Math.max(0, ethFallbackCurrent - 999);
               console.log('[getRecentDepositSender] Paxscan unavailable — falling back to eth_getLogs', {
                 targetSender: knownSender.toLowerCase(),
                 tokenAddress,
