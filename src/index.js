@@ -615,6 +615,15 @@ async function initBot() {
     // Set up bot commands menu
     console.log('Setting up commands menu...');
     try {
+      // Group chats: only commands that work in a group context
+      await bot.telegram.setMyCommands([
+        { command: 'flip', description: '🪙 Start a coin flip' },
+        { command: 'leaderboard', description: '🏆 Top winners and losers' },
+        { command: 'shame', description: '😂 Shame a click-without-funds offender' },
+        { command: 'wallofshame', description: '🏴 Hall of shame — serial click-without-funds offenders' },
+      ], { scope: { type: 'all_group_chats' } });
+
+      // Private/DM chats: full command list
       await bot.telegram.setMyCommands([
         { command: 'start', description: '🎲 Start the bot' },
         { command: 'help', description: '❓ How to play' },
@@ -624,7 +633,8 @@ async function initBot() {
         { command: 'leaderboard', description: '🏆 Top winners and losers' },
         { command: 'shame', description: '😂 Shame a click-without-funds offender' },
         { command: 'wallofshame', description: '🏴 Hall of shame — serial click-without-funds offenders' },
-      ]);
+      ], { scope: { type: 'all_private_chats' } });
+
       console.log('✅ Commands menu set');
     } catch (err) {
       console.error('❌ Failed to set commands menu:', err);
