@@ -297,6 +297,10 @@ class FlipHandler {
           flip.data.lastInsufficientDepositNotification = Date.now();
           flip.data.partialDepositReceived = receivedAmount;
           flip.data.partialDepositAttempt = true;
+          // Persist sender address for refund in case of timeout
+          if (verification.depositSender && !flip.creatorDepositWalletAddress) {
+            flip.creatorDepositWalletAddress = verification.depositSender;
+          }
           await flip.save();
         } else {
           logger.info('[confirmCreatorDeposit] Skipping duplicate notification (sent within last 30s)', { flipId });
@@ -306,7 +310,7 @@ class FlipHandler {
         setTimeout(async () => {
           try {
             const flipCheck = await models.CoinFlip.findByPk(flip.id);
-            if (flipCheck && flipCheck.status === 'WAITING_CHALLENGER_DEPOSIT' && flipCheck.data?.partialDepositAttempt) {
+            if (flipCheck && flipCheck.status === 'WAITING_CREATOR_DEPOSIT' && flipCheck.data?.partialDepositAttempt) {
               logger.info('[insufficient_deposit_timeout] Refunding partial deposit and cancelling', { flipId: flip.id });
               
               // Cancel the challenge
@@ -315,8 +319,15 @@ class FlipHandler {
               await flipCheck.save();
               
               // Refund the partial amount that was sent
-              if (verification.depositSender && verification.amount) {
+              // Use the latest stored values in case additional deposits arrived after the first check
+              const refundSender = flipCheck.creatorDepositWalletAddress || verification.depositSender;
+              const refundAmount = flipCheck.data?.partialDepositReceived?.toString() || verification.amount;
+              if (refundSender && refundAmount && !flipCheck.data?.partialRefundSent) {
                 try {
+                  // Mark refund sent before dispatching to prevent double-refund from handleDepositTimeout
+                  flipCheck.data = { ...flipCheck.data, partialRefundSent: true };
+                  await flipCheck.save();
+
                   const blockchainManager = getBlockchainManager();
                   const supportedTokens = config.supportedTokens;
                   let tokenAddress = 'NATIVE';
@@ -333,15 +344,15 @@ class FlipHandler {
                   await blockchainManager.sendWinnings(
                     flipCheck.tokenNetwork,
                     tokenAddress,
-                    verification.depositSender,
-                    verification.amount,
+                    refundSender,
+                    refundAmount,
                     tokenDecimals
                   );
                   
                   logger.info('[insufficient_deposit_timeout] Refunded partial deposit', { 
                     flipId: flip.id,
-                    amount: verification.amount,
-                    recipient: verification.depositSender
+                    amount: refundAmount,
+                    recipient: refundSender
                   });
                 } catch (refundErr) {
                   logger.error('[insufficient_deposit_timeout] Failed to refund partial deposit', { 
@@ -456,6 +467,49 @@ class FlipHandler {
       if (!flip) return;
 
       if (role === 'creator' && !flip.creatorDepositConfirmed) {
+        // Refund any partial deposit before wiping records
+        const partialAmount = flip.data?.partialDepositReceived;
+        const refundSender = flip.creatorDepositWalletAddress;
+        if (partialAmount && refundSender && !flip.data?.partialRefundSent) {
+          try {
+            // Mark refund sent first to prevent duplicate from insufficient_deposit_timeout
+            flip.data = { ...flip.data, partialRefundSent: true };
+            await flip.save();
+
+            const blockchainManager = getBlockchainManager();
+            const supportedTokens = config.supportedTokens;
+            let tokenAddress = 'NATIVE';
+            let tokenDecimals = 18;
+
+            for (const key in supportedTokens) {
+              if (supportedTokens[key].symbol === flip.tokenSymbol && supportedTokens[key].network === flip.tokenNetwork) {
+                tokenAddress = supportedTokens[key].address || 'NATIVE';
+                tokenDecimals = supportedTokens[key].decimals || 18;
+                break;
+              }
+            }
+
+            await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              tokenAddress,
+              refundSender,
+              partialAmount.toString(),
+              tokenDecimals
+            );
+
+            logger.info('[handleDepositTimeout] Refunded partial creator deposit', {
+              flipId,
+              amount: partialAmount,
+              recipient: refundSender,
+            });
+          } catch (refundErr) {
+            logger.error('[handleDepositTimeout] Failed to refund partial creator deposit', {
+              flipId,
+              error: refundErr.message,
+            });
+          }
+        }
+
         flip.creatorTimedOut = true;
         flip.status = 'CANCELLED';
         flip.creatorDepositWalletAddress = null;
