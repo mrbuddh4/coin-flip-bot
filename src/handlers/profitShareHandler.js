@@ -470,6 +470,7 @@ class ProfitShareHandler {
       let pending = parseFloat(pool.pendingAmount);
       // Use the dev wallet's actual on-chain balance as the distribution amount.
       // This accounts for fees that were sent on-chain after each flip.
+      let devWalletBalanceChecked = false;
       if (config.evm.devPrivateKey && config.evm.devWallet) {
         try {
           const _provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
@@ -482,6 +483,7 @@ class ProfitShareHandler {
             const devBal = await _token.balanceOf(config.evm.devWallet);
             devBalFloat = parseFloat(ethers.formatUnits(devBal, pool.tokenDecimals));
           }
+          devWalletBalanceChecked = true;
           if (devBalFloat > MIN_PER_HOLDER) {
             logger.info('[ProfitShare] Using dev wallet on-chain balance', {
               devWallet: config.evm.devWallet,
@@ -489,6 +491,15 @@ class ProfitShareHandler {
               symbol: pool.tokenSymbol,
             });
             pending = devBalFloat;
+          } else {
+            // Dev wallet has no balance — skip rather than attempt sends that will all revert
+            logger.warn('[ProfitShare] Dev wallet has insufficient balance for distribution, skipping pool', {
+              devWallet: config.evm.devWallet,
+              walletBalance: devBalFloat,
+              dbPending: pool.pendingAmount,
+              symbol: pool.tokenSymbol,
+            });
+            continue;
           }
         } catch (err) {
           logger.warn('[ProfitShare] Could not fetch dev wallet balance, falling back to pool amount', { error: err.message });
