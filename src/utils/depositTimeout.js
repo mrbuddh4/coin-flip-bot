@@ -12,7 +12,37 @@ const depositTimeouts = {};
 function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
   clearDepositTimeout(flipId);
 
+  // Send a 1-minute warning to the group at the 2/3 mark
+  const warnMs = Math.floor(timeoutMs * (2 / 3));
+  const warnTimer = setTimeout(async () => {
+    try {
+      const { getDB } = require('../database');
+      const { models } = getDB();
+      const flip = await models.CoinFlip.findByPk(flipId);
+      if (!flip || flip.status !== 'WAITING_CHALLENGER_DEPOSIT' || flip.challengerDepositConfirmed) return;
+
+      const formattedWager = parseFloat(flip.wagerAmount).toLocaleString('en-US', { maximumFractionDigits: 6 });
+      const challenger = await models.User.findByPk(flip.challengerId);
+      const challengerDisplay = challenger?.username ? `@${challenger.username}` : challenger?.firstName || 'Challenger';
+
+      if (flip.groupChatId) {
+        await telegram.sendMessage(
+          flip.groupChatId,
+          `⏰ <b>Deposit Reminder</b>\n\n` +
+          `${challengerDisplay} — you have <b>1 minute</b> left to send your <b>${formattedWager} ${flip.tokenSymbol}</b> deposit, or the challenge will be cancelled!`,
+          { parse_mode: 'HTML' }
+        ).catch(() => {});
+      }
+    } catch (_) {}
+  }, warnMs);
+
+  // Store warn timer so it can be cancelled if deposit arrives in time
+  depositTimeouts[`${flipId}_warn`] = warnTimer;
+
   depositTimeouts[flipId] = setTimeout(async () => {
+    // Cancel the warn timer if it somehow hasn't fired yet
+    clearTimeout(depositTimeouts[`${flipId}_warn`]);
+    delete depositTimeouts[`${flipId}_warn`];
     delete depositTimeouts[flipId];
     try {
       // Lazy requires to avoid circular dependencies
@@ -148,8 +178,13 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
             const botWallet = blockchainManager.getBotWalletAddress('EVM');
             const provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
             const latestBlock = await provider.getBlockNumber();
-            const PAXEER_MAX_BLOCKS = 999;
-            const fromBlock = Math.max(0, latestBlock - PAXEER_MAX_BLOCKS);
+            // Use flip.createdAt to scope the search window to just after the flip
+            // was created. latestBlock - 999 is too wide and picks up transactions
+            // from previous flips the same user made, which falsely suppresses shame.
+            const secondsSinceCreate = Math.floor((Date.now() - new Date(flip.createdAt).getTime()) / 1000);
+            const PAXEER_BLOCK_TIME_SECS = 2; // ~2s per block on Paxeer
+            const blocksSinceCreate = Math.ceil(secondsSinceCreate / PAXEER_BLOCK_TIME_SECS);
+            const fromBlock = Math.max(0, latestBlock - blocksSinceCreate - 20); // 20-block safety buffer
 
             const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
             const senderTopic = ethers.zeroPadValue(senderAddr.toLowerCase(), 32);
@@ -287,6 +322,10 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
  * @param {string} flipId 
  */
 function clearDepositTimeout(flipId) {
+  if (depositTimeouts[`${flipId}_warn`]) {
+    clearTimeout(depositTimeouts[`${flipId}_warn`]);
+    delete depositTimeouts[`${flipId}_warn`];
+  }
   if (depositTimeouts[flipId]) {
     clearTimeout(depositTimeouts[flipId]);
     delete depositTimeouts[flipId];
