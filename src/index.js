@@ -2873,7 +2873,10 @@ async function initBot() {
           `Network: ${token.network}\n\n` +
           `Just reply with the amount.\n` +
           `Example: <code>10</code> or <code>100.5</code>`,
-          { parse_mode: 'HTML' }
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', `back_to_token_select_${session.id}`)]]).reply_markup,
+          }
         );
         
         logger.info('Message edited for wager input');
@@ -2941,7 +2944,10 @@ async function initBot() {
           `Network: ${token.network}\n\n` +
           `Just reply with the amount.\n` +
           `Example: <code>10</code> or <code>100.5</code>`,
-          { parse_mode: 'HTML' }
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', `back_to_token_select_${session.id}`)]]).reply_markup,
+          }
         );
         await ctx.answerCbQuery();
       } catch (error) {
@@ -2991,7 +2997,10 @@ async function initBot() {
           `Network: ${token.network}\n\n` +
           `Just reply with the amount.\n` +
           `Example: <code>10</code> or <code>100.5</code>`,
-          { parse_mode: 'HTML' }
+          {
+            parse_mode: 'HTML',
+            reply_markup: Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back', `back_to_token_select_${session.id}`)]]).reply_markup,
+          }
         );
         await ctx.answerCbQuery(alreadySaved ? 'Already in favorites' : '❤️ Saved to favorites!');
       } catch (error) {
