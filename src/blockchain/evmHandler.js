@@ -36,6 +36,26 @@ class NonceManager {
         this._nonces.set(addr, nonce + 1);
         return result;
       } catch (err) {
+        // If the chain reports a nonce mismatch, extract the expected nonce and
+        // retry once with the correct value rather than dropping the whole tx.
+        const allErrText = [
+          err.message,
+          err.error?.message,
+          err.info?.error?.message,
+        ].filter(Boolean).join(' ');
+        const nonceMatch = /invalid nonce[\s\S]*?expected (\d+)/i.exec(allErrText);
+        if (nonceMatch) {
+          const expectedNonce = parseInt(nonceMatch[1], 10);
+          this._nonces.set(addr, expectedNonce);
+          try {
+            const retryResult = await txFn(expectedNonce);
+            this._nonces.set(addr, expectedNonce + 1);
+            return retryResult;
+          } catch (retryErr) {
+            this._nonces.delete(addr);
+            throw retryErr;
+          }
+        }
         // Reset cached nonce so the next call fetches a fresh value from chain
         this._nonces.delete(addr);
         throw err;
@@ -241,7 +261,7 @@ class EVMHandler {
       // fromBlock is estimated from flip creation time (+ 300-block / ~15min buffer for pre-funding),
       // scoping the query without risking misses from pagination on a busy bot wallet.
       // A slightly stale getBlockNumber() here is safe — it can only widen the window, not narrow it.
-      const PAXEER_AVG_BLOCK_TIME = 3; // seconds per block on Paxeer
+      const PAXEER_AVG_BLOCK_TIME = 2; // seconds per block on Paxeer
       const paxToBlock = 999999999;
       // getBlockNumber is only called for eth_getLogs fallbacks; wrap in a lazy getter
       // so subsequent calls (Fallback 3, native path) reuse the block number already fetched above.
