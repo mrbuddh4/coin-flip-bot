@@ -45,6 +45,48 @@ class ExecutionHandler {
         return;
       }
 
+      // Guard against race condition: depositTimeout may have cancelled the flip between
+      // the challenger's deposit being confirmed and executeFlip being called.
+      // Without this guard the bot pays out winnings AND has already refunded the creator,
+      // resulting in a net loss equal to one wager amount.
+      if (flip.status === 'CANCELLED' || flip.status === 'COMPLETED') {
+        logger.warn('[executeFlip] ABORT — flip is in non-executable state (race condition with timeout)', {
+          flipId,
+          status: flip.status,
+          challengerDepositConfirmed: flip.challengerDepositConfirmed,
+          creatorDepositConfirmed: flip.creatorDepositConfirmed,
+        });
+
+        // If the challenger's deposit was confirmed but the flip got cancelled (e.g. the
+        // deposit timeout fired just before the last verification attempt succeeded), the
+        // creator refund was already sent by depositTimeout — but the challenger's funds
+        // are still sitting in the bot wallet.  Refund them now.
+        if (flip.status === 'CANCELLED' && flip.challengerDepositConfirmed && flip.challengerDepositWalletAddress) {
+          try {
+            const { getBlockchainManager } = require('../blockchain/manager');
+            const blockchainManager = getBlockchainManager();
+            await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              flip.tokenAddress || 'NATIVE',
+              flip.challengerDepositWalletAddress,
+              parseFloat(flip.wagerAmount),
+              flip.tokenDecimals || 18
+            );
+            logger.info('[executeFlip] Refunded challenger deposit after CANCELLED race condition', {
+              flipId,
+              amount: flip.wagerAmount,
+              to: flip.challengerDepositWalletAddress,
+            });
+          } catch (refundErr) {
+            logger.error('[executeFlip] Failed to refund challenger in CANCELLED race condition', {
+              flipId,
+              error: refundErr.message,
+            });
+          }
+        }
+        return;
+      }
+
       logger.info('[executeFlip] Starting execution', { 
         flipId, 
         creatorId: flip.creatorId, 

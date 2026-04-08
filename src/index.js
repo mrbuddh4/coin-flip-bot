@@ -2115,6 +2115,22 @@ async function initBot() {
 
         // Check if both deposits are confirmed
         if (flip.creatorDepositConfirmed && flip.challengerDepositConfirmed) {
+          // Re-fetch the flip from DB to guard against a race condition where the
+          // depositTimeout fired and set status=CANCELLED between the start of this
+          // verification chain and now.  If the flip is no longer active, abort early
+          // so we don't send the video or trigger executeFlip (which would otherwise
+          // pay out winnings on a flip the timeout already refunded the creator for).
+          // executeFlip has its own matching guard as a second line of defence.
+          const freshFlip = await models.CoinFlip.findByPk(flipId);
+          if (!freshFlip || freshFlip.status === 'CANCELLED' || freshFlip.status === 'COMPLETED') {
+            logger.warn('[deposit_confirmed] Flip status changed during verification — aborting to prevent double-payout', {
+              flipId,
+              status: freshFlip?.status ?? 'not found',
+            });
+            pendingVerifications.delete(flipId);
+            return;
+          }
+
           logger.info('[deposit_confirmed] Both deposits confirmed, executing flip', { flipId });
 
           // Clear the challenge timeout since flip is now executing
