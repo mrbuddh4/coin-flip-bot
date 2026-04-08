@@ -406,6 +406,46 @@ class AdminHandler {
     }
   }
 
+  static async flipResults(ctx) {
+    if (!this.isAdmin(ctx.from.id)) {
+      await ctx.reply('❌ Not authorized.');
+      return;
+    }
+
+    try {
+      const { models } = getDB();
+      const { QueryTypes } = require('sequelize');
+      const rows = await models.sequelize.query(
+        `SELECT
+           "flipResult",
+           COUNT(*) AS cnt
+         FROM "CoinFlips"
+         WHERE status = 'COMPLETED'
+           AND "flipResult" IS NOT NULL
+         GROUP BY "flipResult"
+         ORDER BY "flipResult"`,
+        { type: QueryTypes.SELECT }
+      );
+
+      if (!rows.length) {
+        await ctx.reply('No completed flips yet.');
+        return;
+      }
+
+      const total = rows.reduce((s, r) => s + parseInt(r.cnt), 0);
+      let msg = `🎲 <b>Flip Result Distribution</b>\n\nTotal completed: <b>${total}</b>\n\n`;
+      rows.forEach(r => {
+        const pct = ((parseInt(r.cnt) / total) * 100).toFixed(1);
+        msg += `${r.flipResult === 'CREATOR' ? '🟡' : '🔵'} <b>${r.flipResult}</b>: ${r.cnt} wins (${pct}%)\n`;
+      });
+
+      await ctx.reply(msg, { parse_mode: 'HTML' });
+    } catch (error) {
+      logger.error('Error getting flip results', error);
+      await ctx.reply('❌ Error retrieving flip results.');
+    }
+  }
+
   static async sleep(ctx) {
     if (ctx.chat.type !== 'private') return;
     if (!this.isAdmin(ctx.from.id)) {
@@ -443,6 +483,7 @@ class AdminHandler {
     bot.command('flip_holders_remove', ctx => this.flipHoldersRemove(ctx));
     bot.command('flip_holders_list', ctx => this.flipHoldersList(ctx));
     bot.command('flip_holders_backfill', ctx => this.flipHoldersBackfill(ctx));
+    bot.command('admin_flipresults', ctx => this.flipResults(ctx));
 
     // For flip details: /flip_<id>
     bot.hears(/^\/flip_(.+)$/, (ctx) => {
