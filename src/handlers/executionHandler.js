@@ -116,29 +116,33 @@ class ExecutionHandler {
       const winnerPrize = totalPool * 0.9; // 90% to winner, 10% fees
       const winnerPrizeFormatted = winnerPrize.toLocaleString('en-US', { maximumFractionDigits: 6 });
 
-      // Send winnings to winner automatically — retry up to 3 times with a 5-second delay
-      let winningTxHash = null;
-      const MAX_PAYOUT_ATTEMPTS = 3;
-      for (let attempt = 1; attempt <= MAX_PAYOUT_ATTEMPTS; attempt++) {
-        try {
-          const blockchainManager = getBlockchainManager();
-          const sendResult = await blockchainManager.sendWinnings(
-            flip.tokenNetwork,
-            flip.tokenAddress,
-            winnerDepositAddress,
-            winnerPrize.toString(),
-            flip.tokenDecimals
-          );
-          winningTxHash = sendResult.txHash;
-          logger.info('Winnings sent to winner', { flipId, winnerId, txHash: winningTxHash, amount: winnerPrize });
-          break; // success — stop retrying
-        } catch (sendError) {
-          logger.error('Error sending winnings', { flipId, winnerId, attempt, maxAttempts: MAX_PAYOUT_ATTEMPTS, error: sendError.message });
-          if (attempt < MAX_PAYOUT_ATTEMPTS) {
-            await new Promise(r => setTimeout(r, 5000));
+      // Fire winner payout in the background — don't block result display.
+      // Result is shown as soon as the video finishes, regardless of tx confirmation time.
+      const payoutPromise = (async () => {
+        const MAX_PAYOUT_ATTEMPTS = 3;
+        for (let attempt = 1; attempt <= MAX_PAYOUT_ATTEMPTS; attempt++) {
+          try {
+            const blockchainManager = getBlockchainManager();
+            const sendResult = await blockchainManager.sendWinnings(
+              flip.tokenNetwork,
+              flip.tokenAddress,
+              winnerDepositAddress,
+              winnerPrize.toString(),
+              flip.tokenDecimals
+            );
+            logger.info('Winnings sent to winner', { flipId, winnerId, txHash: sendResult.txHash, amount: winnerPrize });
+            return sendResult.txHash;
+          } catch (sendError) {
+            logger.error('Error sending winnings', { flipId, winnerId, attempt, maxAttempts: MAX_PAYOUT_ATTEMPTS, error: sendError.message });
+            if (attempt < MAX_PAYOUT_ATTEMPTS) {
+              await new Promise(r => setTimeout(r, 5000));
+            }
           }
         }
-      }
+        return null;
+      })();
+      // winningTxHash placeholder — resolved later via payoutPromise
+      let winningTxHash = null;
 
       // Send fees - split between $FLIP holder distribution pool (5%) and burn address (5%)
       const devFeeAmount = totalPool * 0.05;  // 5% to $FLIP holders
@@ -228,10 +232,8 @@ class ExecutionHandler {
       flip.flipResult = flipResultEnum;
       flip.winnerId = winnerId;
       flip.winningTxHash = winningTxHash;
-      // Only mark as claimed if the payout transaction actually landed.
-      // If sendWinnings threw and winningTxHash is null, leave claimedByWinner=false
-      // so the winner can still use the manual claim flow to recover their funds.
-      flip.claimedByWinner = winningTxHash !== null;
+      // Only mark as claimed once the payout tx actually confirms (handled by payoutPromise.then below)
+      flip.claimedByWinner = false;
       flip.status = 'COMPLETED';
       // Clear deposit wallet addresses and accumulated amounts for next session
       flip.creatorDepositWalletAddress = null;
@@ -269,10 +271,8 @@ class ExecutionHandler {
       // Generate transaction link
       const txLink = `https://paxscan.io/tx/${winningTxHash}`;
 
-      // Send result to group chat by editing the existing message
-      const txLinkMessage = winningTxHash 
-        ? `\n🔗 <a href="${txLink}">View Transaction</a>`
-        : `\n⏳ Processing winnings...`;
+      // Result message — always starts with "Processing winnings..." since payout is background
+      const txLinkMessage = `\n⏳ Processing winnings...`;
 
       const flipBuyButton = {
         inline_keyboard: [[
@@ -290,6 +290,10 @@ class ExecutionHandler {
       const fs = require('fs');
       const path = require('path');
       const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
+
+      // Track the sent result message so payoutPromise.then() can edit it with the tx link
+      let resultMessageId = null;
+      let resultIsPhoto = false;
 
       try {
         // Wait for the video to finish playing before showing the result,
@@ -313,7 +317,7 @@ class ExecutionHandler {
         // Try to send with image first
         if (fs.existsSync(imagePath)) {
           try {
-            await ctx.telegram.sendPhoto(
+            const sentMsg = await ctx.telegram.sendPhoto(
               flip.groupChatId,
               { filename: 'coinflip.jpg', source: fs.createReadStream(imagePath) },
               {
@@ -322,9 +326,30 @@ class ExecutionHandler {
                 reply_markup: flipBuyButton,
               }
             );
+            resultMessageId = sentMsg.message_id;
+            resultIsPhoto = true;
           } catch (photoErr) {
             logger.warn('Failed to send result photo, falling back to text edit', { flipId, error: photoErr.message });
             // Fallback to editing existing message
+            try {
+              await ctx.telegram.editMessageText(
+                flip.groupChatId,
+                flip.groupMessageId,
+                null,
+                resultMessageText,
+                {
+                  parse_mode: 'HTML',
+                  reply_markup: flipBuyButton,
+                }
+              );
+              resultMessageId = flip.groupMessageId;
+            } catch (editErr2) {
+              logger.warn('Failed to edit result message too', { flipId, error: editErr2.message });
+            }
+          }
+        } else {
+          // Image not found, just edit existing message
+          try {
             await ctx.telegram.editMessageText(
               flip.groupChatId,
               flip.groupMessageId,
@@ -335,26 +360,17 @@ class ExecutionHandler {
                 reply_markup: flipBuyButton,
               }
             );
+            resultMessageId = flip.groupMessageId;
+          } catch (editErr2) {
+            logger.warn('Failed to edit result message', { flipId, error: editErr2.message });
           }
-        } else {
-          // Image not found, just edit existing message
-          await ctx.telegram.editMessageText(
-            flip.groupChatId,
-            flip.groupMessageId,
-            null,
-            resultMessageText,
-            {
-              parse_mode: 'HTML',
-              reply_markup: flipBuyButton,
-            }
-          );
         }
 
       } catch (editErr) {
         logger.warn('Failed to send flip result to group', { flipId, error: editErr.message });
         // Last fallback: send a new message if everything fails
         try {
-          await ctx.telegram.sendMessage(
+          const sentMsg = await ctx.telegram.sendMessage(
             flip.groupChatId,
             resultMessageText,
             {
@@ -362,6 +378,7 @@ class ExecutionHandler {
               reply_markup: flipBuyButton,
             }
           );
+          resultMessageId = sentMsg.message_id;
           
           // Delete the video message now that result is displayed
           if (videoMessageId) {
@@ -377,50 +394,57 @@ class ExecutionHandler {
         }
       }
 
-      // If transaction is pending, edit the message after a delay to show the link once it completes
-      if (!winningTxHash && flip.groupMessageId) {
-        setTimeout(async () => {
-          try {
-            // Re-fetch flip to get updated tx hash
-            const { models } = getDB();
-            const updatedFlip = await models.CoinFlip.findByPk(flipId);
-            
-            if (updatedFlip && updatedFlip.winningTxHash) {
-              const txLinkUpdated = `https://paxscan.io/tx/${updatedFlip.winningTxHash}`;
-              
-              const updatedMessage = 
-                `🎲 <b>FLIP RESULT: ${winnerName.toUpperCase()} WINS! 🎉</b>\n\n` +
-                `💰 <b>Winnings: ${winnerPrizeFormatted} ${flip.tokenSymbol} (90%)</b>\n` +
-                `📊 Total Pool: ${totalPool.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${flip.tokenSymbol}\n` +
-                `⚡ Fees: 10% (5% $FLIP holders + 5% burn)\n🔗 <a href="${txLinkUpdated}">View Transaction</a>\n\n` +
-                `💎 Share in the profits from this bot by holding $FLIP`;
-              
-              await ctx.telegram.editMessageText(
-                flip.groupChatId,
-                flip.groupMessageId,
-                null,
-                updatedMessage,
-                {
-                  parse_mode: 'HTML',
-                  reply_markup: flipBuyButton,
-                }
-              );
-              logger.info('Updated flip result message with transaction link', { flipId, txHash: updatedFlip.winningTxHash });
-            }
-          } catch (err) {
-            logger.warn('Failed to update flip result with transaction link', { flipId, error: err.message });
+      // Once payout confirms: update DB record and edit result message with real tx link
+      payoutPromise.then(async (txHash) => {
+        if (!txHash) {
+          logger.warn('[executeFlip] All payout attempts failed — winner must claim manually', { flipId });
+          return;
+        }
+        try {
+          // Update flip record with confirmed tx hash
+          const { models: m } = getDB();
+          const updatedFlip = await m.CoinFlip.findByPk(flipId);
+          if (updatedFlip && !updatedFlip.winningTxHash) {
+            updatedFlip.winningTxHash = txHash;
+            updatedFlip.claimedByWinner = true;
+            await updatedFlip.save();
+            logger.info('[executeFlip] Updated flip with winning tx hash', { flipId, txHash });
           }
-        }, 3000); // Wait 3 seconds then check for tx link
-      }
+          // Edit result message to replace "⏳ Processing winnings..." with the real link
+          if (resultMessageId) {
+            const confirmedTxLink = `https://paxscan.io/tx/${txHash}`;
+            const updatedText = resultMessageText.replace(
+              '\n⏳ Processing winnings...',
+              `\n🔗 <a href="${confirmedTxLink}">View Transaction</a>`
+            );
+            try {
+              if (resultIsPhoto) {
+                await ctx.telegram.editMessageCaption(
+                  flip.groupChatId, resultMessageId, null, updatedText,
+                  { parse_mode: 'HTML', reply_markup: flipBuyButton }
+                );
+              } else {
+                await ctx.telegram.editMessageText(
+                  flip.groupChatId, resultMessageId, null, updatedText,
+                  { parse_mode: 'HTML', reply_markup: flipBuyButton }
+                );
+              }
+              logger.info('[executeFlip] Updated result message with tx link', { flipId, txHash });
+            } catch (editErr) {
+              logger.warn('[executeFlip] Failed to update result message with tx link', { flipId, error: editErr.message });
+            }
+          }
+        } catch (err) {
+          logger.error('[executeFlip] Error updating result after payout', { flipId, error: err.message });
+        }
+      }).catch(err => logger.error('[executeFlip] Unhandled payout promise error', { flipId, error: err.message }));
 
       // Notify winner in DM
       await ctx.telegram.sendMessage(
         winnerId,
         `🎉 <b>CONGRATULATIONS!</b>\n\n` +
         `You won ${winnerPrizeFormatted} ${flip.tokenSymbol} (90% of pool)!\n\n` +
-        (winningTxHash 
-          ? `✅ Winnings sent automatically!\n🔗 <a href="${txLink}">View Transaction</a>`
-          : `⏳ Processing your winnings... You'll receive them shortly.`),
+        `⏳ Processing your winnings... You'll receive them shortly.`,
         { parse_mode: 'HTML' }
       );
 

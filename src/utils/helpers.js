@@ -150,18 +150,22 @@ const formatNetworkName = (network) => {
 };
 
 /**
- * Get video duration in milliseconds
+ * Get video duration in milliseconds.
+ * Races against a 5-second timeout so a missing/hanging ffprobe never stalls the flip.
  */
 const getVideoDuration = async (filePath) => {
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('getVideoDuration timed out after 5s')), 5000)
+  );
   try {
     const getDuration = require('get-video-duration');
-    const durationSeconds = await getDuration(filePath);
-    const durationMs = Math.ceil(durationSeconds * 1000); // Convert to milliseconds and round up
+    const durationSeconds = await Promise.race([getDuration(filePath), timeoutPromise]);
+    const durationMs = Math.ceil(durationSeconds * 1000);
     console.log('getVideoDuration - detected:', durationSeconds, 'seconds =', durationMs, 'ms');
     return durationMs;
   } catch (error) {
-    console.warn('Failed to get video duration, using 15 second default:', error.message);
-    return 15000; // Default to 15 seconds if detection fails (safer than 7 seconds)
+    console.warn('Failed to get video duration, using 14 second default:', error.message);
+    return 14000;
   }
 };
 
