@@ -4580,9 +4580,10 @@ async function main() {
 
     console.log('🚀 Bot launched successfully');
 
-    // Graceful shutdown
-    process.once('SIGINT', () => bot.stop('SIGINT'));
-    process.once('SIGTERM', () => bot.stop('SIGTERM'));
+    // Graceful shutdown — await bot.stop() so the long-poll is cleanly
+    // cancelled before the process exits, preventing 409 conflicts on redeploy.
+    process.once('SIGINT', async () => { await bot.stop('SIGINT'); process.exit(0); });
+    process.once('SIGTERM', async () => { await bot.stop('SIGTERM'); process.exit(0); });
   } catch (error) {
     // Handle Telegram conflict error (409) - fail immediately
     if (error.response?.error_code === 409) {
