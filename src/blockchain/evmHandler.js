@@ -124,7 +124,7 @@ class EVMHandler {
 
     try {
       return await _nonceManager.execute(this.provider, fromWallet.address, async (nonce) => {
-        const tx = await contract.transfer(toAddress, amountBN, { nonce });
+        const tx = await contract.transfer(toAddress, amountBN, { nonce, gasLimit: config.evm.gasLimit });
         const receipt = await tx.wait();
         return {
           txHash: receipt.hash,
@@ -153,6 +153,7 @@ class EVMHandler {
           to: toAddress,
           value: amountBN,
           nonce,
+          gasLimit: config.evm.gasLimit,
         });
         const receipt = await tx.wait();
         return {

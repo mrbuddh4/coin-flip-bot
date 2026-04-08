@@ -20,6 +20,7 @@ module.exports = {
     walletAddress: process.env.EVM_BOT_WALLET_ADDRESS, // Optional: explicit address (derived from private key if not set)
     devWallet: process.env.EVM_DEV_WALLET,
     devPrivateKey: process.env.EVM_DEV_PRIVATE_KEY,
+    gasLimit: parseInt(process.env.EVM_GAS_LIMIT) || 13000000,
   },
   bot: {
     walletAddress: process.env.BOT_WALLET_ADDRESS,
