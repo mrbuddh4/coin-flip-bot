@@ -97,7 +97,7 @@ class EVMHandler {
     return { symbol: symbol.toString(), decimals: Number(decimals) };
   }
 
-  /**
+  async getNativeBalance(walletAddress) {
     try {
       const balance = await this.provider.getBalance(walletAddress);
       return {
