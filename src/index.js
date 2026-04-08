@@ -599,6 +599,16 @@ async function initBot() {
     console.log('Initializing database...');
     await initDB();
 
+    // Restore sleep state persisted before the last restart
+    try {
+      const { models: startupModels } = getDB();
+      const sleepSetting = await startupModels.BotSetting.findByPk('bot_asleep');
+      if (sleepSetting && sleepSetting.value === 'true') {
+        botState.asleep = true;
+        logger.info('[startup] Restored sleep state — bot is asleep');
+      }
+    } catch (e) { /* non-critical */ }
+
     // Start the background refund worker (processes PendingRefund queue every 60s)
     startRefundWorker();
 

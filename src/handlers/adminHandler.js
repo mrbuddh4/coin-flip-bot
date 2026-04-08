@@ -453,6 +453,11 @@ class AdminHandler {
       return;
     }
     botState.asleep = true;
+    // Persist across restarts
+    try {
+      const { models } = getDB();
+      await models.BotSetting.upsert({ key: 'bot_asleep', value: 'true' });
+    } catch (e) { logger.warn('[AdminHandler] Failed to persist sleep state', { error: e.message }); }
     logger.info('[AdminHandler] Bot put to sleep', { by: ctx.from.id });
     await ctx.reply('😴 Bot is now <b>asleep</b>. New flips are disabled.\n\nUse /wake to re-enable.', { parse_mode: 'HTML' });
   }
@@ -464,6 +469,11 @@ class AdminHandler {
       return;
     }
     botState.asleep = false;
+    // Clear persisted sleep state
+    try {
+      const { models } = getDB();
+      await models.BotSetting.upsert({ key: 'bot_asleep', value: 'false' });
+    } catch (e) { logger.warn('[AdminHandler] Failed to clear sleep state', { error: e.message }); }
     logger.info('[AdminHandler] Bot woken up', { by: ctx.from.id });
     await ctx.reply('✅ Bot is now <b>awake</b>. Flips are enabled again.', { parse_mode: 'HTML' });
   }
