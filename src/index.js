@@ -3832,20 +3832,15 @@ For Paxeer network you need:
       }
 
       // If no mention, look up the last confirmed clicker-without-funds in this group.
-      // Only count flips where the bot never detected any deposit (accumulatedDeposit = 0
-      // or null) AND the challenger never even clicked "I Sent the Deposit" -- that button
-      // click means they believed they sent funds (possible bot detection failure)
+      // Use confirmedShame: true — this is only stamped by the depositTimeout handler
+      // after an on-chain check positively confirms no funds were ever sent. This keeps
+      // /shame consistent with whatever the automatic shame message already posted.
       if (!targetDisplay) {
         const lastTimedOut = await models.CoinFlip.findOne({
           where: {
             groupChatId: ctx.chat.id.toString(),
             status: 'CANCELLED',
-            challengerTimedOut: true,
-            challengerClaimedDeposit: false,
-            [Op.or]: [
-              { challengerAccumulatedDeposit: null },
-              { challengerAccumulatedDeposit: 0 },
-            ],
+            confirmedShame: true,
           },
           order: [['updatedAt', 'DESC']],
         });
