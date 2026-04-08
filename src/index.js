@@ -2127,17 +2127,40 @@ async function initBot() {
             const fs = require('fs');
             const path = require('path');
             const videoPath = path.join(process.cwd(), 'assets/coinflip.MP4');
-            
-            if (fs.existsSync(videoPath)) {
+            const { models: dbModels } = getDB();
+            const SETTING_KEY = 'coinflip_video_file_id';
+
+            // Try to load cached Telegram file_id so we skip the ~2.5 min re-upload
+            let videoInput = null;
+            try {
+              const setting = await dbModels.BotSetting.findByPk(SETTING_KEY);
+              if (setting && setting.value) {
+                videoInput = setting.value; // reuse file_id — instant send
+              }
+            } catch (_) { /* ignore DB errors, fall through to upload */ }
+
+            if (!videoInput && fs.existsSync(videoPath)) {
+              videoInput = { filename: 'coinflip.MP4', source: fs.createReadStream(videoPath) };
+            }
+
+            if (videoInput) {
               const sentMessage = await ctx.telegram.sendVideo(
                 flip.groupChatId,
-                { filename: 'coinflip.MP4', source: fs.createReadStream(videoPath) },
+                videoInput,
                 {
                   caption: '🎬 <b>EXECUTING FLIP...</b>',
                   parse_mode: 'HTML',
                 }
               );
               videoMessageId = sentMessage.message_id;
+
+              // Persist the file_id after a fresh upload so future flips are instant
+              const returnedFileId = sentMessage.video?.file_id;
+              if (returnedFileId && typeof videoInput !== 'string') {
+                try {
+                  await dbModels.BotSetting.upsert({ key: SETTING_KEY, value: returnedFileId });
+                } catch (_) { /* non-critical */ }
+              }
 
               // Record when the video will finish so executeFlip can sync with it
               const videoDuration = await getVideoDuration(videoPath);

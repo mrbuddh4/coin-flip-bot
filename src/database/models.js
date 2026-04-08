@@ -291,6 +291,21 @@ const defineModels = (sequelize) => {
     indexes: [{ unique: true, fields: ['txHash'] }],
   });
 
+  // Key-value store for persistent bot configuration
+  const BotSetting = sequelize.define('BotSetting', {
+    key: {
+      type: DataTypes.STRING,
+      primaryKey: true,
+      allowNull: false,
+    },
+    value: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+  }, {
+    timestamps: true,
+  });
+
   return {
     User,
     CoinFlip,
@@ -300,6 +315,7 @@ const defineModels = (sequelize) => {
     FlipHolderAddress,
     ProfitSharePool,
     PendingRefund,
+    BotSetting,
     sequelize, // Export sequelize so handlers can use it for queries
   };
 };
