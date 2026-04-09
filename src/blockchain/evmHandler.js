@@ -258,10 +258,10 @@ class EVMHandler {
 
       // toBlock = 999999999 so Paxscan clamps to its actual latest — avoids stale RPC values
       // shifting toBlock backward and hiding recently-confirmed deposits.
-      // fromBlock is estimated from flip creation time (+ 300-block / ~15min buffer for pre-funding),
+      // fromBlock is estimated from flip creation time (+ 2000-block / ~10min buffer for pre-funding),
       // scoping the query without risking misses from pagination on a busy bot wallet.
       // A slightly stale getBlockNumber() here is safe — it can only widen the window, not narrow it.
-      const PAXEER_AVG_BLOCK_TIME = 2; // seconds per block on Paxeer
+      const PAXEER_AVG_BLOCK_TIME = 0.3; // seconds per block on Paxeer (~3 blocks/sec on mainnet)
       const paxToBlock = 999999999;
       // getBlockNumber is only called for eth_getLogs fallbacks; wrap in a lazy getter
       // so subsequent calls (Fallback 3, native path) reuse the block number already fetched above.
@@ -276,7 +276,7 @@ class EVMHandler {
         const elapsedSecs = Math.max(0, Math.floor(Date.now() / 1000) - flipCreatedAtSeconds);
         const blocksElapsed = Math.ceil(elapsedSecs / PAXEER_AVG_BLOCK_TIME);
         _currentBlock = await this.provider.getBlockNumber(); // cache so getBlockNumber() reuses it
-        paxFromBlock = Math.max(0, _currentBlock - blocksElapsed - 300); // 300-block (~15min) buffer
+        paxFromBlock = Math.max(0, _currentBlock - blocksElapsed - 2000); // 2000-block (~10min) buffer
       }
 
       console.log('[getRecentDepositSender] Searching for deposits', {

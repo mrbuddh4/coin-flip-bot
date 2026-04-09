@@ -1811,6 +1811,15 @@ async function initBot() {
             }).catch(err => logger.error('[deposit_confirmed] Failed to enqueue wrong-token refund', { error: err.message, flipId }));
           }
           
+          // Guard: re-fetch flip to check if depositTimeout cancelled it during the long verification window.
+          // This prevents showing a "try again" button on an already-cancelled flip.
+          const currentFlipState = await models.CoinFlip.findByPk(flipId);
+          if (!currentFlipState || currentFlipState.status === 'CANCELLED' || currentFlipState.status === 'COMPLETED') {
+            logger.info('[deposit_confirmed] Flip was cancelled during verification, skipping retry prompt', { flipId, status: currentFlipState?.status });
+            try { await ctx.editMessageText('❌ This challenge has already been cancelled.', { parse_mode: 'HTML' }); } catch (_) {}
+            return;
+          }
+
           // Check if notification already sent for this verification attempt (separate from refund logic)
           const lastNotificationTime = flip.data?.lastInsufficientDepositNotification || 0;
           const timeSinceLastNotification = Date.now() - lastNotificationTime;
