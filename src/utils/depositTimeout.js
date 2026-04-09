@@ -182,9 +182,9 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
             // was created. latestBlock - 999 is too wide and picks up transactions
             // from previous flips the same user made, which falsely suppresses shame.
             const secondsSinceCreate = Math.floor((Date.now() - new Date(flip.createdAt).getTime()) / 1000);
-            const PAXEER_BLOCK_TIME_SECS = 2; // ~2s per block on Paxeer
+            const PAXEER_BLOCK_TIME_SECS = 0.3; // ~3 blocks/sec on Paxeer mainnet
             const blocksSinceCreate = Math.ceil(secondsSinceCreate / PAXEER_BLOCK_TIME_SECS);
-            const fromBlock = Math.max(0, latestBlock - blocksSinceCreate - 20); // 20-block safety buffer
+            const fromBlock = Math.max(0, latestBlock - blocksSinceCreate - 300); // 300-block safety buffer
 
             const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
             const senderTopic = ethers.zeroPadValue(senderAddr.toLowerCase(), 32);
@@ -201,18 +201,35 @@ function setDepositTimeout(flipId, telegram, timeoutMs = 180000) {
               if (tokenLogs.length > 0) onChainDepositFound = true;
             }
 
-            // Also check native PAX transfers (internal txs via standard value transfer)
-            // Native transfers don't emit ERC-20 logs, so check account balance movements
-            // via a simpler heuristic: if any ERC-20 OR zero-value logs from that sender exist,
-            // treat it as "they tried". For truly native, fall back to checking Paxscan tx list.
+            // For native PAX, eth_getLogs has no Transfer events — query Paxscan txlist instead.
+            // For any ERC-20 fallback (wrong token scenario), also check all Transfer logs.
             if (!onChainDepositFound) {
-              // Catch any token transfer *to* the bot from this sender (wrong token scenario)
-              const anyTransferLogs = await provider.getLogs({
-                topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
-                fromBlock,
-                toBlock: latestBlock,
-              }).catch(() => []);
-              if (anyTransferLogs.length > 0) onChainDepositFound = true;
+              if (flip.tokenAddress === 'NATIVE') {
+                // Native PAX: use Paxscan txlist API to find value-bearing transactions
+                try {
+                  const PAXSCAN_API = 'https://paxscan.paxeer.app/api';
+                  const paxscanUrl = `${PAXSCAN_API}?module=account&action=txlist&address=${botWallet}&startblock=${fromBlock}&endblock=999999999&sort=desc`;
+                  const resp = await fetch(paxscanUrl);
+                  const data = await resp.json();
+                  if (data.status === '1' && Array.isArray(data.result)) {
+                    const lowerSender = senderAddr.toLowerCase();
+                    onChainDepositFound = data.result.some(tx =>
+                      tx.from?.toLowerCase() === lowerSender && BigInt(tx.value || '0') > 0n
+                    );
+                  }
+                } catch (_) {
+                  // Paxscan unavailable — err on the side of caution (no shame)
+                  onChainDepositFound = true;
+                }
+              } else {
+                // Catch any ERC-20 transfer *to* the bot from this sender (wrong token scenario)
+                const anyTransferLogs = await provider.getLogs({
+                  topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
+                  fromBlock,
+                  toBlock: latestBlock,
+                }).catch(() => []);
+                if (anyTransferLogs.length > 0) onChainDepositFound = true;
+              }
             }
 
             logger.info('[depositTimeout] On-chain deposit check', {
