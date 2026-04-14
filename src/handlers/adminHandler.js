@@ -407,8 +407,8 @@ class AdminHandler {
       let totalSkipped  = 0;
 
       for (const pool of pools) {
-        if (pool.tokenAddress === 'native') continue;
-        const tokenAddress = pool.tokenAddress.toLowerCase();
+        const isNative   = pool.tokenAddress === 'native';
+        const tokenAddress = isNative ? 'native' : pool.tokenAddress.toLowerCase();
 
         let poolInserted = 0;
         let page = 1;
@@ -419,9 +419,13 @@ class AdminHandler {
         });
 
         while (true) {
-          const url = `${PAXSCAN_API}?module=account&action=tokentx` +
-            `&address=${devWallet}&contractaddress=${tokenAddress}` +
-            `&sort=asc&page=${page}&offset=${PAGE_SIZE}`;
+          // Native PAX → txlist (no contractaddress); ERC20 → tokentx with contractaddress
+          const url = isNative
+            ? `${PAXSCAN_API}?module=account&action=txlist` +
+              `&address=${devWallet}&sort=asc&page=${page}&offset=${PAGE_SIZE}`
+            : `${PAXSCAN_API}?module=account&action=tokentx` +
+              `&address=${devWallet}&contractaddress=${tokenAddress}` +
+              `&sort=asc&page=${page}&offset=${PAGE_SIZE}`;
 
           let data;
           try {
@@ -442,11 +446,14 @@ class AdminHandler {
           }
 
           for (const tx of data.result) {
-            // Only outgoing transfers from devWallet = profit share distributions
+            // Only successful outgoing transfers from devWallet = profit share distributions
             if (tx.from.toLowerCase() !== devWallet) continue;
+            if (isNative && tx.isError !== '0') continue;
 
             const toAddr      = tx.to.toLowerCase();
-            const decimals    = parseInt(tx.tokenDecimal ?? pool.tokenDecimals ?? 18, 10);
+            const decimals    = isNative
+              ? (pool.tokenDecimals || 18)
+              : parseInt(tx.tokenDecimal ?? pool.tokenDecimals ?? 18, 10);
             const amount      = parseFloat(ethers.formatUnits(tx.value, decimals));
             const distributedAt = tx.timeStamp
               ? new Date(parseInt(tx.timeStamp, 10) * 1000)
