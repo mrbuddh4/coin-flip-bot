@@ -468,8 +468,57 @@ class FlipHandler {
 
       if (role === 'creator' && !flip.creatorDepositConfirmed) {
         // Refund any partial deposit before wiping records
-        const partialAmount = flip.data?.partialDepositReceived;
+        let partialAmount = flip.data?.partialDepositReceived;
         const refundSender = flip.creatorDepositWalletAddress;
+
+        // If the creator sent tokens but never pressed "I've deposited", the bot never ran
+        // verification, so partialDepositReceived is unset even though tokens arrived.
+        // Do a one-shot chain check now so we can refund before the record is erased.
+        if (!partialAmount && refundSender && !flip.data?.partialRefundSent) {
+          try {
+            const blockchainManager = getBlockchainManager();
+            const supportedTokens = config.supportedTokens;
+            let tokenAddress = flip.tokenAddress || 'NATIVE';
+            let tokenDecimals = flip.tokenDecimals || 18;
+            for (const key in supportedTokens) {
+              if (
+                supportedTokens[key].symbol === flip.tokenSymbol &&
+                supportedTokens[key].network === flip.tokenNetwork
+              ) {
+                tokenAddress = supportedTokens[key].address || 'NATIVE';
+                tokenDecimals = supportedTokens[key].decimals || 18;
+                break;
+              }
+            }
+            const verification = await blockchainManager.verifyDeposit(
+              flip.tokenNetwork,
+              tokenAddress,
+              flip.wagerAmount,
+              tokenDecimals,
+              refundSender,        // knownSender — only look at this wallet
+              flip.createdAt ? new Date(flip.createdAt).getTime() : null
+            );
+            if (verification.depositSender && (verification.amount > 0 || verification.received)) {
+              const amountToRefund = verification.amountDisplay !== undefined
+                ? verification.amountDisplay
+                : parseFloat(verification.amount || 0);
+              if (amountToRefund > 0) {
+                partialAmount = amountToRefund;
+                logger.info('[handleDepositTimeout] Detected unconfirmed creator deposit via late chain check', {
+                  flipId,
+                  amount: partialAmount,
+                  sender: refundSender,
+                });
+              }
+            }
+          } catch (lateCheckErr) {
+            logger.warn('[handleDepositTimeout] Late chain check failed', {
+              flipId,
+              error: lateCheckErr.message,
+            });
+          }
+        }
+
         if (partialAmount && refundSender && !flip.data?.partialRefundSent) {
           try {
             // Mark refund sent first to prevent duplicate from insufficient_deposit_timeout

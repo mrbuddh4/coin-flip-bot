@@ -484,6 +484,70 @@ class AdminHandler {
     }
   }
 
+  static async manualRefund(ctx) {
+    if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
+    // Usage: /manual_refund <to_address> <amount> <token_symbol> [network]
+    const parts = ctx.message.text.trim().split(/\s+/);
+    const toAddress = parts[1];
+    const amount    = parts[2];
+    const symbol    = parts[3]?.toUpperCase();
+    const network   = (parts[4] || 'EVM').toUpperCase();
+
+    if (!toAddress || !amount || !symbol) {
+      await ctx.reply('Usage: /manual_refund <to_address> <amount> <token_symbol> [network=EVM]');
+      return;
+    }
+    if (!/^0x[a-fA-F0-9]{40}$/.test(toAddress)) {
+      await ctx.reply('❌ Invalid EVM address.');
+      return;
+    }
+    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      await ctx.reply('❌ Invalid amount.');
+      return;
+    }
+
+    try {
+      const config = require('../config');
+      const { getBlockchainManager } = require('../blockchain/manager');
+      const blockchainManager = getBlockchainManager();
+      const supportedTokens = config.supportedTokens;
+
+      let tokenAddress = null;
+      let tokenDecimals = 18;
+      for (const key in supportedTokens) {
+        const t = supportedTokens[key];
+        if (t.symbol === symbol && t.network === network) {
+          tokenAddress = t.address;
+          tokenDecimals = t.decimals;
+          break;
+        }
+      }
+      if (!tokenAddress) {
+        await ctx.reply(`❌ Token ${symbol} on ${network} not found in supportedTokens config.`);
+        return;
+      }
+
+      await ctx.reply(`⏳ Sending ${amount} ${symbol} → <code>${toAddress}</code>…`, { parse_mode: 'HTML' });
+
+      const txHash = await blockchainManager.sendWinnings(
+        network,
+        tokenAddress,
+        toAddress,
+        amount,
+        tokenDecimals
+      );
+
+      logger.info('[AdminHandler] Manual refund sent', { to: toAddress, amount, symbol, network, txHash });
+      await ctx.reply(
+        `✅ <b>Manual refund sent</b>\n\nTo: <code>${toAddress}</code>\nAmount: ${amount} ${symbol}\nTx: <code>${txHash || 'n/a'}</code>`,
+        { parse_mode: 'HTML' }
+      );
+    } catch (err) {
+      logger.error('[AdminHandler] manualRefund error', { error: err.message });
+      await ctx.reply(`❌ Error: ${err.message}`);
+    }
+  }
+
   static async flipResults(ctx) {
     if (!this.isAdmin(ctx.from.id)) {
       await ctx.reply('❌ Not authorized.');
@@ -573,6 +637,7 @@ class AdminHandler {
     bot.command('flip_holders_backfill', ctx => this.flipHoldersBackfill(ctx));
     bot.command('ps_receipts_backfill', ctx => this.profitShareReceiptsBackfill(ctx));
     bot.command('admin_flipresults', ctx => this.flipResults(ctx));
+    bot.command('manual_refund', ctx => this.manualRefund(ctx));
 
     // For flip details: /flip_<id>
     bot.hears(/^\/flip_(.+)$/, (ctx) => {
