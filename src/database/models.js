@@ -306,6 +306,45 @@ const defineModels = (sequelize) => {
     timestamps: true,
   });
 
+  // ProfitShareReceipt — one row per successful distribution send.
+  // Used to display per-user total earnings from profit share in /stats.
+  const ProfitShareReceipt = sequelize.define('ProfitShareReceipt', {
+    id: {
+      type: DataTypes.UUID,
+      primaryKey: true,
+      defaultValue: DataTypes.UUIDV4,
+    },
+    holderAddress: {
+      type: DataTypes.STRING, // lowercase EVM address
+      allowNull: false,
+    },
+    tokenAddress: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    tokenSymbol: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    amount: {
+      type: DataTypes.DECIMAL(36, 18),
+      allowNull: false,
+    },
+    txHash: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      unique: true, // dedup guard
+    },
+    distributedAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
+  }, {
+    timestamps: true,
+    indexes: [{ fields: ['holderAddress'] }, { fields: ['tokenAddress'] }],
+  });
+
   return {
     User,
     CoinFlip,
@@ -316,6 +355,7 @@ const defineModels = (sequelize) => {
     ProfitSharePool,
     PendingRefund,
     BotSetting,
+    ProfitShareReceipt,
     sequelize, // Export sequelize so handlers can use it for queries
   };
 };

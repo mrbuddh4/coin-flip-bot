@@ -275,10 +275,14 @@ class ProfitShareHandler {
     // This is the most reliable path — it interrogates the node directly without
     // depending on the Paxscan indexer's result limits.  We chunk by 5 000 blocks
     // to stay inside any per-request limit the RPC node enforces.
+    // Bail out early if the RPC clearly doesn't support range queries (e.g. returns
+    // "maximum [from, to] blocks distance: 0" or repeated 502s).
     try {
       const latestBlock = await provider.getBlockNumber();
       const CHUNK = 5000;
       let rpcFetchErrors = 0;
+      let rpcFetchSuccess = 0;
+      const EARLY_BAIL_THRESHOLD = 10; // bail after this many consecutive failures with no successes
       for (let from = 0; from <= latestBlock; from += CHUNK) {
         const to = Math.min(from + CHUNK - 1, latestBlock);
         try {
@@ -288,6 +292,7 @@ class ProfitShareHandler {
             fromBlock: from,
             toBlock: to,
           });
+          rpcFetchSuccess++;
           for (const log of logs) {
             if (log.topics && log.topics[2]) {
               const addr = ('0x' + log.topics[2].slice(26)).toLowerCase();
@@ -297,6 +302,11 @@ class ProfitShareHandler {
         } catch (chunkErr) {
           rpcFetchErrors++;
           logger.warn('[ProfitShare] RPC getLogs chunk failed', { from, to, error: chunkErr.message });
+          // If the RPC consistently rejects range queries, stop wasting time
+          if (rpcFetchSuccess === 0 && rpcFetchErrors >= EARLY_BAIL_THRESHOLD) {
+            logger.warn('[ProfitShare] RPC getLogs bailing out early — node does not support range queries', { errors: rpcFetchErrors });
+            break;
+          }
         }
       }
       logger.info('[ProfitShare] $FLIP Transfer recipients via direct RPC', {
@@ -309,7 +319,7 @@ class ProfitShareHandler {
     }
 
     // ── Step 2: Paxscan getLogs API (catches addresses missed by RPC) ─────────
-    const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
+    const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://api.paxscan.io/api';
     let apiAddressCount = 0;
     try {
       const sizeBeforePaxscan = rpcAddresses.size;
@@ -367,6 +377,30 @@ class ProfitShareHandler {
 
     logger.info('[ProfitShare] $FLIP holders with on-chain balance', { checked: allAddresses.length, withBalance: holders.length });
     return holders;
+  }
+
+  /**
+   * Get total profit share earnings per token for a given holder address.
+   * Queries the ProfitShareReceipt DB table (populated by distribution runs
+   * and the /ps_receipts_backfill admin command). No live RPC calls.
+   * Returns array of { tokenSymbol, tokenAddress, total } sorted by total desc.
+   */
+  static async getHolderTotals(holderAddress) {
+    const { models, sequelize } = getDB();
+    const rows = await models.ProfitShareReceipt.findAll({
+      where: { holderAddress: holderAddress.toLowerCase() },
+      attributes: [
+        'tokenSymbol',
+        'tokenAddress',
+        [sequelize.fn('SUM', sequelize.col('amount')), 'total'],
+      ],
+      group: ['tokenSymbol', 'tokenAddress'],
+      raw: true,
+    });
+    return rows
+      .map(r => ({ tokenSymbol: r.tokenSymbol, tokenAddress: r.tokenAddress, total: parseFloat(r.total) }))
+      .filter(r => r.total > 0)
+      .sort((a, b) => b.total - a.total);
   }
 
   /** Add an address to the known holder list. Returns { created: bool }. */
@@ -543,6 +577,18 @@ class ProfitShareHandler {
           totalSent += amount;
           successCount++;
           if (result.txHash) txHashes.push(result.txHash);
+          // Record receipt for per-user stats
+          try {
+            const { models: _m } = getDB();
+            await _m.ProfitShareReceipt.create({
+              holderAddress: holder.address,
+              tokenAddress: pool.tokenAddress,
+              tokenSymbol: pool.tokenSymbol,
+              amount,
+              txHash: result.txHash || null,
+              distributedAt: new Date(),
+            });
+          } catch (_) { /* dedup conflict or missing table — non-critical */ }
           logger.info('[ProfitShare] Sent EVM share to holder', {
             holder: holder.address,
             amount,

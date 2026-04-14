@@ -1,7 +1,7 @@
 const { ethers } = require('ethers');
 const config = require('../config');
 
-const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://paxscan.paxeer.app/api';
+const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://api.paxscan.io/api';
 
 /**
  * Serialises all outgoing transactions from a single wallet address so they
@@ -145,13 +145,17 @@ class EVMHandler {
     try {
       return await _nonceManager.execute(this.provider, fromWallet.address, async (nonce) => {
         const tx = await contract.transfer(toAddress, amountBN, { nonce, gasLimit: config.evm.gasLimit });
-        const receipt = await tx.wait();
+        // 90-second timeout prevents a stuck tx from blocking the entire NonceManager queue
+        const receipt = await tx.wait(1, 90_000);
+        if (!receipt || receipt.status !== 1) {
+          throw new Error(`Transaction reverted (status=${receipt?.status ?? 'null'}), txHash=${receipt?.hash ?? tx.hash}`);
+        }
         return {
           txHash: receipt.hash,
           from: receipt.from,
           to: receipt.to,
           blockNumber: receipt.blockNumber,
-          status: receipt.status === 1 ? 'success' : 'failed',
+          status: 'success',
         };
       });
     } catch (error) {
@@ -175,13 +179,16 @@ class EVMHandler {
           nonce,
           gasLimit: config.evm.gasLimit,
         });
-        const receipt = await tx.wait();
+        const receipt = await tx.wait(1, 90_000);
+        if (!receipt || receipt.status !== 1) {
+          throw new Error(`Transaction reverted (status=${receipt?.status ?? 'null'}), txHash=${receipt?.hash ?? tx.hash}`);
+        }
         return {
-          txHash: tx.hash,
+          txHash: receipt.hash,
           from: receipt.from,
           to: receipt.to,
           blockNumber: receipt.blockNumber,
-          status: receipt.status === 1 ? 'success' : 'failed',
+          status: 'success',
         };
       });
     } catch (error) {

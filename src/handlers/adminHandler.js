@@ -384,6 +384,91 @@ class AdminHandler {
     }
   }
 
+  static async profitShareReceiptsBackfill(ctx) {
+    if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
+    await ctx.reply('⏳ Scanning on-chain Transfer events from dev wallet… this may take a few minutes.');
+    try {
+      const { ethers } = require('ethers');
+      const cfg = require('../config');
+      const { getDB } = require('../database');
+      const { models } = getDB();
+
+      const devWallet = (cfg.evm.devWallet || '').toLowerCase();
+      if (!devWallet) { await ctx.reply('❌ EVM_DEV_WALLET not set.'); return; }
+
+      // Short RPC timeout so a slow provider never hangs the bot process
+      const provider = new ethers.JsonRpcProvider(cfg.evm.rpcUrl, undefined, { timeout: 15_000 });
+      const pools = await models.ProfitSharePool.findAll({ where: { network: 'EVM' } });
+      const iface = new ethers.Interface(['event Transfer(address indexed from, address indexed to, uint256 value)']);
+      const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+      const CHUNK = 2000;
+      const latestBlock = await provider.getBlockNumber();
+      const fromTopic = ethers.zeroPadValue(devWallet, 32);
+
+      // Estimate fromBlock: 1 week before oldest distribution (or 30 days ago), ~3s block time
+      const BLOCK_TIME_SECS = 3;
+      const oldestPool = pools
+        .filter(p => p.lastDistributedAt)
+        .sort((a, b) => new Date(a.lastDistributedAt) - new Date(b.lastDistributedAt))[0];
+      const fromDate = oldestPool
+        ? new Date(new Date(oldestPool.lastDistributedAt).getTime() - 7 * 24 * 3600 * 1000)
+        : new Date(Date.now() - 30 * 24 * 3600 * 1000);
+      const secondsBack = Math.max(0, Math.floor((Date.now() - fromDate.getTime()) / 1000));
+      const startBlock = Math.max(0, latestBlock - Math.ceil(secondsBack / BLOCK_TIME_SECS));
+
+      let totalInserted = 0;
+      let totalSkipped  = 0;
+
+      for (const pool of pools) {
+        if (pool.tokenAddress === 'native') continue;
+        const tokenAddress = pool.tokenAddress.toLowerCase();
+
+        for (let from = startBlock; from <= latestBlock; from += CHUNK) {
+          const to = Math.min(from + CHUNK - 1, latestBlock);
+          let logs = [];
+          try {
+            logs = await provider.getLogs({
+              address: tokenAddress,
+              fromBlock: from,
+              toBlock: to,
+              topics: [ERC20_TRANSFER_TOPIC, fromTopic],
+            });
+          } catch { continue; }
+
+          for (const log of logs) {
+            let parsed;
+            try { parsed = iface.parseLog(log); } catch { continue; }
+
+            const toAddr   = parsed.args.to.toLowerCase();
+            const amount   = parseFloat(ethers.formatUnits(parsed.args.value, pool.tokenDecimals));
+            const receiptKey = `${log.transactionHash}#${log.logIndex}`;
+
+            let distributedAt = new Date();
+            try {
+              const block = await provider.getBlock(log.blockNumber);
+              if (block?.timestamp) distributedAt = new Date(block.timestamp * 1000);
+            } catch { /* use now */ }
+
+            const [, created] = await models.ProfitShareReceipt.upsert({
+              holderAddress: toAddr,
+              tokenAddress:  pool.tokenAddress,
+              tokenSymbol:   pool.tokenSymbol,
+              amount,
+              txHash:        receiptKey,
+              distributedAt,
+            }, { conflictFields: ['txHash'] });
+            created ? totalInserted++ : totalSkipped++;
+          }
+        }
+      }
+
+      await ctx.reply(`✅ Profit share receipt backfill complete.\n• Inserted: ${totalInserted}\n• Already existed: ${totalSkipped}`);
+    } catch (err) {
+      logger.error('[AdminHandler] profitShareReceiptsBackfill error', { error: err.message });
+      await ctx.reply(`❌ Error: ${err.message}`);
+    }
+  }
+
   static async flipHoldersList(ctx) {
     if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
     try {
@@ -493,6 +578,7 @@ class AdminHandler {
     bot.command('flip_holders_remove', ctx => this.flipHoldersRemove(ctx));
     bot.command('flip_holders_list', ctx => this.flipHoldersList(ctx));
     bot.command('flip_holders_backfill', ctx => this.flipHoldersBackfill(ctx));
+    bot.command('ps_receipts_backfill', ctx => this.profitShareReceiptsBackfill(ctx));
     bot.command('admin_flipresults', ctx => this.flipResults(ctx));
 
     // For flip details: /flip_<id>

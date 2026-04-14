@@ -17,29 +17,31 @@ const { validateConfig, formatNetworkName, getVideoDuration } = require('./utils
 const { setDepositTimeout, clearDepositTimeout, depositTimeouts } = require('./utils/depositTimeout');
 const botState = require('./utils/botState');
 
-// Known token symbols
-const KNOWN_TOKENS = {
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
-  'Es9vMFrzaCERmJfrF4H2FYD9DUwRzTk67cBrTSsiv31': 'USDT',
-  'So11111111111111111111111111111111111111112': 'SOL',
-  '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump': 'SID', // Our test token
-};
-
 /**
- * Get token symbol from mint address
+ * Get token symbol from EVM token address, looking up config.supportedTokens
  */
-function getTokenSymbol(mint) {
-  if (!mint) return 'Token';
-  return KNOWN_TOKENS[mint] || 'Token';
+function getTokenSymbol(tokenAddress) {
+  if (!tokenAddress) return 'Token';
+  const supportedTokens = config.supportedTokens;
+  for (const key in supportedTokens) {
+    if (supportedTokens[key].address?.toLowerCase() === tokenAddress.toLowerCase()) {
+      return supportedTokens[key].symbol;
+    }
+  }
+  // Truncate unknown address for display
+  if (tokenAddress.startsWith('0x') && tokenAddress.length > 10) {
+    return `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+  }
+  return 'Token';
 }
 
 /**
- * Validate mint address format
+ * Validate EVM token address format
  */
 function isValidMintAddress(tokenAddress) {
   if (!tokenAddress) return false;
   if (tokenAddress === 'NATIVE') return true;
-  return tokenAddress.match(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/) !== null;
+  return /^0x[0-9a-fA-F]{40}$/.test(tokenAddress);
 }
 
 let bot;
@@ -1842,7 +1844,7 @@ async function initBot() {
               if (verification.wrongToken === 'NATIVE') {
                 wrongTokenName = 'PAX (native)';
               } else {
-                // For SPL tokens, lookup the symbol from mint address
+                // Lookup symbol from EVM token address
                 wrongTokenName = getTokenSymbol(verification.wrongToken);
               }
               messageText = 
@@ -1853,6 +1855,17 @@ async function initBot() {
                 `<b>Send ${flip.tokenSymbol} to:</b>\n` +
                 `<code>${botWallet}</code>\n\n` +
                 `Please send the correct token: <b>${flip.tokenSymbol}</b>`;
+            } else if (verification.unmatchedDeposits?.length > 0) {
+              const dep = verification.unmatchedDeposits[0];
+              const shortSender = dep.senderAddress ? `${dep.senderAddress.slice(0, 6)}...${dep.senderAddress.slice(-4)}` : 'unknown';
+              const depAmount = dep.amount?.toLocaleString('en-US', { maximumFractionDigits: 6 }) ?? '?';
+              messageText =
+                `⚠️ <b>Deposit from Unregistered Wallet</b>\n\n` +
+                `Your deposit of ${depAmount} ${flip.tokenSymbol} was received from <code>${dep.senderAddress || shortSender}</code>, ` +
+                `which is not your registered deposit wallet.\n\n` +
+                `<b>Your registered deposit wallet:</b>\n<code>${flip.creatorDepositWalletAddress || 'check /wallet'}</code>\n\n` +
+                `<b>Status: Automatically refunding to ${shortSender}...</b>\n\n` +
+                `Please send from your registered deposit wallet and press the button again.`;
             } else {
               messageText = 
                 `❌ <b>Insufficient Deposit</b>\n\n` +
@@ -1979,6 +1992,22 @@ async function initBot() {
 
         logger.info('[deposit_confirmed] Challenger deposit verified', { flipId, userId, amount: verification.amount });
 
+        // Enqueue refunds for any wrong-wallet deposits detected during verification retries.
+        if (verification.unmatchedDeposits?.length > 0) {
+          logger.info('[deposit_confirmed] Enqueueing wrong-wallet refunds from earlier retries', { flipId, count: verification.unmatchedDeposits.length });
+          for (const dep of verification.unmatchedDeposits) {
+            enqueueRefund({
+              txHash: dep.txHash,
+              network: flip.tokenNetwork,
+              tokenAddress: dep.tokenAddress || flip.tokenAddress,
+              amount: dep.amount,
+              senderAddress: dep.senderAddress,
+              reason: 'wrong_wallet',
+              flipId: flip.id,
+            }).catch(err => logger.error('[deposit_confirmed] Failed to enqueue wrong-wallet refund (success path)', { error: err.message, flipId }));
+          }
+        }
+
         // Store the detected sender address for refunds (if not already set)
         if (verification.depositSender && !flip.challengerDepositWalletAddress) {
           flip.challengerDepositWalletAddress = verification.depositSender;
@@ -2066,19 +2095,10 @@ async function initBot() {
               }
 
               // Validate token address before attempting refund
-              // Only refund if we have a recognized token with known on-chain validity
-              const isRecognizedToken = tokenAddress === 'NATIVE' || (tokenAddress && tokenAddress in KNOWN_TOKENS);
               if (!isValidMintAddress(tokenAddress)) {
                 logger.warn('[deposit_confirmed] Skipping excess refund - invalid token address format', { 
                   flipId, 
                   tokenAddress,
-                  excess: excessAmount.toString()
-                });
-              } else if (!isRecognizedToken) {
-                logger.warn('[deposit_confirmed] Skipping excess refund - unrecognized token (may be invalid on-chain)', { 
-                  flipId, 
-                  tokenAddress,
-                  tokenSymbol: flip.tokenSymbol,
                   excess: excessAmount.toString()
                 });
               } else {
@@ -2446,7 +2466,7 @@ async function initBot() {
               if (verification.wrongToken === 'NATIVE') {
                 wrongTokenName = 'PAX (native)';
               } else {
-                // For SPL tokens, lookup the symbol from mint address
+                // Lookup symbol from EVM token address
                 wrongTokenName = getTokenSymbol(verification.wrongToken);
               }
               messageText = 
@@ -2457,6 +2477,17 @@ async function initBot() {
                 `<b>Send ${flip.tokenSymbol} to:</b>\n` +
                 `<code>${botWallet}</code>\n\n` +
                 `Please send the correct token: <b>${flip.tokenSymbol}</b>`;
+            } else if (verification.unmatchedDeposits?.length > 0) {
+              const dep = verification.unmatchedDeposits[0];
+              const shortSender = dep.senderAddress ? `${dep.senderAddress.slice(0, 6)}...${dep.senderAddress.slice(-4)}` : 'unknown';
+              const depAmount = dep.amount?.toLocaleString('en-US', { maximumFractionDigits: 6 }) ?? '?';
+              messageText =
+                `⚠️ <b>Deposit from Unregistered Wallet</b>\n\n` +
+                `Your deposit of ${depAmount} ${flip.tokenSymbol} was received from <code>${dep.senderAddress || shortSender}</code>, ` +
+                `which is not your registered deposit wallet.\n\n` +
+                `<b>Your registered deposit wallet:</b>\n<code>${depositWallet || 'check /wallet'}</code>\n\n` +
+                `<b>Status: Automatically refunding to ${shortSender}...</b>\n\n` +
+                `Please send from your registered deposit wallet and press the button again.`;
             } else {
               messageText = 
                 `⏳ <b>Insufficient Deposit</b>\n\n` +
@@ -2543,6 +2574,23 @@ async function initBot() {
 
         logger.info('[creator_deposit_confirmed] Creator deposit verified', { flipId, userId, amount: verification.amount });
 
+        // Enqueue refunds for any wrong-wallet deposits detected during verification retries.
+        // These are accumulated by verifyDepositWithRetry across all retry attempts.
+        if (verification.unmatchedDeposits?.length > 0) {
+          logger.info('[creator_deposit_confirmed] Enqueueing wrong-wallet refunds from earlier retries', { flipId, count: verification.unmatchedDeposits.length });
+          for (const dep of verification.unmatchedDeposits) {
+            enqueueRefund({
+              txHash: dep.txHash,
+              network: flip.tokenNetwork,
+              tokenAddress: dep.tokenAddress || flip.tokenAddress,
+              amount: dep.amount,
+              senderAddress: dep.senderAddress,
+              reason: 'wrong_wallet',
+              flipId: flip.id,
+            }).catch(err => logger.error('[creator_deposit_confirmed] Failed to enqueue wrong-wallet refund (success path)', { error: err.message, flipId }));
+          }
+        }
+
         // Store the deposit sender wallet address for refunds
         if (verification.depositSender) {
           flip.creatorDepositWalletAddress = verification.depositSender;
@@ -2618,19 +2666,10 @@ async function initBot() {
               const refundDecimals = flip.tokenDecimals || 18;
 
               // Validate token address before attempting refund
-              // Only refund if we have a recognized token with known on-chain validity
-              const isRecognizedToken = tokenAddress === 'NATIVE' || (tokenAddress && tokenAddress in KNOWN_TOKENS);
               if (!isValidMintAddress(tokenAddress)) {
                 logger.warn('[creator_deposit_confirmed] Skipping excess refund - invalid token address format', { 
                   flipId, 
                   tokenAddress,
-                  excessDisplay: creatorExcessAmount.toString()
-                });
-              } else if (!isRecognizedToken) {
-                logger.warn('[creator_deposit_confirmed] Skipping excess refund - unrecognized token (may be invalid on-chain)', { 
-                  flipId, 
-                  tokenAddress,
-                  tokenSymbol: flip.tokenSymbol,
                   excessDisplay: creatorExcessAmount.toString()
                 });
               } else {
@@ -3117,7 +3156,7 @@ async function initBot() {
         await ctx.editMessageText(message, {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('🏠 Home', 'back_to_home')],
+            [Markup.button.callback('💰 Profit Share', 'profit_share_page'), Markup.button.callback('🏠 Home', 'back_to_home')],
           ]).reply_markup,
         });
         await ctx.answerCbQuery();
@@ -3201,6 +3240,9 @@ async function initBot() {
               ],
               [
                 Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
+                Markup.button.callback('💰 Profit Share', 'profit_share_page'),
+              ],
+              [
                 Markup.button.callback('❓ Help', 'show_help_action'),
               ],
             ]).reply_markup,
@@ -3210,6 +3252,55 @@ async function initBot() {
       } catch (error) {
         logger.error('Error going back to home', error);
         await ctx.answerCbQuery('❌ Error returning home');
+      }
+    });
+
+    // Profit Share page
+    bot.action('profit_share_page', async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+        const profile = await models.UserProfile.findByPk(userId);
+        const wallets = [profile?.evmWalletAddress, profile?.evmDepositWalletAddress]
+          .filter(w => w && /^0x[a-fA-F0-9]{40}$/.test(w));
+
+        let msg = `💰 <b>$FLIP Profit Share</b>\n\n`;
+
+        if (wallets.length === 0) {
+          msg += `No EVM wallet registered.\nSet up your wallet to track profit share earnings.`;
+        } else {
+          const merged = {};
+          for (const w of wallets) {
+            const rows = await ProfitShareHandler.getHolderTotals(w);
+            for (const r of rows) {
+              if (!merged[r.tokenSymbol]) merged[r.tokenSymbol] = { ...r };
+              else merged[r.tokenSymbol].total += r.total;
+            }
+          }
+          const totals = Object.values(merged).sort((a, b) => b.total - a.total);
+          if (totals.length === 0) {
+            msg += `No profit share receipts found for your registered wallet(s).\n\n`;
+            msg += `<b>Wallets checked:</b>\n`;
+            wallets.forEach(w => { msg += `<code>${w}</code>\n`; });
+          } else {
+            msg += `<b>Total earned from $FLIP profit share distributions:</b>\n\n`;
+            for (const t of totals) {
+              msg += `🪙 <b>${t.tokenSymbol}:</b> ${t.total.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
+            }
+            msg += `\n<i>Updated each distribution cycle. Run /ps_receipts_backfill to sync historical data.</i>`;
+          }
+        }
+
+        await ctx.editMessageText(msg, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🏠 Home', 'back_to_home')],
+          ]).reply_markup,
+        });
+        await ctx.answerCbQuery();
+      } catch (err) {
+        logger.error('Error showing profit share page', err);
+        await ctx.answerCbQuery('❌ Error loading profit share');
       }
     });
 
@@ -3813,14 +3904,19 @@ For Paxeer network you need:
       if (Object.keys(stats.perTokenStats).length > 0) {
         message += `<b>Per-Token Breakdown:</b>\n`;
         Object.values(stats.perTokenStats).forEach(tokenStat => {
-          message += `\n🪙 <b>${tokenStat.symbol}</b> (${tokenStat.network})\n`;
+          message += `\n\uD83E\uDE99 <b>${tokenStat.symbol}</b> (${tokenStat.network})\n`;
           message += `   Flips: ${tokenStat.flips} | Win Rate: ${tokenStat.winRate}%\n`;
           message += `   Wagered: ${tokenStat.wagered.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
           message += `   Profit: ${tokenStat.earned.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
         });
       }
 
-      await ctx.reply(message, { parse_mode: 'HTML' });
+      await ctx.reply(message, {
+        parse_mode: 'HTML',
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback('💰 Profit Share', 'profit_share_page')],
+        ]).reply_markup,
+      });
     } catch (error) {
       logger.error('Error getting user stats', error);
       await ctx.reply('❌ Error retrieving statistics.');
@@ -4439,9 +4535,10 @@ async function showStartDashboard(ctx, editMessage = false) {
       ],
       [
         Markup.button.callback('🪙 Start Flip', 'start_flip_action'),
-        Markup.button.callback('⭐ My Tokens', 'open_my_tokens'),
+        Markup.button.callback('💰 Profit Share', 'profit_share_page'),
       ],
       [
+        Markup.button.callback('⭐ My Tokens', 'open_my_tokens'),
         Markup.button.callback('❓ Help', 'show_help_action'),
       ],
     ]).reply_markup,
@@ -4638,7 +4735,25 @@ async function main() {
   try {
     await initBot();
     await acquireSingleInstanceLock();
-    await bot.launch({ dropPendingUpdates: true });
+
+    // Retry bot.launch() if 409 — the old instance's Telegram long-poll may
+    // still be active even after its DB connection (advisory lock) was released.
+    // We wait and retry rather than letting the process die + restart.
+    const MAX_LAUNCH_ATTEMPTS = 8;
+    const LAUNCH_RETRY_MS = 5_000;
+    for (let attempt = 1; attempt <= MAX_LAUNCH_ATTEMPTS; attempt++) {
+      try {
+        await bot.launch({ dropPendingUpdates: true });
+        break; // success
+      } catch (launchErr) {
+        if (launchErr.response?.error_code === 409 && attempt < MAX_LAUNCH_ATTEMPTS) {
+          logger.warn(`[launch] 409 conflict on attempt ${attempt}/${MAX_LAUNCH_ATTEMPTS} — old instance still polling, retrying in ${LAUNCH_RETRY_MS}ms…`);
+          await new Promise(r => setTimeout(r, LAUNCH_RETRY_MS));
+        } else {
+          throw launchErr; // rethrow on non-409 or final attempt
+        }
+      }
+    }
 
     console.log('🚀 Bot launched successfully');
 

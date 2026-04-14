@@ -206,12 +206,27 @@ class BlockchainManager {
    */
   async verifyDepositWithRetry(network, tokenAddress, expectedAmount, tokenDecimals, maxRetries = 3, retryDelayMs = 15000, knownSender = null, flipCreatedAt = null, excludeSender = null) {
     let lastResult;
+    // Accumulate wrong-wallet deposits seen across all retries so they are
+    // included in the final result even when a later retry succeeds.
+    const seenUnmatched = new Map(); // key: txHash
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       lastResult = await this.verifyDeposit(network, tokenAddress, expectedAmount, tokenDecimals, knownSender, flipCreatedAt, excludeSender);
-      
+
+      // Collect any wrong-wallet deposits detected this attempt
+      if (lastResult.unmatchedDeposits?.length > 0) {
+        for (const dep of lastResult.unmatchedDeposits) {
+          if (dep.txHash) seenUnmatched.set(dep.txHash, dep);
+        }
+      }
+
       // CRITICAL: Only return on success
       if (lastResult.received) {
         console.log(`Deposit verified on attempt ${attempt}/${maxRetries}`);
+        // Carry accumulated wrong-wallet deposits forward so the handler can
+        // still enqueue refunds for them even though the main deposit succeeded.
+        if (seenUnmatched.size > 0) {
+          lastResult = { ...lastResult, unmatchedDeposits: [...seenUnmatched.values()] };
+        }
         return lastResult;
       }
       
