@@ -405,16 +405,9 @@ class AdminHandler {
       const latestBlock = await provider.getBlockNumber();
       const fromTopic = ethers.zeroPadValue(devWallet, 32);
 
-      // Estimate fromBlock: 1 week before oldest distribution (or 30 days ago), ~3s block time
-      const BLOCK_TIME_SECS = 3;
-      const oldestPool = pools
-        .filter(p => p.lastDistributedAt)
-        .sort((a, b) => new Date(a.lastDistributedAt) - new Date(b.lastDistributedAt))[0];
-      const fromDate = oldestPool
-        ? new Date(new Date(oldestPool.lastDistributedAt).getTime() - 7 * 24 * 3600 * 1000)
-        : new Date(Date.now() - 30 * 24 * 3600 * 1000);
-      const secondsBack = Math.max(0, Math.floor((Date.now() - fromDate.getTime()) / 1000));
-      const startBlock = Math.max(0, latestBlock - Math.ceil(secondsBack / BLOCK_TIME_SECS));
+      // Scan from block 0 to guarantee we capture all historical distributions.
+      // (~3 blocks/sec on Paxeer; latestBlock ~4-5M → ~2,000–2,500 chunks per token)
+      const startBlock = 0;
 
       let totalInserted = 0;
       let totalSkipped  = 0;
