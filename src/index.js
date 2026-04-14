@@ -3261,8 +3261,11 @@ async function initBot() {
         const { models } = getDB();
         const userId = ctx.from.id;
         const profile = await models.UserProfile.findByPk(userId);
-        const wallets = [profile?.evmWalletAddress, profile?.evmDepositWalletAddress]
-          .filter(w => w && /^0x[a-fA-F0-9]{40}$/.test(w));
+        const wallets = [...new Set(
+          [profile?.evmWalletAddress, profile?.evmDepositWalletAddress]
+            .filter(w => w && /^0x[a-fA-F0-9]{40}$/.test(w))
+            .map(w => w.toLowerCase())
+        )];
 
         let msg = `💰 <b>$FLIP Profit Share</b>\n\n`;
 
