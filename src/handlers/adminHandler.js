@@ -386,29 +386,22 @@ class AdminHandler {
 
   static async profitShareReceiptsBackfill(ctx) {
     if (!this.isAdmin(ctx.from.id)) { await ctx.reply('❌ Not authorized.'); return; }
-    await ctx.reply('⏳ Scanning on-chain Transfer events from dev wallet… this may take a few minutes.');
+    await ctx.reply('⏳ Scanning Paxscan API for profit share distribution history…');
     try {
       const { ethers } = require('ethers');
       const cfg = require('../config');
       const { getDB } = require('../database');
       const { models } = getDB();
 
+      // Paxeer RPC blocks historical eth_getLogs (max range = 0).
+      // Use the Paxscan Explorer API instead — same source used for deposit detection.
+      const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://api.paxscan.io/api';
+      const PAGE_SIZE   = 10000; // max results per page (Etherscan-compatible APIs)
+
       const devWallet = (cfg.evm.devWallet || '').toLowerCase();
       if (!devWallet) { await ctx.reply('❌ EVM_DEV_WALLET not set.'); return; }
 
-      // Short RPC timeout so a slow provider never hangs the bot process
-      const provider = new ethers.JsonRpcProvider(cfg.evm.rpcUrl, undefined, { timeout: 15_000 });
       const pools = await models.ProfitSharePool.findAll({ where: { network: 'EVM' } });
-      const iface = new ethers.Interface(['event Transfer(address indexed from, address indexed to, uint256 value)']);
-      const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-      // Paxeer RPC enforces a max 1000-block range for getLogs — use 999 to stay safe.
-      const CHUNK = 999;
-      const latestBlock = await provider.getBlockNumber();
-      const fromTopic = ethers.zeroPadValue(devWallet, 32);
-
-      // Scan from block 0 to guarantee we capture all historical distributions.
-      // (~3 blocks/sec on Paxeer; latestBlock ~4-5M → ~5,000 chunks per token)
-      const startBlock = 0;
 
       let totalInserted = 0;
       let totalSkipped  = 0;
@@ -418,72 +411,70 @@ class AdminHandler {
         const tokenAddress = pool.tokenAddress.toLowerCase();
 
         let poolInserted = 0;
-        let chunkCount = 0;
-        const totalChunks = Math.ceil((latestBlock - startBlock + 1) / CHUNK);
-        logger.info('[profitShareReceiptsBackfill] Scanning pool', {
+        let page = 1;
+
+        logger.info('[profitShareReceiptsBackfill] Scanning pool via Paxscan', {
           symbol: pool.tokenSymbol,
           tokenAddress,
-          latestBlock,
-          totalChunks,
         });
 
-        for (let from = startBlock; from <= latestBlock; from += CHUNK) {
-          const to = Math.min(from + CHUNK - 1, latestBlock);
-          chunkCount++;
-          let logs = [];
+        while (true) {
+          const url = `${PAXSCAN_API}?module=account&action=tokentx` +
+            `&address=${devWallet}&contractaddress=${tokenAddress}` +
+            `&sort=asc&page=${page}&offset=${PAGE_SIZE}`;
+
+          let data;
           try {
-            logs = await provider.getLogs({
-              address: tokenAddress,
-              fromBlock: from,
-              toBlock: to,
-              topics: [ERC20_TRANSFER_TOPIC, fromTopic],
-            });
+            const res = await fetch(url);
+            data = await res.json();
           } catch (err) {
-            logger.warn('[profitShareReceiptsBackfill] getLogs failed for chunk', {
-              from, to, error: err.message,
+            logger.warn('[profitShareReceiptsBackfill] Paxscan fetch failed', {
+              symbol: pool.tokenSymbol, page, error: err.message,
             });
-            continue;
+            break;
           }
 
-          if (chunkCount % 500 === 0) {
-            logger.info('[profitShareReceiptsBackfill] Progress', {
-              symbol: pool.tokenSymbol,
-              chunksScanned: chunkCount,
-              totalChunks,
-              insertedSoFar: poolInserted,
+          if (!data.result || data.result.length === 0) {
+            logger.info('[profitShareReceiptsBackfill] No more results', {
+              symbol: pool.tokenSymbol, page,
             });
+            break;
           }
 
-          for (const log of logs) {
-            let parsed;
-            try { parsed = iface.parseLog(log); } catch { continue; }
+          for (const tx of data.result) {
+            // Only outgoing transfers from devWallet = profit share distributions
+            if (tx.from.toLowerCase() !== devWallet) continue;
 
-            const toAddr   = parsed.args.to.toLowerCase();
-            const amount   = parseFloat(ethers.formatUnits(parsed.args.value, pool.tokenDecimals));
-            const receiptKey = `${log.transactionHash}#${log.logIndex}`;
-
-            let distributedAt = new Date();
-            try {
-              const block = await provider.getBlock(log.blockNumber);
-              if (block?.timestamp) distributedAt = new Date(block.timestamp * 1000);
-            } catch { /* use now */ }
+            const toAddr      = tx.to.toLowerCase();
+            const decimals    = parseInt(tx.tokenDecimal ?? pool.tokenDecimals ?? 18, 10);
+            const amount      = parseFloat(ethers.formatUnits(tx.value, decimals));
+            const distributedAt = tx.timeStamp
+              ? new Date(parseInt(tx.timeStamp, 10) * 1000)
+              : new Date();
 
             const [, created] = await models.ProfitShareReceipt.upsert({
               holderAddress: toAddr,
               tokenAddress:  pool.tokenAddress,
               tokenSymbol:   pool.tokenSymbol,
               amount,
-              txHash:        receiptKey,
+              txHash:        tx.hash,   // bare txHash — matches live distribution inserts
               distributedAt,
             }, { conflictFields: ['txHash'] });
             if (created) { totalInserted++; poolInserted++; } else { totalSkipped++; }
           }
-        } // end chunk loop
+
+          // Last page reached if fewer results than requested
+          if (data.result.length < PAGE_SIZE) break;
+          page++;
+
+          // Respect Paxscan rate limit between paginated calls
+          await new Promise(r => setTimeout(r, 1500));
+        } // end pagination loop
 
         logger.info('[profitShareReceiptsBackfill] Pool scan complete', {
           symbol: pool.tokenSymbol,
           inserted: poolInserted,
-          chunksScanned: chunkCount,
+          pagesScanned: page,
         });
       } // end pool loop
 
