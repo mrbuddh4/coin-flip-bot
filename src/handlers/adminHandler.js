@@ -401,12 +401,13 @@ class AdminHandler {
       const pools = await models.ProfitSharePool.findAll({ where: { network: 'EVM' } });
       const iface = new ethers.Interface(['event Transfer(address indexed from, address indexed to, uint256 value)']);
       const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-      const CHUNK = 2000;
+      // Paxeer RPC enforces a max 1000-block range for getLogs — use 999 to stay safe.
+      const CHUNK = 999;
       const latestBlock = await provider.getBlockNumber();
       const fromTopic = ethers.zeroPadValue(devWallet, 32);
 
       // Scan from block 0 to guarantee we capture all historical distributions.
-      // (~3 blocks/sec on Paxeer; latestBlock ~4-5M → ~2,000–2,500 chunks per token)
+      // (~3 blocks/sec on Paxeer; latestBlock ~4-5M → ~5,000 chunks per token)
       const startBlock = 0;
 
       let totalInserted = 0;
@@ -416,8 +417,19 @@ class AdminHandler {
         if (pool.tokenAddress === 'native') continue;
         const tokenAddress = pool.tokenAddress.toLowerCase();
 
+        let poolInserted = 0;
+        let chunkCount = 0;
+        const totalChunks = Math.ceil((latestBlock - startBlock + 1) / CHUNK);
+        logger.info('[profitShareReceiptsBackfill] Scanning pool', {
+          symbol: pool.tokenSymbol,
+          tokenAddress,
+          latestBlock,
+          totalChunks,
+        });
+
         for (let from = startBlock; from <= latestBlock; from += CHUNK) {
           const to = Math.min(from + CHUNK - 1, latestBlock);
+          chunkCount++;
           let logs = [];
           try {
             logs = await provider.getLogs({
@@ -426,7 +438,21 @@ class AdminHandler {
               toBlock: to,
               topics: [ERC20_TRANSFER_TOPIC, fromTopic],
             });
-          } catch { continue; }
+          } catch (err) {
+            logger.warn('[profitShareReceiptsBackfill] getLogs failed for chunk', {
+              from, to, error: err.message,
+            });
+            continue;
+          }
+
+          if (chunkCount % 500 === 0) {
+            logger.info('[profitShareReceiptsBackfill] Progress', {
+              symbol: pool.tokenSymbol,
+              chunksScanned: chunkCount,
+              totalChunks,
+              insertedSoFar: poolInserted,
+            });
+          }
 
           for (const log of logs) {
             let parsed;
@@ -450,10 +476,16 @@ class AdminHandler {
               txHash:        receiptKey,
               distributedAt,
             }, { conflictFields: ['txHash'] });
-            created ? totalInserted++ : totalSkipped++;
+            if (created) { totalInserted++; poolInserted++; } else { totalSkipped++; }
           }
-        }
-      }
+        } // end chunk loop
+
+        logger.info('[profitShareReceiptsBackfill] Pool scan complete', {
+          symbol: pool.tokenSymbol,
+          inserted: poolInserted,
+          chunksScanned: chunkCount,
+        });
+      } // end pool loop
 
       await ctx.reply(`✅ Profit share receipt backfill complete.\n• Inserted: ${totalInserted}\n• Already existed: ${totalSkipped}`);
     } catch (err) {
