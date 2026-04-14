@@ -262,6 +262,9 @@ class EVMHandler {
     try {
       // Declare once at function scope so all queries (main, fallback 1, fallback 2, fallback 3) can access
       const flipCreatedAtSeconds = flipCreatedAt ? Math.floor(flipCreatedAt / 1000) : null;
+      // Grace period: allow txs up to 60s before flip.createdAt to handle clock skew between
+      // the Paxeer node and the server, and deposits sent just before the DB record was written.
+      const flipCreatedAtWithGrace = flipCreatedAtSeconds ? flipCreatedAtSeconds - 60 : null;
 
       // toBlock = 999999999 so Paxscan clamps to its actual latest — avoids stale RPC values
       // shifting toBlock backward and hiding recently-confirmed deposits.
@@ -452,7 +455,7 @@ class EVMHandler {
               // Only process if this is an INCOMING transfer to the bot wallet
               // AND sender matches our target AND tx happened after flip was created
               const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
-              const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+              const isAfterFlipCreation = !flipCreatedAtWithGrace || txTimestamp >= flipCreatedAtWithGrace;
               const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
               
               // CRITICAL: Accept wrong ERC20 tokens if we did all-tokens query, or native transfers
@@ -559,7 +562,7 @@ class EVMHandler {
                       const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
                       
                       const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
-                      const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                      const isAfterFlipCreation = !flipCreatedAtWithGrace || txTimestamp >= flipCreatedAtWithGrace;
                       
                       if (isValidSender && isAfterFlipCreation) {
                         const transferDecimals = 6; // Assume 6 decimals for ERC20s (SID/other tokens)
@@ -638,7 +641,7 @@ class EVMHandler {
                       const txTimestamp = parseInt(tx.timeStamp, 10);
                       
                       const isValidSender = txRecipientLower === botWalletAddress.toLowerCase() && txSenderLower === targetSender;
-                      const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                      const isAfterFlipCreation = !flipCreatedAtWithGrace || txTimestamp >= flipCreatedAtWithGrace;
                       
                       if (isValidSender && isAfterFlipCreation) {
                         const txAmount = parseFloat(ethers.formatUnits(tx.value, 18)); // Native transfers use 18 decimals
@@ -698,12 +701,17 @@ class EVMHandler {
               // This catches tokens whose Transfer events exist on-chain but are not surfaced by the API.
               if (transfers.length === 0 && knownSender && tokenAddress && tokenAddress !== 'NATIVE') {
                 try {
-                  // Paxeer RPC enforces a max 1000-block distance — compute ethLogsFromBlock first.
-                  const ethLogsFromBlock = Math.max(0, await getBlockNumber() - 999);
+                  // Re-fetch the current block so the window covers blocks mined during the retry loop.
+                  // (The cached _currentBlock may be 60-80s stale by the time we reach Fallback 3.)
+                  const freshBlock = await this.provider.getBlockNumber();
+                  // Paxeer RPC enforces a max 1000-block distance.
+                  const ethLogsFromBlock = Math.max(0, freshBlock - 999);
                   console.log('[getRecentDepositSender] Fallback 3: eth_getLogs (Paxscan may not index this token)', {
                     targetSender,
                     tokenAddress,
                     fromBlock: ethLogsFromBlock,
+                    toBlock: freshBlock,
+                    staleCachedBlock: _currentBlock,
                   });
 
                   const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
@@ -714,7 +722,7 @@ class EVMHandler {
                     address: tokenAddress,
                     topics: [TRANSFER_TOPIC, senderTopic, recipientTopic],
                     fromBlock: ethLogsFromBlock,
-                    toBlock: _currentBlock, // use cached block to guarantee ≤999-block range (Paxeer limit)
+                    toBlock: freshBlock,
                   });
 
                   console.log('[getRecentDepositSender] eth_getLogs result', { logCount: rawLogs.length, tokenAddress });
@@ -731,10 +739,10 @@ class EVMHandler {
                       txTimestamp = block?.timestamp ?? null;
                     } catch (_) { /* timestamp check skipped on block fetch failure */ }
 
-                    const isAfterFlipCreation = !flipCreatedAtSeconds || !txTimestamp || txTimestamp >= flipCreatedAtSeconds;
+                    const isAfterFlipCreation = !flipCreatedAtWithGrace || !txTimestamp || txTimestamp >= flipCreatedAtWithGrace;
                     if (!isAfterFlipCreation) {
                       console.log('[getRecentDepositSender] eth_getLogs: skipping transfer before flip creation', {
-                        txTimestamp, flipCreatedAtSeconds, txHash: log.transactionHash,
+                        txTimestamp, flipCreatedAtWithGrace, txHash: log.transactionHash,
                       });
                       continue;
                     }
@@ -795,7 +803,7 @@ class EVMHandler {
                   const txContractAddressLower = tx.contractAddress?.toLowerCase() || '';
                   const isToBotWallet = txRecipientLower === botWalletAddress.toLowerCase();
                   const isCorrectToken = txContractAddressLower === tokenAddress.toLowerCase();
-                  const isAfterFlipCreation = !flipCreatedAtSeconds || txTimestamp >= flipCreatedAtSeconds;
+                  const isAfterFlipCreation = !flipCreatedAtWithGrace || txTimestamp >= flipCreatedAtWithGrace;
                   const isWrongSender = txSenderLower !== targetSender;
                   const isNotBotWallet = txSenderLower !== botWalletAddress.toLowerCase();
                   if (isToBotWallet && isCorrectToken && isAfterFlipCreation && isWrongSender && isNotBotWallet) {
@@ -897,10 +905,10 @@ class EVMHandler {
                   txTimestamp = block?.timestamp ?? null;
                 } catch (_) { /* skip timestamp check on block fetch failure */ }
 
-                const isAfterFlipCreation = !flipCreatedAtSeconds || !txTimestamp || txTimestamp >= flipCreatedAtSeconds;
+                const isAfterFlipCreation = !flipCreatedAtWithGrace || !txTimestamp || txTimestamp >= flipCreatedAtWithGrace;
                 if (!isAfterFlipCreation) {
                   console.log('[getRecentDepositSender] eth_getLogs (Paxscan fallback): skipping transfer before flip creation', {
-                    txTimestamp, flipCreatedAtSeconds, txHash: log.transactionHash,
+                    txTimestamp, flipCreatedAtWithGrace, txHash: log.transactionHash,
                   });
                   continue;
                 }
