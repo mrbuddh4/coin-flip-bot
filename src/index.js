@@ -3261,11 +3261,17 @@ async function initBot() {
         const { models } = getDB();
         const userId = ctx.from.id;
         const profile = await models.UserProfile.findByPk(userId);
-        const wallets = [...new Set(
-          [profile?.evmWalletAddress, profile?.evmDepositWalletAddress]
-            .filter(w => w && /^0x[a-fA-F0-9]{40}$/.test(w))
-            .map(w => w.toLowerCase())
-        )];
+
+        // Primary wallets (receive + deposit)
+        const primaryWallets = [profile?.evmWalletAddress, profile?.evmDepositWalletAddress]
+          .filter(w => w && /^0x[a-fA-F0-9]{40}$/.test(w))
+          .map(w => w.toLowerCase());
+
+        // Extra profit share wallets registered by the user
+        const extraRows = await models.UserProfitShareWallet.findAll({ where: { userId } });
+        const extraWallets = extraRows.map(r => r.walletAddress.toLowerCase());
+
+        const wallets = [...new Set([...primaryWallets, ...extraWallets])];
 
         let msg = `💰 <b>$FLIP Profit Share</b>\n\n`;
 
@@ -3290,13 +3296,17 @@ async function initBot() {
             for (const t of totals) {
               msg += `🪙 <b>${t.tokenSymbol}:</b> ${t.total.toLocaleString('en-US', { maximumFractionDigits: 6 })}\n`;
             }
-            msg += `\n<i>Updated each distribution cycle. Run /ps_receipts_backfill to sync historical data.</i>`;
+            if (extraWallets.length > 0) {
+              msg += `\n<i>Tracking ${wallets.length} wallet(s) including ${extraWallets.length} extra.</i>`;
+            }
+            msg += `\n<i>Updated each distribution cycle.</i>`;
           }
         }
 
         await ctx.editMessageText(msg, {
           parse_mode: 'HTML',
           reply_markup: Markup.inlineKeyboard([
+            [Markup.button.callback('🗂 Manage Wallets', 'ps_wallets_page')],
             [Markup.button.callback('🏠 Home', 'back_to_home')],
           ]).reply_markup,
         });
@@ -3304,6 +3314,145 @@ async function initBot() {
       } catch (err) {
         logger.error('Error showing profit share page', err);
         await ctx.answerCbQuery('❌ Error loading profit share');
+      }
+    });
+
+    // Profit Share — wallet management page
+    bot.action('ps_wallets_page', async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+        const profile = await models.UserProfile.findByPk(userId);
+        const extraRows = await models.UserProfitShareWallet.findAll({
+          where: { userId },
+          order: [['createdAt', 'ASC']],
+        });
+
+        let msg = `🗂 <b>Profit Share Wallets</b>\n\n`;
+        msg += `<i>Primary wallets (set via /wallet) are always included.\n`;
+        msg += `Register extra wallets below if you hold $FLIP in additional addresses.</i>\n\n`;
+
+        const primary = [profile?.evmWalletAddress, profile?.evmDepositWalletAddress].filter(Boolean);
+        if (primary.length) {
+          msg += `<b>Primary:</b>\n`;
+          primary.forEach(w => { msg += `  <code>${w}</code>\n`; });
+          msg += `\n`;
+        }
+
+        const buttons = [];
+        if (extraRows.length > 0) {
+          msg += `<b>Extra wallets:</b>\n`;
+          for (const row of extraRows) {
+            const short = row.walletAddress.substring(0, 6) + '…' + row.walletAddress.slice(-4);
+            msg += `  <code>${row.walletAddress}</code>\n`;
+            buttons.push([Markup.button.callback(`❌ Remove ${short}`, `ps_wallet_remove_${row.walletAddress}`)]);
+          }
+        } else {
+          msg += `No extra wallets registered yet.`;
+        }
+
+        buttons.push([Markup.button.callback('➕ Add wallet', 'ps_wallet_add_start')]);
+        buttons.push([Markup.button.callback('🔙 Back', 'profit_share_page')]);
+
+        await ctx.editMessageText(msg, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        });
+        await ctx.answerCbQuery();
+      } catch (err) {
+        logger.error('Error showing PS wallets page', err);
+        await ctx.answerCbQuery('❌ Error loading wallets');
+      }
+    });
+
+    // Profit Share — start adding a wallet (creates an input session)
+    bot.action('ps_wallet_add_start', async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+
+        await models.User.findOrCreate({
+          where: { telegramId: userId },
+          defaults: {
+            username: ctx.from.username,
+            firstName: ctx.from.first_name,
+            lastName: ctx.from.last_name,
+          },
+        });
+
+        await models.BotSession.destroy({ where: { userId, sessionType: 'PS_WALLET_ADD' } });
+        await models.BotSession.create({
+          userId,
+          sessionType: 'PS_WALLET_ADD',
+          currentStep: 'AWAITING_PS_WALLET_ADDRESS',
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        });
+
+        await ctx.editMessageText(
+          `➕ <b>Add a profit share wallet</b>\n\n` +
+          `Send me the Paxeer wallet address you want to track for profit share earnings.\n` +
+          `(e.g. <code>0x1234…abcd</code>)\n\n` +
+          `<i>Type /cancel to abort.</i>`,
+          { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } }
+        );
+        await ctx.answerCbQuery();
+      } catch (err) {
+        logger.error('Error starting PS wallet add', err);
+        await ctx.answerCbQuery('❌ Error');
+      }
+    });
+
+    // Profit Share — remove an extra wallet (dynamic callback data)
+    bot.action(/^ps_wallet_remove_0x[a-fA-F0-9]{40}$/, async (ctx) => {
+      try {
+        const { models } = getDB();
+        const userId = ctx.from.id;
+        const walletAddress = ctx.callbackQuery.data.replace('ps_wallet_remove_', '').toLowerCase();
+
+        await models.UserProfitShareWallet.destroy({ where: { userId, walletAddress } });
+
+        await ctx.answerCbQuery('✅ Wallet removed');
+        // Re-render wallet management page in-place
+        const fakeCtx = ctx;
+        const profile = await models.UserProfile.findByPk(userId);
+        const extraRows = await models.UserProfitShareWallet.findAll({
+          where: { userId },
+          order: [['createdAt', 'ASC']],
+        });
+
+        let msg = `🗂 <b>Profit Share Wallets</b>\n\n`;
+        msg += `<i>Primary wallets (set via /wallet) are always included.\n`;
+        msg += `Register extra wallets below if you hold $FLIP in additional addresses.</i>\n\n`;
+
+        const primary = [profile?.evmWalletAddress, profile?.evmDepositWalletAddress].filter(Boolean);
+        if (primary.length) {
+          msg += `<b>Primary:</b>\n`;
+          primary.forEach(w => { msg += `  <code>${w}</code>\n`; });
+          msg += `\n`;
+        }
+
+        const buttons = [];
+        if (extraRows.length > 0) {
+          msg += `<b>Extra wallets:</b>\n`;
+          for (const row of extraRows) {
+            const short = row.walletAddress.substring(0, 6) + '…' + row.walletAddress.slice(-4);
+            msg += `  <code>${row.walletAddress}</code>\n`;
+            buttons.push([Markup.button.callback(`❌ Remove ${short}`, `ps_wallet_remove_${row.walletAddress}`)]);
+          }
+        } else {
+          msg += `No extra wallets registered yet.`;
+        }
+
+        buttons.push([Markup.button.callback('➕ Add wallet', 'ps_wallet_add_start')]);
+        buttons.push([Markup.button.callback('🔙 Back', 'profit_share_page')]);
+
+        await ctx.editMessageText(msg, {
+          parse_mode: 'HTML',
+          reply_markup: Markup.inlineKeyboard(buttons).reply_markup,
+        });
+      } catch (err) {
+        logger.error('Error removing PS wallet', err);
+        await ctx.answerCbQuery('❌ Error removing wallet');
       }
     });
 
@@ -4108,6 +4257,36 @@ For Paxeer network you need:
       if (activeSession.sessionType === 'UPDATING_WALLET') {
         const handled = await WalletHandler.processWalletAddressInput(ctx, models);
         if (handled) return;
+      }
+
+      // Check if this is adding an extra profit share wallet
+      if (activeSession.sessionType === 'PS_WALLET_ADD') {
+        const address = ctx.message.text.trim();
+        if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+          await ctx.reply(
+            `❌ Invalid address format.\n\n` +
+            `Please send a valid Paxeer wallet address starting with <code>0x</code> and 40 hex characters.`,
+            { parse_mode: 'HTML' }
+          );
+          return;
+        }
+        const normalised = address.toLowerCase();
+        await models.UserProfitShareWallet.findOrCreate({
+          where: { userId, walletAddress: normalised },
+          defaults: { userId, walletAddress: normalised },
+        });
+        // Also register in FlipHolderAddress so it's included in future distributions
+        await models.FlipHolderAddress.findOrCreate({
+          where: { address: normalised },
+          defaults: { address: normalised, label: `ps_user:${userId}` },
+        }).catch(() => {});
+        await models.BotSession.destroy({ where: { id: activeSession.id } });
+        await ctx.reply(
+          `✅ Wallet registered for profit share tracking!\n\n<code>${normalised}</code>\n\n` +
+          `Open the Profit Share page to see your updated totals.`,
+          { parse_mode: 'HTML' }
+        );
+        return;
       }
 
       // Handle INITIATING sessions (wager entry for /flip)

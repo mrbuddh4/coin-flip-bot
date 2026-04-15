@@ -345,6 +345,31 @@ const defineModels = (sequelize) => {
     indexes: [{ fields: ['holderAddress'] }, { fields: ['tokenAddress'] }],
   });
 
+  // UserProfitShareWallet — optional extra wallets a user registers solely for
+  // profit share tracking (e.g. cold wallets that hold $FLIP but aren't the
+  // user's game send/receive addresses).
+  const UserProfitShareWallet = sequelize.define('UserProfitShareWallet', {
+    id: {
+      type: DataTypes.UUID,
+      primaryKey: true,
+      defaultValue: DataTypes.UUIDV4,
+    },
+    userId: {
+      type: DataTypes.BIGINT,
+      allowNull: false,
+    },
+    walletAddress: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+  }, {
+    timestamps: true,
+    indexes: [
+      { unique: true, fields: ['userId', 'walletAddress'] },
+      { fields: ['userId'] },
+    ],
+  });
+
   return {
     User,
     CoinFlip,
@@ -356,6 +381,7 @@ const defineModels = (sequelize) => {
     PendingRefund,
     BotSetting,
     ProfitShareReceipt,
+    UserProfitShareWallet,
     sequelize, // Export sequelize so handlers can use it for queries
   };
 };
