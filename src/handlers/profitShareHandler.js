@@ -719,7 +719,7 @@ class ProfitShareHandler {
       // Admin DM summary (with per-pool tx counts)
       const adminIds = (process.env.ADMIN_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
       const summary = results
-        .map(r => `• [${r.network}] ${r.totalSent.toFixed(4)} ${r.symbol} → ${r.successCount} recipients (${r.failCount} failed)`)
+        .map(r => `• ${r.totalSent.toFixed(4)} ${r.symbol} → ${r.successCount} recipients (${r.failCount} failed)`)
         .join('\n');
 
       for (const adminId of adminIds) {
@@ -728,7 +728,7 @@ class ProfitShareHandler {
             adminId,
             `💰 <b>$FLIP Profit Share Distributed</b>\n\n` +
             `Triggered by: ${triggeredBy}\n` +
-            `EVM holders reached: ${holders.length}\n\n${summary}`,
+            `Holders reached: ${holders.length}\n\n${summary}`,
             { parse_mode: 'HTML' }
           );
         } catch (_) { /* ignore failed DM to admin */ }
