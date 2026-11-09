@@ -1,6 +1,6 @@
 # Recovery build
 
-This branch provides a diagnostic service for the current EVM/Paxeer bot. It is not a release of restored live wagering. See the private owner review for the remaining settlement work.
+This branch provides a diagnostic service for the current EVM/Paxeer bot and an isolated Solana devnet pilot. It is not a release of restored live wagering. See the private owner review for the remaining settlement work.
 
 ## Start without credentials
 
@@ -18,10 +18,10 @@ Set `EVM_CHAIN_ID` to the chain ID from independently verified Paxeer documentat
 
 ## Live operation
 
-The live path requires both `BOT_MODE=live` and `LIVE_FUNDS_ENABLED=true`. Do not set these until the owner's private findings have been resolved and old deposits, payouts, refunds and fee pools have been reconciled. These flags are an operational gate, not a proof that the remaining payment logic is correct. There is no automatic migration or restoration of Solana support.
+The live path requires both `BOT_MODE=live` and `LIVE_FUNDS_ENABLED=true`. Do not set these until the owner's private findings have been resolved and old deposits, payouts, refunds and fee pools have been reconciled. These flags are an operational gate, not a proof that the remaining payment logic is correct. There is no automatic migration. Native SOL and custom standard SPL tokens now have an isolated devnet pilot; see [SOLANA.md](SOLANA.md). Mainnet remains blocked by the pilot.
 
 Only one replica may poll Telegram. The lock uses a dedicated PostgreSQL connection before schema work and background jobs. Telegram launch retains pending updates; test old buttons in an isolated test bot before reopening a production group. The health endpoint indicates process readiness, not blockchain solvency.
 
 ## Validation
 
-Run `npm test -- --runInBand` with no production credentials. The obsolete Solana test is preserved as `archive/solanaHandler.legacy-test.js` and is not part of the active EVM suite because its implementation was removed previously. Real PostgreSQL, Telegram polling, Docker and on-chain transactions must still be checked in an isolated environment before live use.
+Run `npm test -- --runInBand` with no production credentials. The obsolete Solana test is preserved as `archive/solanaHandler.legacy-test.js` and is not part of the active EVM suite because its implementation was removed previously. The new Solana suite also exercises actual PostgreSQL concurrency and restart behavior when SOLANA_TEST_DATABASE_URL is set to a disposable local server. Telegram polling, wallet compatibility and on-chain transactions must still be checked in isolation before production use.

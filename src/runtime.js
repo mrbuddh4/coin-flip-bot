@@ -5,7 +5,9 @@ const { startHealthServer } = require('./utils/healthServer');
 async function main() {
   if (getMode() === 'live') {
     assertLiveFunds();
-    await require('./index').main();
+    if (process.env.BOT_CHAIN === 'solana') await require('./solana/runtime').main();
+    else if (!process.env.BOT_CHAIN || process.env.BOT_CHAIN === 'evm') await require('./index').main();
+    else throw new Error('BOT_CHAIN must be evm or solana');
     return;
   }
   // No imports of the game, wallet, database models or Telegram poller here.

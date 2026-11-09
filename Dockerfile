@@ -3,7 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-fund --no-audit
 COPY src ./src
-COPY scripts/preflight.js ./scripts/preflight.js
+COPY scripts ./scripts
 COPY assets ./assets
 ENV NODE_ENV=production BOT_MODE=recovery
 USER node

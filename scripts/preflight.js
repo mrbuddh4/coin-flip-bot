@@ -28,6 +28,12 @@ async function inspectDatabase(client) {
     if (names.has('ProfitSharePools')) result.feePools = (await client.query(
       'SELECT network, "tokenAddress", "tokenSymbol", "pendingAmount"::text, "lastDistributedAt" FROM "ProfitSharePools"'
     )).rows;
+    if (names.has('SolGames')) result.solanaGames = (await client.query(
+      'SELECT state->>\'status\' AS status, COUNT(*)::text AS count FROM "SolGames" GROUP BY state->>\'status\''
+    )).rows;
+    if (names.has('SolOutbox')) result.solanaPayments = (await client.query(
+      'SELECT status, COUNT(*)::text AS count FROM "SolOutbox" GROUP BY status'
+    )).rows;
     return result;
   } finally {
     if (connected) await client.query('ROLLBACK').catch(() => {});
@@ -78,7 +84,16 @@ async function run(env = process.env) {
     try { report.telegram = await inspectTelegram(env.TELEGRAM_BOT_TOKEN); }
     catch (_) { report.telegram = { status: 'failed' }; }
   }
-  if (env.EVM_RPC_URL) {
+  if (env.BOT_CHAIN === 'solana') {
+    try {
+      const { SolanaChain } = require('../src/solana/chain');
+      const chain = new SolanaChain({ env });
+      const genesis = await chain.validate();
+      report.chain = { status: 'ok', network: 'solana-devnet', genesis, botWalletMatches: true, realFundsEnabled: false };
+      report.chain.block = await chain.connection.getSlot('finalized');
+      if (!env.SOLANA_WALLET_ADDRESS) report.chain.status = 'expected-wallet-required';
+    } catch (_) { report.chain = { status: 'failed', detail: 'Check devnet RPC, shared wallet and private signing configuration.' }; }
+  } else if (env.EVM_RPC_URL) {
     let provider;
     try {
       const request = new ethers.FetchRequest(env.EVM_RPC_URL);

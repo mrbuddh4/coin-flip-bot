@@ -1,7 +1,7 @@
 {
   "name": "coin-flip-bot",
   "version": "1.0.0",
-  "description": "Telegram Coin Flip Bot supporting EVM tokens",
+  "description": "Telegram coin flip bot with EVM recovery and native SOL/custom SPL devnet pilot",
   "main": "src/index.js",
   "files": [
     "src",
@@ -11,10 +11,13 @@
     "start": "node src/runtime.js",
     "dev": "nodemon src/runtime.js",
     "test": "jest",
-    "preflight": "node scripts/preflight.js"
+    "preflight": "node scripts/preflight.js",
+    "solana:init": "node scripts/solana-init.js"
   },
   "dependencies": {
+    "@solana/web3.js": "^1.98.4",
     "axios": "^1.6.0",
+    "bs58": "^6.0.0",
     "dotenv": "^16.3.1",
     "ethers": "^6.9.0",
     "get-video-duration": "^5.0.0",
@@ -29,5 +32,10 @@
   },
   "engines": {
     "node": ">=24 <25"
+  },
+  "overrides": {
+    "rpc-websockets": {
+      "uuid": "11.1.1"
+    }
   }
 }
