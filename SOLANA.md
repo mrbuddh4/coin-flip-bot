@@ -6,6 +6,8 @@ This is a new, separate Solana ledger and command path. It is not a completed ma
 
 ## Fresh deployment and private setup
 
+For an iPhone/iPad workflow without a terminal, use [PHONE-SETUP.md](PHONE-SETUP.md). Its optional Railway pre-deploy step initializes an explicitly empty devnet database; ordinary recovery deployments skip database access.
+
 1. Use Node 24 and this recovery branch. Start with `BOT_MODE=recovery`, `LIVE_FUNDS_ENABLED=false`; `npm start` provides credential-free `/health`. Keep the original PaxLabs project untouched.
 2. In an owner-controlled Railway workspace, use a **new, empty** PostgreSQL database and a separate **test** Telegram bot. No hosting has been provisioned by the assistant. Configure the private `DATABASE_URL` and `TELEGRAM_BOT_TOKEN` in Railway, not source control.
 3. Set `BOT_CHAIN=solana`, `SOLANA_CLUSTER=devnet`, `SOLANA_RPC_URL=https://api.devnet.solana.com` or a trusted dedicated **devnet** endpoint. Set `SOLANA_WALLET_ADDRESS` to the owner-selected shared address above. Set its matching `SOLANA_PRIVATE_KEY` privately, as a base58-encoded 64-byte secret key or JSON array of 64 bytes. A seed phrase, EVM key or public address is not this key format. Do not change wallets while ledger liabilities exist.

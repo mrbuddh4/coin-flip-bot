@@ -3,6 +3,8 @@
     "builder": "dockerfile"
   },
   "deploy": {
+    "preDeployCommand": ["npm run deploy:prepare"],
+    "healthcheckPath": "/health",
     "numReplicas": 1,
     "restartPolicyType": "on_failure",
     "restartPolicyMaxRetries": 5

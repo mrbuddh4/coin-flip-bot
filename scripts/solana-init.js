@@ -2,9 +2,9 @@ require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client } = require('pg');
-async function main() {
-  if (process.env.SOLANA_INIT_FRESH !== 'true' || !process.env.DATABASE_URL) throw new Error('Use SOLANA_INIT_FRESH=true only for the new pilot database');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
+async function main(env = process.env) {
+  if (env.SOLANA_INIT_FRESH !== 'true' || !env.DATABASE_URL) throw new Error('Use SOLANA_INIT_FRESH=true only for the new pilot database');
+  const client = new Client({ connectionString: env.DATABASE_URL });
   try {
     await client.connect();
     await client.query('BEGIN');

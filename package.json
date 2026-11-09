@@ -12,6 +12,7 @@
     "dev": "nodemon src/runtime.js",
     "test": "jest",
     "preflight": "node scripts/preflight.js",
+    "deploy:prepare": "node scripts/deploy-prepare.js",
     "solana:init": "node scripts/solana-init.js"
   },
   "dependencies": {
