@@ -1,4 +1,4 @@
-const { main } = require('../scripts/deploy-prepare');
+const { main, formatFailure } = require('../scripts/deploy-prepare');
 
 describe('phone-friendly Railway pre-deploy initialization', () => {
   const env = { SOLANA_INIT_FRESH: 'true', BOT_CHAIN: 'solana', SOLANA_CLUSTER: 'devnet', DATABASE_URL: 'postgresql://unused/test', SOLANA_RPC_URL: 'https://api.devnet.solana.com' };
@@ -28,6 +28,42 @@ describe('phone-friendly Railway pre-deploy initialization', () => {
     deps.initialize.mockRejectedValue(new Error('Database is not empty'));
     await expect(main(env, deps)).rejects.toThrow('not empty');
     expect(deps.initialize).toHaveBeenCalledTimes(1);
+  });
+  test('diagnostics name incorrect settings without showing their values', async () => {
+    const secret = 'private-setting-must-never-appear';
+    try { await main({ ...env, BOT_CHAIN: secret, SOLANA_CLUSTER: secret }, deps); }
+    catch (error) {
+      const text = formatFailure(error);
+      expect(text).toContain('SETUP_CONFIG');
+      expect(text).toContain('BOT_CHAIN, SOLANA_CLUSTER');
+      expect(text).not.toContain(secret);
+    }
+    expect(deps.initialize).not.toHaveBeenCalled();
+  });
+  test('RPC failures identify the stage without leaking provider errors', async () => {
+    const secret = 'https://private:password@rpc.invalid/token';
+    deps.verifyDevnet.mockRejectedValue(new Error(secret));
+    await main(env, deps).catch(error => {
+      expect(formatFailure(error)).toContain('SETUP_RPC_CONNECTION');
+      expect(formatFailure(error)).not.toContain(secret);
+    });
+    expect(deps.initialize).not.toHaveBeenCalled();
+  });
+  test.each([
+    ['ENOTFOUND', 'SETUP_DB_DNS'], ['28P01', 'SETUP_DB_AUTH'],
+    ['ECONNREFUSED', 'SETUP_DB_CONNECTION'], ['unknown-secret-code', 'SETUP_DB_INITIALIZATION'],
+  ])('database diagnostics classify %s without printing connection details', async (code, category) => {
+    const secret = 'postgresql://user:secret@private/db';
+    deps.initialize.mockRejectedValue(Object.assign(new Error(secret), { code }));
+    await main(env, deps).catch(error => {
+      expect(formatFailure(error)).toContain(category);
+      expect(formatFailure(error)).not.toContain(secret);
+      expect(formatFailure(error)).not.toContain('unknown-secret-code');
+    });
+  });
+  test('existing tables and wrong network have distinct fixed diagnostics', () => {
+    expect(formatFailure({ initStage: 'database', message: 'Database is not empty' })).toContain('SETUP_DB_NOT_EMPTY');
+    expect(formatFailure({ initStage: 'rpc', message: 'RPC is not Solana devnet' })).toContain('SETUP_RPC_NETWORK');
   });
   test.each([['EtWTRABZaYq6iMfeYKouRu166VU2xqa1', true], ['5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', false]])('checks actual RPC genesis response %s before initialization', async (genesis, allowed) => {
     const server = require('node:http').createServer(async (request, response) => {
