@@ -8,9 +8,10 @@
     "assets"
   ],
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "test": "jest"
+    "start": "node src/runtime.js",
+    "dev": "nodemon src/runtime.js",
+    "test": "jest",
+    "preflight": "node scripts/preflight.js"
   },
   "dependencies": {
     "axios": "^1.6.0",
@@ -25,5 +26,8 @@
   "devDependencies": {
     "jest": "^29.7.0",
     "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=24 <25"
   }
 }

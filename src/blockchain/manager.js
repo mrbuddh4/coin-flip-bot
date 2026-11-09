@@ -316,7 +316,7 @@ class BlockchainManager {
     try {
       const status = await handler.checkTransactionStatus(txHash);
       return {
-        confirmed: status.confirmations >= requiredConfirmations,
+        confirmed: status.status === 'confirmed' && status.confirmations >= requiredConfirmations,
         confirmations: status.confirmations,
         status: status.status,
       };
