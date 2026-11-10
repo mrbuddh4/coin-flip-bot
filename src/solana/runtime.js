@@ -74,7 +74,7 @@ async function main() {
     const cycle = async () => {
       if (cycleRunning || stopping) return;
       cycleRunning = true;
-      try { await scanner.tick(); await service.work(); await ui.render(); }
+      try { await scanner.tick(); await service.work(); await ui.render(); await ui.refreshPrivateScreens(); }
       finally {
         // Delivery failures must never block signing, reconciliation or polling.
         try { await notifications.tick(); }

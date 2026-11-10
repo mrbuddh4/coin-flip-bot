@@ -79,3 +79,30 @@ The worker automatically sends deposit and outgoing-payment status notices to bo
 ### Flip reveal order
 
 The group video is sent first and its playback timer starts after Telegram acknowledges delivery. The video message ID and playback deadline persist across restarts, and its Telegram file ID is cached for future flips. Once playback ends, the bot removes the video and posts the result image, then updates its payout confirmation. Private status, statistics, leaderboards and automatic payment notices hold back the winner until the group result is announced. Deposit notices remain immediate. Blockchain payout processing continues independently; an external wallet/explorer can therefore show payment before the Telegram presentation finishes. Failed video cleanup retries. A restart during an upload with no acknowledged message ID waits up to five minutes before falling back to the result, without automatically uploading another potentially duplicate clip.
+
+## Smooth Telegram navigation
+
+Private menus now edit one saved message in place, including wallet entry,
+tokens, wager entry and game status. The saved message survives a restart. A
+missing or uneditable message gets a replacement; network timeouts do not cause
+an immediate duplicate. Consumed DM commands and inputs are deleted only after
+the next screen is acknowledged. Telegram restrictions can prevent deletion.
+
+Buttons carry a screen revision. Old cards, repeated taps and forwarded buttons
+cannot change a newer session. Actions are serialized per user. Home offers
+Resume for open games and games still completing payouts. Token entry has a
+Back button, wager setup shows three steps, and cancellation has a confirmation.
+Leaving a menu does not cancel a funded game.
+
+The worker updates a displayed game screen when deposits, results or payment
+states change, without taking over Home or another menu. Creator funding still
+needs Confirm Deposit (or Post Funded Challenge on the status screen) to publish
+the group challenge. Manual deposit checking remains available for reconciliation.
+
+Group setup cards are removed when their owner opens the DM flow, with cleanup
+retries for consumed/expired drafts. The challenge updates in place; its used
+card and the video are removed when the final result is shown. Failed cleanup
+is retried and old keyboards are disabled where Telegram permits it. Final
+results and automatic payment receipts remain as the transparent game history.
+Existing untracked messages from older deployments cannot be discovered or
+removed retroactively by this version.

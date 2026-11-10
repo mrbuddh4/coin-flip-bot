@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { publicKey } = require('./chain');
 const { resultVisible } = require('./presentation');
+const { PrivateScreen, ScreenTransportError } = require('./screen');
 const { fromUnits, toUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 const { getVideoDuration } = require('../utils/helpers');
@@ -24,16 +25,28 @@ class SolanaInterface {
     this.store = service.store;
     this.telegram = bot.telegram;
     this.rendering = false;
+    this.screens = new PrivateScreen(this.store, this.telegram);
   }
   register() {
     const wrap = fn => async ctx => {
-      try {
-        if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => {});
-        await this.store.updateProfile(ctx.from.id, { name: ctx.from.first_name || ctx.from.username || String(ctx.from.id) });
-        await fn(ctx);
-      } catch (_) {
-        await ctx.reply('That action could not be completed. Check the current game or use /start to reopen the menu. Your existing deposits and payout records are preserved.');
-      }
+      const run = async () => {
+        try {
+          if (!await this.screens.valid(ctx)) return;
+          if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => {});
+          await this.store.updateProfile(ctx.from.id, { name: ctx.from.first_name || ctx.from.username || String(ctx.from.id) });
+          await fn(ctx);
+        } catch (error) {
+          if (error instanceof ScreenTransportError) { console.error('PRIVATE_SCREEN_RETRY: current screen retained.'); return; }
+          const current = ctx.chat?.type === 'private' && (await this.store.profile(ctx.from.id)).privateScreen;
+          await this.reply(ctx, 'That action could not be completed. Check the current game or use /start to reopen the menu. Your existing deposits and payout records are preserved.' + (current ? '\n\n' + current.text.replace(/^That action could not be completed[\s\S]*?\n\n/, '') : ''), current ? current.rows.map(row => row.map(b => b.callback_data ? { ...b, callback_data: b.callback_data.split('|')[0] } : b)) : []);
+        }
+        // Clear consumed commands/inputs only after the replacement screen is
+        // acknowledged. Receipts and other users' group messages stay intact.
+        if (ctx.chat?.type === 'private' && ctx.screenUpdated && ctx.message?.message_id) {
+          await this.telegram.deleteMessage(ctx.chat.id, ctx.message.message_id).catch(() => {});
+        }
+      };
+      return this.screens.serial(ctx.from.id, run);
     };
     this.bot.start(wrap(ctx => this.start(ctx)));
     this.bot.command('flip', wrap(ctx => this.flip(ctx)));
@@ -47,7 +60,22 @@ class SolanaInterface {
     this.bot.on('text', wrap(ctx => this.text(ctx)));
   }
   async me() { return this.bot.botInfo || (this.bot.botInfo = await this.telegram.getMe()); }
-  async reply(ctx, text, rows = []) { return ctx.reply(text, keyboard(rows)); }
+  async reply(ctx, text, rows = []) {
+    if (ctx.chat?.type !== 'private') return ctx.reply(text, keyboard(rows));
+    if (!rows.flat().some(b => b.callback_data === 's:home')) rows = [...rows, [button('🏠 Home', 's:home')]];
+    return this.screens.show(ctx, text, rows);
+  }
+  async cleanupDraft(draft) {
+    if (!draft.messageId) return;
+    try { await this.telegram.deleteMessage(draft.chatId, Number(draft.messageId)); }
+    catch (error) {
+      if (!/message to delete not found/i.test(error.response?.description || '')) {
+        await this.telegram.editMessageReplyMarkup(draft.chatId, Number(draft.messageId), undefined, { inline_keyboard: [] }).catch(() => {});
+        return;
+      }
+    }
+    await this.store.draftMessage(draft.id, null);
+  }
   async private(ctx) {
     if (ctx.chat?.type === 'private') return true;
     const me = await this.me();
@@ -59,7 +87,8 @@ class SolanaInterface {
     const payload = ctx.startPayload || ctx.message?.text?.split(/\s+/)[1] || '';
     if (payload.startsWith('solcreate_')) {
       const draft = await this.store.draft(payload.slice(10), ctx.from.id);
-      return this.begin(ctx, { kind: 'create', draftId: draft.id, chatId: draft.chatId });
+      await this.begin(ctx, { kind: 'create', draftId: draft.id, chatId: draft.chatId });
+      return this.cleanupDraft(draft);
     }
     if (payload.startsWith('soljoin_')) return this.reviewJoin(ctx, payload.slice(8));
     return this.home(ctx);
@@ -68,9 +97,11 @@ class SolanaInterface {
     if (!await this.private(ctx)) return;
     await this.store.clearSession(ctx.from.id);
     const profile = await this.store.profile(ctx.from.id);
+    const active = (await this.store.history(ctx.from.id, 20)).filter(g => g.status === 'OPEN' || (g.status === 'SETTLED' && !g.ui?.terminal)).slice(0, 5);
     return this.reply(ctx, `🏠 <b>Coin Flip Dashboard</b>\n${escape(networkName(this.service.chain))}\n\n` +
       `Sending wallet: ${profile.wallet ? `<code>${escape(profile.wallet)}</code>` : 'Not set'}\n` +
       `Receive wallet: ${profile.receiveWallet ? `<code>${escape(profile.receiveWallet)}</code>` : 'Not set'}\n\nUse /flip in your group to start a challenge.`, [
+      ...active.map(g => [button(`Resume ${fromUnits(g.wager, g.token.decimals)} ${g.token.symbol}`, `s:status:${g.id}`)]),
       [button('💳 Wallets', 's:wallets'), button('📊 My Stats', 's:stats')],
       [button('🪙 Start Flip', 's:flip'), button('💰 Profit Share', 's:fees')],
       [button('⭐ My Tokens', 's:tokens'), button('❓ Help', 's:help')],
@@ -99,7 +130,9 @@ class SolanaInterface {
     await this.store.draft(draftId, ctx.from.id, ctx.chat.id);
     const me = await this.me();
     const text = `🪙 <b>Start a Coin Flip</b>\n\n${escape(ctx.from.first_name || 'Player')}, choose your token and wager privately.\n${escape(networkName(this.service.chain))}`;
-    return this.reply(ctx, text, [[{ text: 'Start in DM', url: `https://t.me/${me.username}?start=solcreate_${draftId}` }]]);
+    const sent = await this.reply(ctx, text, [[{ text: 'Start in DM', url: `https://t.me/${me.username}?start=solcreate_${draftId}` }]]);
+    await this.store.draftMessage(draftId, sent.message_id);
+    return sent;
   }
   async selectTokens(ctx, state = { kind: 'favorites' }, page = 0) {
     const tokens = tokensForUser(await this.store.tokens(String(ctx.from.id)), this.service.chain.env.SOLANA_CLUSTER);
@@ -115,7 +148,7 @@ class SolanaInterface {
     if ((page + 1) * 20 < tokens.length) pages.push(button('Next', `s:page:${page + 1}:${data.nonce}`));
     if (pages.length) rows.push(pages);
     rows.push([button('🔍 Enter Contract Address', `s:custom:${data.nonce}`)], [button('🏠 Home', 's:home')]);
-    return this.reply(ctx, `<b>${state.kind === 'favorites' ? 'My Tokens' : 'Select a Token'}</b>\n${escape(networkName(this.service.chain))}\n\nFeatured tokens are included for everyone. Custom assets are identified by their exact mint address.`, rows);
+    return this.reply(ctx, `<b>${state.kind === 'favorites' ? 'My Tokens' : 'Step 1 of 3: Select a Token'}</b>\n${escape(networkName(this.service.chain))}\n\nFeatured tokens are included for everyone. Custom assets are identified by their exact mint address.`, rows);
   }
   async chooseToken(ctx, state, mint) {
     const token = await this.service.chain.tokenInfo(mint);
@@ -124,7 +157,7 @@ class SolanaInterface {
       return this.selectTokens(ctx);
     }
     await this.store.setSession(ctx.from.id, { ...state, token, step: 'amount' });
-    return this.reply(ctx, `<b>Wager Amount</b>\n\nToken: ${escape(token.symbol)}\nMint: <code>${escape(token.address)}</code>\n\nType the amount you want each player to wager here in this chat, for example <code>0.01</code>. The next message will show the deposit address and transfer instructions. Winner receives 90% of the pool.`, [[button('🏠 Home', 's:home')]]);
+    return this.reply(ctx, `<b>Step 2 of 3: Wager Amount</b>\n\nToken: ${escape(token.symbol)}\nMint: <code>${escape(token.address)}</code>\n\nType the amount you want each player to wager here in this chat, for example <code>0.01</code>. The next screen will show the deposit address and transfer instructions. Winner receives 90% of the pool.`, [[button('‹ Change Token', 's:back')], [button('🏠 Home', 's:home')]]);
   }
   async reviewJoin(ctx, id, walletsReady = false) {
     const game = await this.store.get(id);
@@ -135,6 +168,8 @@ class SolanaInterface {
     return this.reply(ctx, `<b>Review Challenge</b>\n\nCreator: ${mention(game.creator)}\nEach player wagers: <b>${summary(game)}</b>\nWinner receives 90% of the pool.\n${escape(networkName(this.service.chain))}`, [[button('✅ Accept', `s:accept:${session.nonce}`), button('❌ Decline', 's:home')]]);
   }
   async depositMessage(ctx, game) {
+    ctx.solGameId = game.id; ctx.solView = 'deposit';
+    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), await this.store.payments(game.id)]);
     const player = this.service.member(game, ctx.from.id);
     const base = this.env.PUBLIC_BASE_URL || (this.env.RAILWAY_PUBLIC_DOMAIN ? `https://${this.env.RAILWAY_PUBLIC_DOMAIN}` : '');
     const role = player.userId === game.creator.userId ? 'creator' : 'challenger';
@@ -144,7 +179,7 @@ class SolanaInterface {
     if (/^https:\/\//.test(base) && player.payToken) rows.push([{ text: '💳 Open Deposit', url: `${base.replace(/\/$/, '')}/pay/${game.id}/${role}/${player.payToken}` }]);
     rows.push([button('✅ Confirm Deposit', `s:check:${game.id}`)], [button('Game Status', `s:status:${game.id}`)]);
     if (role === 'creator') rows.push([button('Cancel Challenge', `s:cancel:${game.id}`)]);
-    return this.reply(ctx, `<b>Transfer Your Wager From Your Wallet</b>\n${escape(networkName(this.service.chain))}\n\nAmount: <b>${summary(game)}</b>\nFrom: <code>${escape(player.wallet)}</code>\nTo: <code>${escape(game.depositAddress)}</code>\nMint: <code>${escape(game.token.address)}</code>\nGame memo (optional for a unique matching transfer): <code>${escape(player.memo)}</code>\nWinnings go to: <code>${escape(player.receiveWallet || player.wallet)}</code>\n\n1. Copy the deposit address and exact amount above.\n2. Transfer from your registered sending wallet. Including the game memo helps identify the payment if requests overlap.\n3. Return here and tap Confirm Deposit.\n\nThe bot automatically reports finalized deposits and payment confirmations here and in the originating group. ${role === 'creator' ? 'Once your deposit is confirmed, the challenge is posted to the group where you started /flip.' : 'Once both deposits are confirmed, the game resolves.'} A plain transfer is matched only when the signing wallet, exact token, exact amount and transaction time identify one request. If requests overlap, include the game memo or use Open Deposit.\n\nPayment URI:\n<code>${escape(paymentURI(game, player))}</code>`, rows);
+    return this.reply(ctx, `<b>Step 3 of 3: Transfer Your Wager</b>\n${escape(networkName(this.service.chain))}\n\nAmount: <b>${summary(game)}</b>\nFrom: <code>${escape(player.wallet)}</code>\nTo: <code>${escape(game.depositAddress)}</code>\nMint: <code>${escape(game.token.address)}</code>\nGame memo (optional for a unique matching transfer): <code>${escape(player.memo)}</code>\nWinnings go to: <code>${escape(player.receiveWallet || player.wallet)}</code>\n\n1. Copy the deposit address and exact amount above.\n2. Transfer from your registered sending wallet. Including the game memo helps identify the payment if requests overlap.\n3. Return here and tap Confirm Deposit.\n\nThe bot automatically reports finalized deposits and payment confirmations here and in the originating group. ${role === 'creator' ? 'Once your deposit is confirmed, the challenge is posted to the group where you started /flip.' : 'Once both deposits are confirmed, the game resolves.'} A plain transfer is matched only when the signing wallet, exact token, exact amount and transaction time identify one request. If requests overlap, include the game memo or use Open Deposit.\n\nPayment URI:\n<code>${escape(paymentURI(game, player))}</code>`, rows);
   }
   async confirmDeposit(ctx, id) {
     const before = await this.store.get(id);
@@ -164,6 +199,8 @@ class SolanaInterface {
     }
     await this.render();
     if (!player.deposit && game.status === 'OPEN') {
+      ctx.solGameId = game.id; ctx.solView = 'deposit';
+      ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), await this.store.payments(game.id)]);
       return this.reply(ctx, 'Your deposit has not been matched yet. Check the amount, registered sending wallet, destination and whether another request overlaps. A game memo identifies the payment when requests overlap. If you already transferred, the bot will report the finalized deposit automatically. You can also tap Confirm Deposit to recheck.', [
         [button('✅ Confirm Deposit', `s:check:${id}`)],
         [button('Game Status', `s:status:${id}`)],
@@ -172,19 +209,25 @@ class SolanaInterface {
     return this.status(ctx, id);
   }
   async status(ctx, id) {
+    ctx.solGameId = id; ctx.solView = 'status';
     const game = await this.store.get(id);
     this.service.member(game, ctx.from.id);
     const payments = await this.store.payments(id);
+    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), payments]);
     const revealed = resultVisible(game), flipping = game.status === 'SETTLED' && !revealed;
+    const player = this.service.member(game, ctx.from.id);
+    const next = game.status === 'OPEN' && !player.deposit ? [[button('💳 Deposit Instructions', `s:deposit:${id}`)]] : [];
+    if (game.status === 'OPEN' && player.userId === game.creator.userId && player.deposit && !game.ui?.publishRequested) next.push([button('Post Funded Challenge', `s:check:${id}`)]);
+    const waiting = game.status !== 'OPEN' ? '' : !player.deposit ? 'Next: open Deposit Instructions and transfer your wager.' : !game.ui?.publishRequested ? 'Deposit recorded. Tap Post Funded Challenge to open it to the group.' : !game.challenger ? 'Your deposit is recorded. Waiting for an opponent in the originating group.' : 'Your deposit is recorded. Waiting for the other player’s deposit.';
     const winner = revealed && [game.creator, game.challenger].find(p => p?.userId === game.winnerId);
-    return this.reply(ctx, `<b>Game Status</b>\n${summary(game)}\nState: ${flipping ? 'FLIPPING' : escape(game.status)}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n` + (winner ? `Winner: ${mention(winner)}\n` : '') + (flipping ? 'Both deposits are recorded. The flip video plays before the result and payment details are revealed.' : payments.map(p => `${escape(p.id.split(':')[0])}: ${escape(p.status)}${p.signature ? `\n${escape(this.explorer(p.signature))}` : ''}`).join('\n')), [[button('Refresh', `s:status:${id}`)], [button('🏠 Home', 's:home')]]);
+    return this.reply(ctx, `<b>Game Status</b>\n${summary(game)}\nState: ${flipping ? 'FLIPPING' : escape(game.status)}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n\n${escape(waiting)}\n` + (winner ? `Winner: ${mention(winner)}\n` : '') + (flipping ? 'Both deposits are recorded. The flip video plays before the result and payment details are revealed.' : payments.map(p => `${escape(p.id.split(':')[0])}: ${escape(p.status)}${p.signature ? `\n${escape(this.explorer(p.signature))}` : ''}`).join('\n')), [...next, [button('Refresh', `s:status:${id}`)], [button('🏠 Home', 's:home')]]);
   }
   explorer(signature) { return `https://explorer.solana.com/tx/${signature}${this.service.chain.env.SOLANA_CLUSTER === 'mainnet-beta' ? '' : '?cluster=devnet'}`; }
   async action(ctx) {
     if (!await this.private(ctx)) return;
     const [, action, arg, revision] = ctx.callbackQuery.data.split(':');
     const simple = { home: () => this.home(ctx), wallets: () => this.wallets(ctx), flip: () => this.flip(ctx), tokens: () => this.selectTokens(ctx), stats: () => this.stats(ctx), help: () => this.help(ctx), fees: () => this.fees(ctx), holder: () => this.holder(ctx) };
-    if (simple[action]) return simple[action]();
+    if (simple[action]) { await this.store.clearSession(ctx.from.id); return simple[action](); }
     if (action === 'wallet') {
       if (arg === 'same') {
         const session = await this.store.session(ctx.from.id), profile = await this.store.profile(ctx.from.id);
@@ -197,9 +240,20 @@ class SolanaInterface {
       await this.store.setSession(ctx.from.id, { kind: 'wallet', field: arg });
       return this.reply(ctx, `Send your public Solana ${arg === 'wallet' ? 'sending' : 'receiving'} wallet address.`);
     }
+    if (action === 'deposit') return this.depositMessage(ctx, await this.store.get(arg));
+    if (action === 'back') {
+      const state = await this.store.session(ctx.from.id);
+      if (!state || !['create', 'favorites'].includes(state.kind)) return this.home(ctx);
+      return this.selectTokens(ctx, state, state.page);
+    }
     if (action === 'check') return this.confirmDeposit(ctx, arg);
     if (action === 'status') return this.status(ctx, arg);
     if (action === 'cancel') {
+      const game = await this.store.get(arg);
+      if (game.creator.userId !== String(ctx.from.id)) throw new Error('Only the creator can cancel');
+      return this.reply(ctx, `<b>Cancel this challenge?</b>\n${summary(game)} each. Recorded deposits will be queued for full refund. A completed flip cannot be cancelled.`, [[button('Yes, Cancel Challenge', `s:cancelok:${arg}`)], [button('Keep Challenge', `s:status:${arg}`)]]);
+    }
+    if (action === 'cancelok') {
       const game = await this.store.get(arg);
       await this.service.cancel({ id: arg, userId: ctx.from.id, chatId: game.chatId });
       await this.service.work(); await this.render();
@@ -222,7 +276,7 @@ class SolanaInterface {
     if (action === 'custom') {
       if (session.nonce !== arg || session.step !== 'token') throw new Error('Stale custom prompt');
       await this.store.setSession(ctx.from.id, { ...session, step: 'custom' });
-      return this.reply(ctx, 'Send the exact Solana token mint address. It will be checked on the selected network.');
+      return this.reply(ctx, 'Send the exact Solana token mint address. It will be checked on the selected network.', [[button('‹ Back to Tokens', 's:back')]]);
     }
     if (action === 'accept') {
       if (session.nonce !== arg || session.kind !== 'join' || session.step !== 'confirm') throw new Error('Stale accept');
@@ -332,6 +386,22 @@ class SolanaInterface {
     const order = [...ranks.values()].sort((a, b) => losers ? b.losses - a.losses : b.wins - a.wins).slice(0, 10);
     return this.reply(ctx, `<b>${losers ? 'Wall of Shame' : 'Leaderboard'}</b>\nRanked by ${losers ? 'losses' : 'wins'}.\n\n` + (order.map((r, i) => `${i + 1}. ${mention(r)}: ${r.wins} wins, ${r.losses} losses`).join('\n') || 'No completed flips yet.'));
   }
+  async refreshPrivateScreens() {
+    for (const { userId } of await this.store.gameScreens()) {
+      try {
+        await this.screens.serial(userId, async () => {
+          const screen = (await this.store.profile(userId)).privateScreen;
+          if (!screen?.gameId) return;
+          const game = await this.store.get(screen.gameId), payments = await this.store.payments(game.id);
+          const key = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), payments]);
+          if (key === screen.gameStateKey) return;
+          const ctx = { from: { id: userId }, chat: { id: userId, type: 'private' }, reply: (text, options) => this.telegram.sendMessage(userId, text, options) };
+          if (screen.view === 'deposit' && game.status === 'OPEN' && !this.service.member(game, userId).deposit) return;
+          await this.status(ctx, game.id);
+        });
+      } catch (_) { console.error('PRIVATE_PROGRESS_RETRY: financial record retained.'); }
+    }
+  }
   async animationReady(game) {
     if (!game.ui?.animationClaimed && !resultVisible(game)) {
       let send = false;
@@ -394,13 +464,31 @@ class SolanaInterface {
     }
     return true;
   }
+  async cleanupRetiredCards(game) {
+    const pending = [];
+    for (const id of game.ui?.retiredMessageIds || []) {
+      try { await this.telegram.deleteMessage(game.chatId, id); }
+      catch (error) {
+        if (!/message to delete not found/i.test(error.response?.description || '')) {
+          pending.push(id);
+          await this.telegram.editMessageReplyMarkup(game.chatId, id, undefined, { inline_keyboard: [] }).catch(() => {});
+        }
+      }
+    }
+    if (JSON.stringify(pending) !== JSON.stringify(game.ui?.retiredMessageIds || [])) {
+      const updated = await this.store.mutate(game.id, g => { g.ui.retiredMessageIds = pending; });
+      game.ui = updated.ui;
+    }
+  }
   async render() {
     if (this.rendering) return;
     this.rendering = true;
     try {
       const me = await this.me();
+      for (const draft of await this.store.usedDraftCards()) await this.cleanupDraft(draft);
       for (const snapshot of await this.store.groupGames()) {
         const game = await this.store.get(snapshot.id);
+        await this.cleanupRetiredCards(game);
         // An existing card may still need cancellation/refund updates. A new
         // challenge is published only after creator funding; v2 also requires
         // the creator's explicit Confirm Deposit action.
@@ -427,7 +515,7 @@ class SolanaInterface {
           }
         }
         const renderKey = JSON.stringify([text, rows]);
-        const terminal = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && payments.every(p => p.status === 'CONFIRMED');
+        const terminal = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED');
         if (game.ui?.renderKey === renderKey) {
           if (Boolean(game.ui?.terminal) !== terminal) await this.store.mutate(game.id, g => { g.ui.terminal = terminal; });
           continue;
@@ -452,10 +540,11 @@ class SolanaInterface {
               }
             }
             if (!sent) { sent = await this.telegram.sendMessage(game.chatId, text, keyboard(rows)); resultIsPhoto = false; }
-            if (messageId) await this.telegram.deleteMessage(game.chatId, messageId).catch(() => {});
+            const oldMessageId = messageId;
             messageId = sent.message_id;
-            await this.store.mutate(game.id, g => { g.ui.resultAnnounced = true; g.ui.resultIsPhoto = resultIsPhoto; g.ui.messageId = messageId; });
-            game.ui.resultAnnounced = true;
+            await this.store.mutate(game.id, g => { g.ui.resultAnnounced = true; g.ui.resultIsPhoto = resultIsPhoto; g.ui.messageId = messageId; g.ui.retiredMessageIds = oldMessageId ? [...(g.ui.retiredMessageIds || []), oldMessageId] : [];  });
+            game.ui = (await this.store.get(game.id)).ui;
+            await this.cleanupRetiredCards(game);
           } else if (messageId) {
             try {
               if (resultIsPhoto) await this.telegram.editMessageCaption(game.chatId, messageId, undefined, text, keyboard(rows));
@@ -468,7 +557,7 @@ class SolanaInterface {
             }
           }
           else messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id;
-          const terminalNow = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && payments.every(p => p.status === 'CONFIRMED');
+          const terminalNow = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED');
           await this.store.mutate(game.id, g => { g.ui ||= {}; Object.assign(g.ui, { messageId, resultIsPhoto, renderKey, terminal: terminalNow }); });
         } catch (_) { console.error('GROUP_CARD_RETRY: game record retained.'); }
       }

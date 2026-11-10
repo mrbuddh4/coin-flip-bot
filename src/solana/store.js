@@ -125,6 +125,7 @@ class SolanaStore {
       CREATE TABLE IF NOT EXISTS "SolScanCursors" (address text PRIMARY KEY, signature text NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolDepositReviews" (signature text PRIMARY KEY, "gameId" text NOT NULL, reason text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
     `);
+    await this.pool.query('ALTER TABLE "SolDrafts" ADD COLUMN IF NOT EXISTS "messageId" bigint');
     await this.pool.query(FEE_SCHEMA);
     await this.pool.query(NOTIFICATION_SCHEMA);
   }
@@ -151,6 +152,13 @@ class SolanaStore {
     if (!rows.length) throw new Error('This start button expired or belongs to another player');
     return rows[0];
   }
+  async draftMessage(id, messageId) { await this.pool.query('UPDATE "SolDrafts" SET "messageId"=$2 WHERE id=$1', [id, messageId]); }
+  async usedDraftCards() {
+    return (await this.pool.query(`SELECT d.* FROM "SolDrafts" d WHERE d."messageId" IS NOT NULL AND
+      (d."expiresAt"<now() OR EXISTS(SELECT 1 FROM "SolSessions" s WHERE s.data->>'draftId'=d.id OR s.data->'resume'->>'draftId'=d.id)
+      OR EXISTS(SELECT 1 FROM "SolGames" g WHERE g.id=d.id)) LIMIT 20`)).rows;
+  }
+  async gameScreens() { return (await this.pool.query(`SELECT "userId" FROM "SolProfiles" WHERE data->'privateScreen'->>'gameId' IS NOT NULL`)).rows; }
   async removeToken(userId, mint) { await this.pool.query('DELETE FROM "SolTokens" WHERE "userId"=$1 AND mint=$2', [String(userId), mint]); }
   async history(userId, limit = 100) {
     const { rows } = await this.pool.query('SELECT state FROM "SolGames" WHERE state->\'creator\'->>\'userId\'=$1 OR state->\'challenger\'->>\'userId\'=$1 ORDER BY "createdAt" DESC LIMIT $2', [String(userId), limit]);

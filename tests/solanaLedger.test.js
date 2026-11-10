@@ -224,7 +224,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const bot = { handlers, start: fn => { handlers.start = fn; }, command: (name, fn) => { handlers[name] = fn; },
       action: (_, fn) => { handlers.action = fn; }, on: (_, fn) => { handlers.text = fn; },
       telegram: { getMe: jest.fn().mockResolvedValue({ username: 'TestCoinFlipBot' }),
-        sendMessage: jest.fn(async () => ({ message_id: ++messageId })), editMessageText: jest.fn().mockResolvedValue({}), editMessageCaption: jest.fn().mockResolvedValue({}), deleteMessage: jest.fn().mockResolvedValue({}), sendPhoto: jest.fn(async () => ({ message_id: ++messageId, photo: [{ file_id: 'cached-photo' }] })), sendVideo: jest.fn(async () => ({ message_id: ++messageId, video: { file_id: 'cached-video' } })) } };
+        sendMessage: jest.fn(async () => ({ message_id: ++messageId })), editMessageText: jest.fn().mockResolvedValue({}), editMessageReplyMarkup: jest.fn().mockResolvedValue({}), editMessageCaption: jest.fn().mockResolvedValue({}), deleteMessage: jest.fn().mockResolvedValue({}), sendPhoto: jest.fn(async () => ({ message_id: ++messageId, photo: [{ file_id: 'cached-photo' }] })), sendVideo: jest.fn(async () => ({ message_id: ++messageId, video: { file_id: 'cached-video' } })) } };
     return bot;
   }
   function context(userId, text = '', type = 'private') {
@@ -266,7 +266,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect(game.wager).toBe('100000000');
     expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
     const stale = await callback(bot, '1', `s:token:1:${select.nonce}`);
-    expect(stale.reply.mock.calls[0][0]).toContain('could not be completed');
+    expect((await store.profile('1')).privateScreen.text).toContain('could not be completed');
     await service.deposit({ id: game.id, userId: '1', signature: 'sid-creator' });
     await ui.render();
     expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
@@ -278,14 +278,14 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const join = await store.session('2');
     expect(join.kind).toBe('join');
     const accepted = await callback(bot, '2', `s:accept:${join.nonce}`);
-    expect(accepted.reply.mock.calls[0][0]).toContain('Game memo');
-    expect(accepted.reply.mock.calls[0][1].reply_markup.inline_keyboard.flat().find(b => b.url).url).toContain('/pay/');
-    expect(accepted.reply.mock.calls[0][1].reply_markup.inline_keyboard.flat().find(b => b.copy_text?.text === game.depositAddress)).toBeDefined();
+    expect((await store.profile('2')).privateScreen.text).toContain('Game memo');
+    expect((await store.profile('2')).privateScreen.rows.flat().find(b => b.url).url).toContain('/pay/');
+    expect((await store.profile('2')).privateScreen.rows.flat().find(b => b.copy_text?.text === game.depositAddress)).toBeDefined();
     scanner.tick.mockImplementationOnce(() => service.deposit({ id: game.id, userId: '2', signature: 'sid-challenger' }));
     await callback(bot, '2', 's:check:' + game.id);
     expect((await store.get(game.id)).status).toBe('SETTLED');
     expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
-    const flipping = bot.telegram.editMessageText.mock.calls.at(-1)[3];
+    const flipping = bot.telegram.editMessageText.mock.calls.filter(c => String(c[0]) === '-100').at(-1)[3];
     expect(flipping).toContain('Flipping the coin'); expect(flipping).not.toContain('Winner:');
     chain.paymentStatus.mockResolvedValue('finalized');
     await service.work(); now += 1251; await ui.render();
@@ -330,7 +330,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await callback(bot, '3', 's:check:' + game.id);
     expect(scanner.confirm).not.toHaveBeenCalled();
     const pending = await callback(bot, '1', 's:check:' + game.id);
-    expect(pending.reply.mock.calls[0][0]).toContain('has not been matched');
+    expect((await store.profile('1')).privateScreen.text).toContain('has not been matched');
     expect((await store.get(game.id)).ui.publishRequested).toBeUndefined();
     expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
     await service.deposit({ id: game.id, userId: '1', signature: 'funded' });
@@ -350,7 +350,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await callback(bot, '1', 's:tokens');
     const state = await store.session('1');
     const other = await callback(bot, '2', `s:remove:2:${state.nonce}`);
-    expect(other.reply.mock.calls[0][0]).toContain('could not be completed');
+    expect((await store.profile('2')).privateScreen.text).toContain('could not be completed');
     expect(await store.tokens('1')).toHaveLength(1);
     await callback(bot, '1', `s:remove:2:${state.nonce}`);
     expect(await store.tokens('1')).toHaveLength(0);
@@ -430,9 +430,9 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await uploadStarted;
     expect(finishUpload).toBeDefined(); now += 120000;
     const ctx = context('1'); await ui.status(ctx, game.id);
-    expect(ctx.reply.mock.calls[0][0]).toContain('FLIPPING'); expect(ctx.reply.mock.calls[0][0]).not.toContain('Winner:');
-    const stats = context('1'); await ui.stats(stats); expect(stats.reply.mock.calls[0][0]).toContain('Flips: 0');
-    const board = context('1'); await ui.leaderboard(board); expect(board.reply.mock.calls[0][0]).toContain('No completed flips yet');
+    expect((await store.profile('1')).privateScreen.text).toContain('FLIPPING'); expect((await store.profile('1')).privateScreen.text).not.toContain('Winner:');
+    const stats = context('1'); await ui.stats(stats); expect((await store.profile('1')).privateScreen.text).toContain('Flips: 0');
+    const board = context('1'); await ui.leaderboard(board); expect((await store.profile('1')).privateScreen.text).toContain('No completed flips yet');
     const notifier = new PaymentNotifications(store, bot.telegram); await notifier.tick();
     expect(bot.telegram.sendMessage.mock.calls.some(c => c[1].includes('Winner payout'))).toBe(false);
     const restarted = new SolanaInterface(bot, service, {}); restarted.videoDuration = 1000;
@@ -497,12 +497,12 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const state = await store.session('1');
     await callback(bot, '1', `s:token:0:${state.nonce}`);
     const invalid = context('1', '.'); await bot.handlers.text(invalid);
-    expect(invalid.reply.mock.calls[0][0]).toContain('Enter a positive amount');
+    expect((await store.profile('1')).privateScreen.text).toContain('Enter a positive amount');
     expect((await store.session('1')).step).toBe('amount');
     const entry = context('1', '.01'); await bot.handlers.text(entry);
     const [game] = await store.groupGames();
     expect(game.wager).toBe('10000000');
-    expect(entry.reply.mock.calls[0][0]).toContain('Copy the deposit address');
+    expect((await store.profile('1')).privateScreen.text).toContain('Copy the deposit address');
     expect(await store.session('1')).toBeNull();
   });
   test('invalid custom mints never become favorites and paginated menus preserve exact selections', async () => {
@@ -516,13 +516,76 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect(await store.tokens('1')).toEqual([]);
     for (let n = 0; n < 25; n++) await store.saveToken('1', { address: String(n).padStart(2, '0'), symbol: `TEST${n}`, decimals: 6 });
     const first = await callback(bot, '1', 's:tokens');
-    const rows = first.reply.mock.calls[0][1].reply_markup.inline_keyboard;
+    const rows = (await store.profile('1')).privateScreen.rows;
     expect(rows.filter(r => r.some(b => b.callback_data.startsWith('s:token:')))).toHaveLength(20);
     state = await store.session('1');
     const second = await callback(bot, '1', `s:page:1:${state.nonce}`);
-    const nextRows = second.reply.mock.calls[0][1].reply_markup.inline_keyboard;
+    const nextRows = (await store.profile('1')).privateScreen.rows;
     expect(nextRows[0][0].callback_data).toMatch(/^s:token:20:/);
     expect((await store.session('1')).page).toBe(1);
+  });
+
+  test('real registered navigation edits one card, retires used group setup, and ignores a repeated callback', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    const first = context('1', '/start'); first.message.message_id = 50;
+    await bot.handlers.start(first);
+    const home = (await store.profile('1')).privateScreen;
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith(1, 50);
+    const pressed = context('1'); pressed.callbackQuery = { data: home.rows[0][0].callback_data, message: { message_id: home.messageId } };
+    await bot.handlers.action(pressed);
+    const wallets = (await store.profile('1')).privateScreen;
+    expect(wallets.text).toContain('Your Solana Wallets');
+    expect(pressed.reply).not.toHaveBeenCalled();
+    const duplicate = context('1'); duplicate.callbackQuery = { data: home.rows[0][0].callback_data, message: { message_id: home.messageId } };
+    await bot.handlers.action(duplicate);
+    expect((await store.profile('1')).privateScreen.revision).toBe(wallets.revision);
+    expect(duplicate.answerCbQuery).toHaveBeenCalledWith(expect.stringContaining('screen has changed'));
+    const group = context('1', '/flip', 'supergroup'); await bot.handlers.flip(group);
+    const url = group.reply.mock.calls[0][1].reply_markup.inline_keyboard[0][0].url;
+    const draftId = url.split('solcreate_')[1];
+    // Another player cannot consume or remove the creator's setup card.
+    await bot.handlers.start(context('2', '/start solcreate_' + draftId));
+    expect((await store.draft(draftId, '1')).messageId).not.toBeNull();
+    await bot.handlers.start(context('1', '/start solcreate_' + draftId));
+    expect((await store.draft(draftId, '1')).messageId).toBeNull();
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith('-100', 100);
+  });
+  test('wallet input is consumed, active games resume, and cancellation needs explicit confirmation', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    await callback(bot, '1', 's:wallet:wallet');
+    const entry = context('1', walletA); entry.message.message_id = 51; await bot.handlers.text(entry);
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith(1, 51);
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    await ui.home(context('1'));
+    expect((await store.profile('1')).privateScreen.rows.flat().find(b => b.callback_data.startsWith('s:status:' + g.id))).toBeDefined();
+    await callback(bot, '1', 's:cancel:' + g.id);
+    expect((await store.get(g.id)).status).toBe('OPEN');
+    expect((await store.profile('1')).privateScreen.text).toContain('Cancel this challenge?');
+    await callback(bot, '1', 's:cancelok:' + g.id);
+    expect((await store.get(g.id)).status).toBe('CANCELLED');
+  });
+  test('worker updates the active deposit screen automatically without replacing Home or leaking an unrevealed winner', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    await ui.depositMessage(context('1'), g);
+    await service.deposit({ id: g.id, userId: '1', signature: 'auto-deposit' });
+    await ui.refreshPrivateScreens();
+    expect((await store.profile('1')).privateScreen.text).toContain('Creator funded: true');
+    expect((await store.profile('1')).privateScreen.rows.flat().some(b => b.text === 'Post Funded Challenge')).toBe(true);
+    const count = bot.telegram.editMessageText.mock.calls.length;
+    await ui.refreshPrivateScreens(); expect(bot.telegram.editMessageText).toHaveBeenCalledTimes(count);
+    await ui.home(context('1'));
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; });
+    await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: '-100' });
+    await ui.status(context('2'), g.id);
+    await service.deposit({ id: g.id, userId: '2', signature: 'auto-challenger' });
+    await ui.refreshPrivateScreens();
+    expect((await store.profile('1')).privateScreen.text).toContain('Dashboard');
+    expect((await store.profile('2')).privateScreen.text).toContain('FLIPPING');
+    expect((await store.profile('2')).privateScreen.text).not.toContain('Winner:');
   });
 
 });

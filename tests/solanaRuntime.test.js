@@ -32,7 +32,7 @@ test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42
   const store = { pool: { end: jest.fn(async () => {}) }, verifySchema: jest.fn(async () => {}), bindNetwork: jest.fn(async () => {}), prepareInterface: jest.fn(async () => {}), bindHolderWallet: jest.fn(async () => {}), allResults: jest.fn(async () => []) };
   const service = { store, chain, work: jest.fn(async () => {}), workerRunning: false };
   const scanner = { tick: jest.fn(async () => {}), running: false };
-  const ui = { register: jest.fn(), render: jest.fn(async () => {}) };
+  const ui = { register: jest.fn(), render: jest.fn(async () => {}), refreshPrivateScreens: jest.fn(async () => {}) };
   const bot = { telegram: { getWebhookInfo: jest.fn(async () => ({ url: '' })), getMe: jest.fn(async () => ({ id: 1 })) }, catch: jest.fn(), launch: jest.fn(async (_options, ready) => ready()), stop: jest.fn() };
   SolanaChain.mockImplementation(() => chain); SolanaStore.mockImplementation(() => store); SolanaService.mockImplementation(() => service);
   DepositScanner.mockImplementation(() => scanner); SolanaInterface.mockImplementation(() => ui); Telegraf.mockImplementation(() => bot);
@@ -48,6 +48,7 @@ test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42
     expect(store.bindHolderWallet).toHaveBeenCalledWith(wallet);
     expect(PaymentNotifications).toHaveBeenCalledWith(store, bot.telegram);
     expect(PaymentNotifications.mock.results[0].value.tick).toHaveBeenCalledTimes(1);
+    expect(ui.refreshPrivateScreens).toHaveBeenCalledTimes(1);
     expect(service.work).toHaveBeenCalledTimes(1); expect(scanner.tick).toHaveBeenCalledTimes(1);
     const options = startHealthServer.mock.calls[0][0];
     expect(options.status()).toMatchObject({ ready: true, mode: 'solana-mainnet-beta', holderRewards: 'deferred' });
