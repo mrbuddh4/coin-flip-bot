@@ -244,3 +244,29 @@ test('plain-transfer allowance never accepts an incorrect game memo', async () =
   const tx = fixture(); tx.transaction.message.instructions[0].parsed = 'another-game';
   await expect(setup(tx).chain.verifyDeposit({ signature, sender, mint: 'NATIVE', memo: 'game-memo', allowNoMemo: true })).rejects.toThrow('memo');
 });
+
+// Solana's parsed transferChecked can label an ordinary wallet with one
+// redundant self-signer as multisigAuthority. Keep source ownership/signature
+// validation; this is not support for actual multisig custody.
+test.each([token.TOKEN_PROGRAM_ID, token.TOKEN_2022_PROGRAM_ID])('accepts direct self-signer parsing with token program %s', async program => {
+  const tx = fixture(false), ins = tx.transaction.message.instructions[1], info = ins.parsed.info;
+  delete info.authority; info.multisigAuthority = sender; info.signers = [sender]; ins.programId = program;
+  info.destination = token.getAssociatedTokenAddressSync(new PublicKey(mint), signer.publicKey, program).toBase58();
+  tx.transaction.message.accountKeys[2].pubkey = new PublicKey(info.destination);
+  const { chain } = setup(tx);
+  chain.tokenInfo = jest.fn().mockResolvedValue({ program: program.toBase58() });
+  await expect(chain.verifyDeposit({ signature, sender, mint, memo: 'game-memo' })).resolves.toBe(123456789012345678n);
+});
+test.each(['other-authority', 'other-signer', 'missing-signers', 'multiple-signers', 'unsigned', 'owner', 'recipient', 'conflicting-authority'])('self-signer parsing rejects invalid proof %s', async kind => {
+  const tx = fixture(false), info = tx.transaction.message.instructions[1].parsed.info;
+  delete info.authority; info.multisigAuthority = sender; info.signers = [sender];
+  if (kind === 'other-authority') info.multisigAuthority = signer.publicKey.toBase58();
+  if (kind === 'other-signer') info.signers = [signer.publicKey.toBase58()];
+  if (kind === 'missing-signers') delete info.signers;
+  if (kind === 'multiple-signers') info.signers.push(signer.publicKey.toBase58());
+  if (kind === 'unsigned') tx.transaction.message.accountKeys[0].signer = false;
+  if (kind === 'owner') tx.meta.preTokenBalances[0].owner = signer.publicKey.toBase58();
+  if (kind === 'recipient') info.destination = sender;
+  if (kind === 'conflicting-authority') info.authority = signer.publicKey.toBase58();
+  await expect(setup(tx).chain.verifyDeposit({ signature, sender, mint, memo: 'game-memo' })).rejects.toThrow();
+});

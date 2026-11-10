@@ -67,7 +67,7 @@ class SolanaChain {
       if (!Number.isSafeInteger(info.lamports) || info.lamports <= 0) throw new DepositValidationError('Unsupported SOL transfer amount');
       return BigInt(info.lamports);
     }
-    if (![spl.TOKEN_PROGRAM_ID.toBase58(), spl.TOKEN_2022_PROGRAM_ID.toBase58()].includes(instruction.programId.toBase58()) || instruction.parsed.type !== 'transferChecked' || info.mint !== mint || info.authority !== sender) throw new DepositValidationError('Use a supported SPL transferChecked for the exact mint');
+    if (![spl.TOKEN_PROGRAM_ID.toBase58(), spl.TOKEN_2022_PROGRAM_ID.toBase58()].includes(instruction.programId.toBase58()) || instruction.parsed.type !== 'transferChecked' || info.mint !== mint || spl.directTransferAuthority(info) !== sender) throw new DepositValidationError('Use a supported SPL transferChecked for the exact mint');
     if (instruction.programId.equals(spl.TOKEN_2022_PROGRAM_ID)) {
       const token = await this.tokenInfo(mint);
       if (token.program !== instruction.programId.toBase58()) throw new DepositValidationError('Token program mismatch');

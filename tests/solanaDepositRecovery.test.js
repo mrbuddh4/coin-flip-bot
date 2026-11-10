@@ -62,6 +62,71 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     chain.connection.getParsedTransaction = jest.fn().mockResolvedValue(transaction);
     return { signature, transaction };
   }
+  test.each([false, true])('one-tap SID self-signer proof recovers automatically, expired=%s', async expired => {
+    const { PublicKey } = require('@solana/web3.js');
+    const { SolanaChain } = require('../src/solana/chain');
+    const { DepositScanner } = require('../src/solana/scanner');
+    const { SolanaInterface } = require('../src/solana/interface');
+    const { traceDeposit } = require('../src/solana/depositTrace');
+    const token = require('../src/solana/token');
+    const mint = Keypair.fromSeed(Buffer.alloc(32, 17)).publicKey.toBase58();
+    chain.tokenInfo.mockResolvedValue({ address: mint, symbol: 'SID', decimals: 6, program: token.TOKEN_2022_PROGRAM_ID.toBase58() });
+    chain.signer = { publicKey: new PublicKey(chain.address) };
+    chain.verifyDeposit = SolanaChain.prototype.verifyDeposit.bind(chain);
+    now = Date.now();
+    const game = await service.create({ ...input, mint, amount: '69', interfaceVersion: 2 });
+    const signature = require('bs58').default.encode(Buffer.alloc(64, 57));
+    const source = token.getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(walletA), token.TOKEN_2022_PROGRAM_ID).toBase58();
+    const destination = token.getAssociatedTokenAddressSync(new PublicKey(mint), chain.signer.publicKey, token.TOKEN_2022_PROGRAM_ID).toBase58();
+    const at = Math.floor(game.createdAt / 1000) + 2;
+    const transaction = { blockTime: at, meta: { err: null, innerInstructions: [],
+      preTokenBalances: [{ accountIndex: 1, owner: walletA, mint }],
+      postTokenBalances: [{ accountIndex: 2, owner: chain.address, mint }],
+    }, transaction: { signatures: [signature], message: {
+      accountKeys: [walletA, source, destination].map((k, i) => ({ pubkey: new PublicKey(k), signer: i === 0 })),
+      instructions: [{ programId: token.TOKEN_2022_PROGRAM_ID, parsed: { type: 'transferChecked', info: {
+        source, destination, mint, multisigAuthority: walletA, signers: [walletA], tokenAmount: { amount: '69000000', decimals: 6 },
+      } } }],
+    } } };
+    chain.connection.getSignaturesForAddress = jest.fn().mockResolvedValue([]);
+    chain.connection.getParsedTransaction = jest.fn().mockResolvedValue(transaction);
+    const bot = { telegram: { getMe: jest.fn().mockResolvedValue({ username: 'TestBot' }),
+      sendVideo: jest.fn().mockResolvedValue({ message_id: 42, video: { file_id: 'cached' } }),
+      sendMessage: jest.fn().mockResolvedValue({ message_id: 42 }),
+    } };
+    const scanner = new DepositScanner(service), ui = new SolanaInterface(bot, service, scanner);
+    ui.reply = jest.fn();
+    await ui.confirmDeposit({ from: { id: 1 } }, game.id);
+    expect((await store.get(game.id)).ui.depositChecks['1']).toBe(true);
+    expect((await store.get(game.id)).creator.deposit).toBeUndefined();
+    const diagnostic = await traceDeposit(service, '1', signature);
+    expect(diagnostic).toContain('Sending wallet matches: yes');
+    expect(diagnostic).toContain('Proof: valid direct deposit');
+    expect(diagnostic).toContain('Exact plain-transfer matches: 1');
+    if (expired) { now = game.expiresAt + 1; await service.expire(); }
+    // An older scanner rejected this receipt and advanced the ordinary cursor.
+    // Persisted requests replay it without a second tap, including after restart.
+    await store.setCursor(walletA, signature);
+    chain.connection.getSignaturesForAddress.mockImplementation(async (key, opts) => key.toBase58() === walletA && !opts.until ? [{ signature, blockTime: at }] : []);
+    await new DepositScanner(service).tick();
+    await new DepositScanner(service).tick();
+    await ui.render();
+    const current = await store.get(game.id);
+    if (expired) {
+      expect(current.status).toBe('CANCELLED');
+      expect(current.creator.deposit).toBeUndefined();
+      const refunds = (await store.payments(game.id)).filter(p => p.payment.kind === 'refund');
+      expect(refunds).toHaveLength(1);
+      expect(refunds[0].payment).toMatchObject({ recipient: walletA, mint, amount: '69000000' });
+      expect(current.ui.publishRequested).toBeUndefined();
+    } else {
+      expect(current.creator.deposit.signature).toBe(signature);
+      expect(current.ui.publishRequested).toBe(true);
+      expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    }
+    expect((await pool.query('SELECT COUNT(*)::int AS n FROM "SolDeposits" WHERE signature=$1', [signature])).rows[0].n).toBe(1);
+    expect(chain.broadcast).not.toHaveBeenCalled();
+  });
   test('real scanner and ledger confirm a challenger transfer then settle exactly once', async () => {
     const { DepositScanner } = require('../src/solana/scanner');
     const g = await service.create({ ...input, interfaceVersion: 2 });

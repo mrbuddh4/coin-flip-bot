@@ -203,3 +203,20 @@ that every failed handoff has that cause.
 If Telegram only opens the bot without sending `/start`, press Start. If no new
 card appears after that, check the active Railway deployment and polling logs.
 Deploy the latest recovery branch; keep the existing database and variables.
+
+
+## SID wallet transfers with redundant self-signers
+
+The finalized RPC parser sometimes describes a normal wallet's checked token
+transfer with `multisigAuthority` plus one identical entry in `signers`, rather
+than `authority`. Accept that exact self-signer shape only while retaining the
+registered-wallet signature, source token ownership, exact mint/program, canonical
+treasury ATA, amount and game-window checks. Actual multisig arrangements or
+conflicting/missing signers remain unsupported. The read-only `/depositcheck`
+diagnostic uses the same authority interpretation.
+
+This fixes a reproduced rejection of the owner's 69 SID transfer. The existing
+periodic replay rechecks recently rejected receipts after deployment without
+another Check Deposit tap. An expired game receives a full refund instead of
+being reopened. Deploy the latest recovery branch with the existing database
+and variables. Never send a replacement deposit to recover an earlier one.

@@ -1,6 +1,7 @@
 const bs58 = require('bs58').default;
 const { SystemProgram } = require('@solana/web3.js');
 const { noMemoCandidates } = require('./depositMatch');
+const { directTransferAuthority } = require('./token');
 const time = value => Number.isSafeInteger(value) ? new Date(value).toISOString() : 'unknown';
 // Read-only diagnostics. Never imports a receipt, changes a game or signs a
 // payment, and never reveals another participant's wallet or user identity.
@@ -15,7 +16,7 @@ async function traceDeposit(service, userId, input) {
   if (transfers.length !== 1) return 'This transfer layout needs review. Automatic matching requires one direct transfer. No game was changed.';
   const transfer = transfers[0], info = transfer.parsed.info;
   const native = transfer.programId.equals(SystemProgram.programId);
-  const sender = native ? info.source : info.authority;
+  const sender = native ? info.source : directTransferAuthority(info);
   const mint = native ? 'NATIVE' : info.mint;
   const amount = String(native ? info.lamports : info.tokenAmount?.amount);
   const at = Number.isSafeInteger(transaction.blockTime) ? transaction.blockTime * 1000 : NaN;

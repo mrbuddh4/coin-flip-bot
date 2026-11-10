@@ -6,6 +6,14 @@ const { UnsupportedTokenError } = require('./errors');
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+// The RPC parser uses multisigAuthority when a wallet transfer includes a
+// redundant self-signer account. Accept that exact single-wallet shape only.
+// The caller must still prove the authority signed and owns the source tokens.
+function directTransferAuthority(info) {
+  if (typeof info.authority === 'string' && info.multisigAuthority == null && (!info.signers || info.signers.length === 0)) return info.authority;
+  if (info.authority == null && typeof info.multisigAuthority === 'string' && Array.isArray(info.signers) && info.signers.length === 1 && info.signers[0] === info.multisigAuthority) return info.multisigAuthority;
+  return null;
+}
 function getAssociatedTokenAddressSync(mint, owner, program = TOKEN_PROGRAM_ID) {
   if (!PublicKey.isOnCurve(owner.toBytes())) throw new UnsupportedTokenError('Off-curve owner unsupported');
   return PublicKey.findProgramAddressSync([owner.toBuffer(), program.toBuffer(), mint.toBuffer()], ASSOCIATED_TOKEN_PROGRAM_ID)[0];
@@ -64,4 +72,4 @@ function createBurnCheckedInstruction(account, mint, owner, amount, decimals, pr
     { pubkey: owner, isSigner: true, isWritable: false },
   ] });
 }
-module.exports = { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, getMint, parseMint, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, createBurnCheckedInstruction };
+module.exports = { directTransferAuthority, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, getMint, parseMint, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, createBurnCheckedInstruction };
