@@ -516,6 +516,33 @@ class SolanaInterface {
       game.ui = updated.ui;
     }
   }
+  awaitingChallenger(game) {
+    return game.status === 'OPEN' && Boolean(game.creator.deposit) && !game.challenger &&
+      (game.interfaceVersion < 2 || Boolean(game.ui?.publishRequested)) && this.service.now() < game.expiresAt;
+  }
+  async replaceGroupCard(game, text, rows, { video, expiry = false } = {}) {
+    // Acknowledge and persist the new card before retiring the old one. A failed
+    // send must not remove the only visible challenge or extend its deadline.
+    const sent = video
+      ? await this.telegram.sendVideo(game.chatId, video, { caption: text, supports_streaming: true, ...keyboard(rows) })
+      : await this.telegram.sendMessage(game.chatId, text, keyboard(rows));
+    const updated = await this.store.mutate(game.id, g => {
+      g.ui ||= {};
+      const oldId = g.ui.messageId;
+      Object.assign(g.ui, { messageId: sent.message_id, messageIsVideo: Boolean(video), resultIsPhoto: false,
+        groupPostedAt: this.service.now(), renderKey: null, terminal: false });
+      if (expiry) Object.assign(g.ui, { expiryAnnounced: true, expiryVideoApplied: Boolean(video) });
+      if (oldId && oldId !== sent.message_id) g.ui.retiredMessageIds = [...new Set([...(g.ui.retiredMessageIds || []), oldId])];
+    });
+    await this.cleanupRetiredCards(updated);
+    // Acceptance/cancellation can race with Telegram's upload. The service still
+    // accepts at most one challenger, and the new card must lose its button too.
+    const current = await this.store.get(game.id);
+    if (rows.length && !this.awaitingChallenger(current)) {
+      await this.telegram.editMessageReplyMarkup(current.chatId, sent.message_id, undefined, { inline_keyboard: [] });
+    }
+    return current;
+  }
   async render() {
     if (this.rendering) return;
     this.rendering = true;
@@ -542,6 +569,7 @@ class SolanaInterface {
         const rows = [];
         if (game.status === 'OPEN') {
           if (!game.creator.deposit) text += '\nWaiting for creator deposit.';
+          else if (!game.challenger && this.service.now() >= game.expiresAt) text += '\nChallenge expired. Closing and processing refunds…';
           else if (!game.challenger) {
             text += '\nCreator funded. Awaiting a challenger.';
             rows.push([{ text: 'Accept Challenge', url: `https://t.me/${me.username}?start=soljoin_${game.id}` }]);
@@ -562,39 +590,37 @@ class SolanaInterface {
             if (links) text += '\n' + links;
           }
         }
-        const expiryVideo = game.status === 'CANCELLED' && game.cancelReason === 'EXPIRED' && this.expiryVideo();
-        const needsExpiryVideo = expiryVideo && !game.ui?.expiryVideoApplied;
+        const expired = game.status === 'CANCELLED' && game.cancelReason === 'EXPIRED';
+        const expiryVideo = expired && this.expiryVideo();
+        // Legacy expiry cards were already announced in place; do not replay
+        // completed notices solely because the deployment adds this feature.
+        const needsExpiryAnnouncement = expired && !game.ui?.expiryAnnounced && !game.ui?.expiryVideoApplied;
+        if (game.ui?.messageId && game.ui.groupPostedAt == null && this.awaitingChallenger(game)) {
+          game = await this.store.mutate(game.id, g => { g.ui.groupPostedAt ??= this.service.now(); });
+        }
+        const repostDue = this.awaitingChallenger(game) && Boolean(game.ui?.messageId) &&
+          this.service.now() >= game.ui.groupPostedAt + 60000 && !game.ui?.retiredMessageIds?.length;
         const renderKey = JSON.stringify([text, rows]);
-        const terminal = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED');
-        if (game.ui?.renderKey === renderKey && !needsExpiryVideo) {
+        const terminal = game.status === 'CANCELLED' ? !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED');
+        if (game.ui?.renderKey === renderKey && !needsExpiryAnnouncement && !repostDue) {
           if (Boolean(game.ui?.terminal) !== terminal || game.ui?.compactVersion !== 1) await this.store.mutate(game.id, g => { g.ui.terminal = terminal; g.ui.compactVersion = 1; });
           continue;
         }
         try {
           let messageId = game.ui?.messageId, resultIsPhoto = Boolean(game.ui?.resultIsPhoto), messageIsVideo = Boolean(game.ui?.messageIsVideo);
           const revealing = game.status === 'SETTLED' && !resultVisible(game) && this.service.now() >= (game.ui?.revealAt ?? Infinity);
-          if (needsExpiryVideo) {
-            // Replace media in the same group card. A timeout retries the edit
-            // on the same message, never creates a second expiry notification.
-            const options = { caption: text, supports_streaming: true, ...keyboard(rows) };
-            if (messageId) {
-              try {
-                await this.telegram.editMessageMedia(game.chatId, messageId, undefined,
-                  { type: 'video', media: expiryVideo, caption: text, parse_mode: 'HTML', supports_streaming: true },
-                  { reply_markup: { inline_keyboard: [] } });
-              } catch (error) {
-                const description = error.response?.description || '';
-                if (/message to edit not found|message can't be edited/i.test(description)) {
-                  messageId = (await this.telegram.sendVideo(game.chatId, expiryVideo, options)).message_id;
-                } else if (!/message is not modified/i.test(description)) throw error;
-              }
-            } else messageId = (await this.telegram.sendVideo(game.chatId, expiryVideo, options)).message_id;
-            messageIsVideo = true; resultIsPhoto = false;
-            const updated = await this.store.mutate(game.id, g => {
-              g.ui ||= {};
-              Object.assign(g.ui, { expiryVideoApplied: true, messageIsVideo, resultIsPhoto, messageId });
+          if (needsExpiryAnnouncement || repostDue) {
+            // Re-read immediately before posting so an accepted/expired game
+            // cannot receive a scheduled challenge bump from a stale snapshot.
+            const current = await this.store.get(game.id);
+            if (repostDue && !this.awaitingChallenger(current)) continue;
+            game = await this.replaceGroupCard(game, text, rows, {
+              video: needsExpiryAnnouncement ? expiryVideo : this.challengeVideo(), expiry: needsExpiryAnnouncement,
             });
-            game.ui = updated.ui;
+            // Preserve the null key on concurrent state changes: the next worker
+            // pass renders the accepted/closed state rather than stale content.
+            if (repostDue && !this.awaitingChallenger(game)) continue;
+            ({ messageId, resultIsPhoto, messageIsVideo } = game.ui);
           } else if (revealing) {
             const image = path.join(__dirname, '../../assets/coinflip.jpg');
             const mediaId = `coinflip-photo:${me.id || me.username}`;
@@ -630,13 +656,11 @@ class SolanaInterface {
             }
           }
           else {
-            const video = game.status === 'OPEN' && this.challengeVideo();
-            if (video) {
-              const sent = await this.telegram.sendVideo(game.chatId, video, { caption: text, supports_streaming: true, ...keyboard(rows) });
-              messageId = sent.message_id; messageIsVideo = true;
-            } else messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id;
+            game = await this.replaceGroupCard(game, text, rows, { video: game.status === 'OPEN' && this.challengeVideo() });
+            if (rows.length && !this.awaitingChallenger(game)) continue;
+            ({ messageId, resultIsPhoto, messageIsVideo } = game.ui);
           }
-          const terminalNow = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED');
+          const terminalNow = game.status === 'CANCELLED' ? !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED');
           await this.store.mutate(game.id, g => { g.ui ||= {}; Object.assign(g.ui, { messageId, resultIsPhoto, messageIsVideo, renderKey, terminal: terminalNow, compactVersion: 1 }); });
         } catch (_) { console.error('GROUP_CARD_RETRY: game record retained.'); }
       }

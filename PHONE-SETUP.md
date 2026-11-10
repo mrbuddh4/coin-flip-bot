@@ -220,3 +220,19 @@ periodic replay rechecks recently rejected receipts after deployment without
 another Check Deposit tap. An expired game receives a full refund instead of
 being reopened. Deploy the latest recovery branch with the existing database
 and variables. Never send a replacement deposit to recover an earlier one.
+
+
+## Challenges stay visible in active groups
+
+While a funded challenge has no challenger, the worker posts a replacement card
+about once a minute, then deletes the previous card. The video and Accept link
+remain attached to the same game. Acceptance stops reposting. Bumps never reset
+the challenge deadline or change deposits. A new expiry notice appears at the
+end of the group chat, and its refund links update on that same notice.
+
+The new message is acknowledged and saved before deletion of the old one.
+Failed deletion remains tracked for retry and its obsolete buttons are removed.
+A Telegram outage can delay posting/deletion; Telegram does not provide an
+idempotency key for message sends, so an ambiguous upload timeout cannot promise
+exactly-once delivery. Deploy the latest recovery branch with the existing
+database and variables; no fresh initialization or variable changes are needed.

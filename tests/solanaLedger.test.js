@@ -825,7 +825,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect((await store.get(g.id)).ui.expiryVideoApplied).toBeUndefined();
   });
 
-  test('expiry replaces the challenge video in place, removes Accept and keeps refund proofs after restart', async () => {
+  test('expiry posts a fresh video, deletes the old challenge and keeps refund proofs after restart', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
     const g = await service.create({ ...input, interfaceVersion: 2 });
     const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
@@ -834,22 +834,24 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await store.mutate(g.id, game => { game.ui.publishRequested = true; });
     await ui.render(); const cardId = (await store.get(g.id)).ui.messageId;
     now = (await store.get(g.id)).expiresAt + 1; await service.expire(); await ui.render();
-    expect(bot.telegram.editMessageMedia).toHaveBeenCalledWith('-100', cardId, undefined, expect.objectContaining({
-      type: 'video', media: { source: path.join(__dirname, '../assets/expired.mp4') },
-      caption: expect.stringContaining('Challenge expired.'),
-    }), { reply_markup: { inline_keyboard: [] } });
+    expect(bot.telegram.sendVideo).toHaveBeenLastCalledWith('-100', { source: path.join(__dirname, '../assets/expired.mp4') }, expect.objectContaining({
+      caption: expect.stringContaining('Challenge expired.'), reply_markup: { inline_keyboard: [] },
+    }));
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith('-100', cardId);
+    const expiryId = (await store.get(g.id)).ui.messageId;
+    expect(expiryId).not.toBe(cardId);
     expect((await store.get(g.id)).cancelReason).toBe('EXPIRED');
-    expect((await store.get(g.id)).ui).toMatchObject({ messageId: cardId, messageIsVideo: true, expiryVideoApplied: true });
+    expect((await store.get(g.id)).ui).toMatchObject({ messageId: expiryId, messageIsVideo: true, expiryVideoApplied: true, expiryAnnounced: true });
     await store.saveSigned('refund:expiry-creator', { signature: 'expiry-refund-tx' });
     await store.paymentState('refund:expiry-creator', 'CONFIRMED');
     const restarted = new SolanaInterface(bot, new SolanaService({ store, chain, now: () => now }), {});
     await restarted.render(); await restarted.render();
     expect(bot.telegram.editMessageCaption.mock.calls.at(-1)[3]).toContain('/tx/expiry-refund-tx');
-    expect(bot.telegram.editMessageMedia).toHaveBeenCalledTimes(1);
-    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.editMessageMedia).not.toHaveBeenCalled();
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(2);
     expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
   });
-  test('an ambiguous expiry media edit retries the same card without a duplicate notification', async () => {
+  test('failed expiry send preserves the old card, then retires it after a successful retry', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
     const g = await service.create({ ...input, interfaceVersion: 2 });
     const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
@@ -857,14 +859,16 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await store.mutate(g.id, game => { game.ui.publishRequested = true; }); await ui.render();
     const cardId = (await store.get(g.id)).ui.messageId;
     now = (await store.get(g.id)).expiresAt + 1; await service.expire();
-    bot.telegram.editMessageMedia = jest.fn().mockRejectedValueOnce(new Error('Connection lost'))
-      .mockRejectedValueOnce({ response: { description: 'Bad Request: message is not modified' } });
-    await ui.render();
-    expect((await store.get(g.id)).ui.expiryVideoApplied).toBeUndefined();
-    await ui.render();
-    expect((await store.get(g.id)).ui).toMatchObject({ messageId: cardId, expiryVideoApplied: true });
-    expect(bot.telegram.editMessageMedia).toHaveBeenCalledTimes(2);
-    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    bot.telegram.sendVideo.mockRejectedValueOnce(new Error('Connection lost'));
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try { await ui.render(); } finally { log.mockRestore(); }
+    expect((await store.get(g.id)).ui.expiryAnnounced).toBeUndefined();
+    expect((await store.get(g.id)).ui.messageId).toBe(cardId);
+    expect(bot.telegram.deleteMessage).not.toHaveBeenCalledWith('-100', cardId);
+    await ui.render(); await ui.render();
+    expect((await store.get(g.id)).ui).toMatchObject({ expiryAnnounced: true, expiryVideoApplied: true });
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith('-100', cardId);
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(3);
   });
   test('a late expiry deposit produces a single expiry card and full refund while unfunded drafts stay quiet', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
@@ -879,5 +883,6 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect(bot.telegram.sendVideo.mock.calls[0][2].caption).toContain('Refund to 1: 0.1 SOL pending');
     expect((await store.payments(g.id))[0].payment).toMatchObject({ kind: 'refund', amount: '100000000' });
   });
+
 
 });
