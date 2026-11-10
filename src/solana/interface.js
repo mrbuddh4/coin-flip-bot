@@ -5,6 +5,7 @@ const { publicKey } = require('./chain');
 const { resultVisible } = require('./presentation');
 const { compactPayments } = require('./paymentView');
 const { PrivateScreen, ScreenTransportError } = require('./screen');
+const { ChallengeBusyError, ChallengeTakenError } = require('./errors');
 const { fromUnits, toUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 const { getVideoDuration } = require('../utils/helpers');
@@ -38,6 +39,10 @@ class SolanaInterface {
           await fn(ctx);
         } catch (error) {
           if (error instanceof ScreenTransportError) { console.error('PRIVATE_SCREEN_RETRY: current screen retained.'); return; }
+          if (error instanceof ChallengeBusyError || error instanceof ChallengeTakenError) {
+            await this.reply(ctx, escape(error.message), [[button('🏠 Home', 's:home')]]);
+            return;
+          }
           const current = ctx.chat?.type === 'private' && (await this.store.profile(ctx.from.id)).privateScreen;
           await this.reply(ctx, 'That action could not be completed. Check the current game or use /start to reopen the menu. Your existing deposits and payout records are preserved.' + (current ? '\n\n' + current.text.replace(/^That action could not be completed[\s\S]*?\n\n/, '') : ''), current ? current.rows.map(row => row.map(b => b.callback_data ? { ...b, callback_data: b.callback_data.split('|')[0] } : b)) : []);
         }
@@ -127,6 +132,7 @@ class SolanaInterface {
   }
   async flip(ctx) {
     if (ctx.chat.type === 'private') return this.reply(ctx, 'Use /flip in the group where you want to challenge another player. I will send you a private token and wager menu.', [[button('🏠 Home', 's:home')]]);
+    if (await this.store.activeGroup(ctx.chat.id)) throw new ChallengeBusyError();
     const draftId = randomUUID();
     await this.store.draft(draftId, ctx.from.id, ctx.chat.id);
     const me = await this.me();
@@ -162,6 +168,10 @@ class SolanaInterface {
   }
   async reviewJoin(ctx, id, walletsReady = false) {
     const game = await this.store.get(id);
+    if (game.status === 'OPEN' && game.challenger) {
+      if (game.challenger.userId === String(ctx.from.id)) return this.depositMessage(ctx, game);
+      throw new ChallengeTakenError();
+    }
     if (game.status !== 'OPEN' || !game.creator.deposit || (game.interfaceVersion >= 2 && !game.ui?.publishRequested) || game.challenger || this.service.now() >= game.expiresAt || game.creator.userId === String(ctx.from.id)) return this.reply(ctx, 'This challenge is unavailable, expired or your own challenge.');
     if (!walletsReady) return this.begin(ctx, { kind: 'join', gameId: id });
     await this.store.setSession(ctx.from.id, { kind: 'join', gameId: id, step: 'confirm', nonce: nonce() });
@@ -465,6 +475,14 @@ class SolanaInterface {
     }
     return true;
   }
+  challengeVideo() {
+    // The challenge teaser is separate from the actual coin-flip animation.
+    // A Telegram file ID or HTTPS clip can be configured without changing keys.
+    const configured = this.env.SOLANA_CHALLENGE_VIDEO;
+    if (configured) return configured;
+    const video = path.join(__dirname, '../../assets/challenge.mp4');
+    return fs.existsSync(video) ? { source: video } : null;
+  }
   async cleanupRetiredCards(game) {
     const pending = [];
     for (const id of game.ui?.retiredMessageIds || []) {
@@ -528,7 +546,7 @@ class SolanaInterface {
           continue;
         }
         try {
-          let messageId = game.ui?.messageId, resultIsPhoto = Boolean(game.ui?.resultIsPhoto);
+          let messageId = game.ui?.messageId, resultIsPhoto = Boolean(game.ui?.resultIsPhoto), messageIsVideo = Boolean(game.ui?.messageIsVideo);
           const revealing = game.status === 'SETTLED' && !resultVisible(game) && this.service.now() >= (game.ui?.revealAt ?? Infinity);
           if (revealing) {
             const image = path.join(__dirname, '../../assets/coinflip.jpg');
@@ -547,25 +565,32 @@ class SolanaInterface {
               }
             }
             if (!sent) { sent = await this.telegram.sendMessage(game.chatId, text, keyboard(rows)); resultIsPhoto = false; }
+            messageIsVideo = false;
             const oldMessageId = messageId;
             messageId = sent.message_id;
-            await this.store.mutate(game.id, g => { g.ui.resultAnnounced = true; g.ui.resultIsPhoto = resultIsPhoto; g.ui.messageId = messageId; g.ui.retiredMessageIds = oldMessageId ? [...(g.ui.retiredMessageIds || []), oldMessageId] : [];  });
+            await this.store.mutate(game.id, g => { g.ui.resultAnnounced = true; g.ui.resultIsPhoto = resultIsPhoto; g.ui.messageIsVideo = false; g.ui.messageId = messageId; g.ui.retiredMessageIds = oldMessageId ? [...(g.ui.retiredMessageIds || []), oldMessageId] : [];  });
             game.ui = (await this.store.get(game.id)).ui;
             await this.cleanupRetiredCards(game);
           } else if (messageId) {
             try {
-              if (resultIsPhoto) await this.telegram.editMessageCaption(game.chatId, messageId, undefined, text, keyboard(rows));
+              if (resultIsPhoto || messageIsVideo) await this.telegram.editMessageCaption(game.chatId, messageId, undefined, text, keyboard(rows));
               else await this.telegram.editMessageText(game.chatId, messageId, undefined, text, keyboard(rows));
             }
             catch (error) {
               const description = error.response?.description || '';
-              if (/message to edit not found|message can't be edited/i.test(description)) { messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id; resultIsPhoto = false; }
+              if (/message to edit not found|message can't be edited/i.test(description)) { messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id; resultIsPhoto = false; messageIsVideo = false; }
               else if (!/message is not modified/i.test(description)) throw error;
             }
           }
-          else messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id;
+          else {
+            const video = game.status === 'OPEN' && this.challengeVideo();
+            if (video) {
+              const sent = await this.telegram.sendVideo(game.chatId, video, { caption: text, supports_streaming: true, ...keyboard(rows) });
+              messageId = sent.message_id; messageIsVideo = true;
+            } else messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id;
+          }
           const terminalNow = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED');
-          await this.store.mutate(game.id, g => { g.ui ||= {}; Object.assign(g.ui, { messageId, resultIsPhoto, renderKey, terminal: terminalNow, compactVersion: 1 }); });
+          await this.store.mutate(game.id, g => { g.ui ||= {}; Object.assign(g.ui, { messageId, resultIsPhoto, messageIsVideo, renderKey, terminal: terminalNow, compactVersion: 1 }); });
         } catch (_) { console.error('GROUP_CARD_RETRY: game record retained.'); }
       }
     } finally { this.rendering = false; }

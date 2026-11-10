@@ -1,4 +1,11 @@
 const { Pool } = require('pg');
+const { ChallengeBusyError } = require('./errors');
+// Keep the group's slot until the previous result is shown and its video is
+// cleaned up. Economic settlement alone must not allow overlapping flips.
+const ACTIVE_GROUP = `state->>'chatId'=$1 AND (state->>'status'='OPEN' OR
+  (state->>'status'='SETTLED' AND state ? 'interfaceVersion' AND
+   (COALESCE(state->'ui'->>'resultAnnounced','false')<>'true' AND COALESCE(state->'ui'->>'terminal','false')<>'true'
+    OR COALESCE(state->'ui'->>'videoCleanupPending','false')='true'))) `;
 const { connectionOptions } = require('../database/connection');
 const config = require('../config');
 const { accrueFees, SCHEMA: FEE_SCHEMA } = require('./fees');
@@ -24,8 +31,8 @@ class SolanaStore {
       await client.query('BEGIN');
       if (game.interfaceVersion) {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`sol-group:${game.chatId}`]);
-        const existing = await client.query('SELECT id FROM "SolGames" WHERE state->>\'chatId\'=$1 AND state->>\'status\'=\'OPEN\' AND id<>$2', [game.chatId, game.id]);
-        if (existing.rowCount) throw new Error('This group already has an active challenge');
+        const existing = await client.query(`SELECT id FROM "SolGames" WHERE ${ACTIVE_GROUP} AND id<>$2`, [game.chatId, game.id]);
+        if (existing.rowCount) throw new ChallengeBusyError();
       }
       await client.query('INSERT INTO "SolGames" (id, state) VALUES ($1, $2) ON CONFLICT DO NOTHING', [game.id, JSON.stringify(game)]);
       const result = await client.query('SELECT state FROM "SolGames" WHERE id=$1', [game.id]);
@@ -34,6 +41,10 @@ class SolanaStore {
       return result.rows[0].state;
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
+  }
+  async activeGroup(chatId) {
+    const { rows } = await this.pool.query(`SELECT state FROM "SolGames" WHERE ${ACTIVE_GROUP} ORDER BY "createdAt" LIMIT 1`, [String(chatId)]);
+    return rows[0]?.state || null;
   }
   async noMemoCandidates(input) { return findNoMemoCandidates(this.pool, input); }
   async get(id) {

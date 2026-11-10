@@ -1,7 +1,7 @@
 const { randomUUID, randomInt, randomBytes } = require('node:crypto');
 const { publicKey } = require('./chain');
 const { toUnits, splitPool } = require('./amounts');
-const { DepositValidationError } = require('./errors');
+const { DepositValidationError, ChallengeTakenError } = require('./errors');
 class SolanaService {
   constructor({ store, chain, now = () => Date.now(), coin = () => randomInt(2) }) {
     Object.assign(this, { store, chain, now, coin });
@@ -30,7 +30,7 @@ class SolanaService {
       if (g.chatId !== String(chatId)) throw new Error('Use the original game chat');
       if (g.status !== 'OPEN' || this.now() >= g.expiresAt) throw new Error('Game closed or expired');
       if (g.creator.userId === String(userId) || g.creator.wallet === wallet) throw new Error('A different player and sending wallet must join');
-      if (g.challenger) throw new Error('Game already has a challenger');
+      if (g.challenger) throw new ChallengeTakenError();
       if (g.interfaceVersion && !g.creator.deposit) throw new Error('Creator has not funded this challenge');
       if (g.interfaceVersion >= 2 && !g.ui?.publishRequested) throw new Error('Creator has not confirmed this challenge for publication');
       g.challenger = { userId: String(userId), wallet, receiveWallet, name, joinedAt: this.now(), depositExpiresAt: this.now() + (g.interfaceVersion ? 3 : 15) * 60 * 1000, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:challenger` };

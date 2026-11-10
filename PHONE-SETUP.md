@@ -108,3 +108,15 @@ is retried and old keyboards are disabled where Telegram permits it. Final
 results and compact transaction links remain as the transparent game history.
 Existing untracked messages from older deployments cannot be discovered or
 removed retroactively by this version.
+
+
+## One active flip per group
+
+The database reserves one active game per originating group, including creator funding, challenge acceptance, challenger funding, and the flip presentation. The slot stays occupied after economic settlement until the result is announced and any flip-video cleanup has finished. Cancelled/expired games release it; their refunds continue updating on their existing card. Unconfirmed outgoing payments stay tracked without preventing the next flip after the result.
+
+Concurrent creators are serialized with a PostgreSQL transaction advisory lock. Concurrent accepts lock the same game row: only the first valid player gets the challenger slot and deposit instructions. Later players see that it has already been accepted. The chosen player can reopen the challenge to resume their existing deposit screen. Different groups can run independently. This requires no new variables or database reset.
+
+
+## Optional challenge-card video
+
+The funded group challenge supports a video with its caption and Accept button on the same card. It edits the caption when the slot is taken, removes the Accept button, and retires the old challenge card when the flip result appears. This clip is separate from the result animation. Set `SOLANA_CHALLENGE_VIDEO` privately in Railway to a Telegram video file ID or an accessible HTTPS MP4 URL, or package the supplied clip as `assets/challenge.mp4`. With neither configured, the existing text challenge is retained. The owner's November10 QuickTime attachment was not accessible in the assistant workspace; that exact clip has not yet been installed.

@@ -632,4 +632,109 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect(row).toEqual({ messageId: '800', cleanupState: 'REMOVED' });
   });
 
+  test('independent connections race for one group slot, while other groups remain independent', async () => {
+    const services = Array.from({ length: 12 }, () => new SolanaService({ store: new SolanaStore(pool), chain, now: () => now }));
+    const races = await Promise.allSettled(services.map((s, i) => s.create({ ...input, userId: String(i + 10), interfaceVersion: 2 })));
+    expect(races.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(races.filter(r => r.status === 'rejected').every(r => r.reason.message.includes('active challenge'))).toBe(true);
+    expect((await pool.query('SELECT count(*)::int AS n FROM "SolGames"')).rows[0].n).toBe(1);
+    await expect(service.create({ ...input, chatId: '-200', interfaceVersion: 2 })).resolves.toHaveProperty('chatId', '-200');
+  });
+  test('group slot survives settlement and restart, releasing only after reveal and video cleanup', async () => {
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    await service.deposit({ id: g.id, userId: '1', signature: 'slot-creator' });
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; });
+    await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId });
+    await service.deposit({ id: g.id, userId: '2', signature: 'slot-challenger' });
+    const restarted = new SolanaService({ store: new SolanaStore(pool), chain, now: () => now });
+    expect((await store.get(g.id)).status).toBe('SETTLED');
+    await expect(restarted.create({ ...input, interfaceVersion: 2 })).rejects.toThrow('active challenge');
+    await store.mutate(g.id, game => { game.ui.resultAnnounced = true; game.ui.videoCleanupPending = true; });
+    await expect(restarted.create({ ...input, interfaceVersion: 2 })).rejects.toThrow('active challenge');
+    await store.mutate(g.id, game => { game.ui.videoCleanupPending = false; });
+    // Financial finality continues on the old result card without blocking a new flip.
+    expect((await store.payments(g.id)).some(p => p.status === 'PENDING')).toBe(true);
+    await expect(restarted.create({ ...input, interfaceVersion: 2 })).resolves.toHaveProperty('status', 'OPEN');
+  });
+  test('cancellation and expiry release the group slot without altering refunds', async () => {
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    await service.deposit({ id: g.id, userId: '1', signature: 'slot-refund' });
+    await service.cancel({ id: g.id, userId: '1', chatId: input.chatId });
+    const next = await service.create({ ...input, interfaceVersion: 2 });
+    now = next.expiresAt + 1; await service.expire();
+    await expect(service.create({ ...input, interfaceVersion: 2 })).resolves.toHaveProperty('status', 'OPEN');
+    expect(await store.payments(g.id)).toHaveLength(1);
+    expect((await store.payments(g.id))[0].payment.kind).toBe('refund');
+  });
+  test('twenty simultaneous accepts reserve exactly one challenger and expose no loser deposit instruction', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    await service.deposit({ id: g.id, userId: '1', signature: 'accept-creator' });
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; });
+    const users = Array.from({ length: 20 }, (_, i) => ({ userId: String(i + 20), wallet: Keypair.fromSeed(Buffer.alloc(32, i + 30)).publicKey.toBase58() }));
+    const results = await Promise.allSettled(users.map(player => new SolanaService({ store: new SolanaStore(pool), chain, now: () => now }).join({ ...player, id: g.id, chatId: input.chatId })));
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(r => r.status === 'rejected').every(r => r.reason.message.includes('already accepted'))).toBe(true);
+    const winner = users[results.findIndex(r => r.status === 'fulfilled')];
+    const loser = users.find(u => u.userId !== winner.userId);
+    const saved = await store.get(g.id);
+    expect(saved.challenger.userId).toBe(winner.userId);
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    await bot.handlers.start(context(loser.userId, '/start soljoin_' + g.id));
+    const screen = (await store.profile(loser.userId)).privateScreen;
+    expect(screen.text).toContain('already accepted');
+    expect(screen.text).not.toContain(g.depositAddress);
+    expect(screen.rows.flat().some(b => b.copy_text)).toBe(false);
+    expect((await store.get(g.id)).challenger).toEqual(saved.challenger);
+  });
+  test('busy group /flip explains the active game without creating a draft', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    await service.create({ ...input, interfaceVersion: 2 });
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    const ctx = context('2', '/flip', 'supergroup'); await bot.handlers.flip(ctx);
+    expect(ctx.reply.mock.calls[0][0]).toContain('active challenge');
+    expect((await pool.query('SELECT count(*)::int AS n FROM "SolDrafts"')).rows[0].n).toBe(0);
+  });
+
+  test('challenge video carries Accept, edits its caption on accept, and is retired for the result', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}, { SOLANA_CHALLENGE_VIDEO: 'challenge-clip-file-id' });
+    ui.videoDuration = 1000;
+    await service.deposit({ id: g.id, userId: '1', signature: 'video-creator' });
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; });
+    await ui.render();
+    expect(bot.telegram.sendVideo).toHaveBeenCalledWith('-100', 'challenge-clip-file-id', expect.objectContaining({
+      caption: expect.stringContaining('Awaiting a challenger'),
+      reply_markup: { inline_keyboard: [[expect.objectContaining({ text: 'Accept Challenge' })]] },
+    }));
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+    const cardId = (await store.get(g.id)).ui.messageId;
+    await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId });
+    await ui.render();
+    expect(bot.telegram.editMessageCaption).toHaveBeenCalledWith('-100', cardId, undefined, expect.stringContaining('Waiting for challenger deposit'), expect.objectContaining({ reply_markup: { inline_keyboard: [] } }));
+    expect(bot.telegram.editMessageText).not.toHaveBeenCalled();
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    await service.deposit({ id: g.id, userId: '2', signature: 'video-challenger' });
+    await ui.render(); // Actual flip video is separate from the challenge teaser.
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(2);
+    now += 1251; await ui.render();
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith('-100', cardId);
+    expect((await store.get(g.id)).ui.messageIsVideo).toBe(false);
+    expect((await store.get(g.id)).ui.resultAnnounced).toBe(true);
+    expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(1);
+  });
+  test('a cancelled challenge video remains one card with automatically updated refund proof', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}, { SOLANA_CHALLENGE_VIDEO: 'challenge-clip' });
+    await service.deposit({ id: g.id, userId: '1', signature: 'cancel-video-creator' });
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; }); await ui.render();
+    await service.cancel({ id: g.id, userId: '1', chatId: input.chatId }); await ui.render();
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+    expect(bot.telegram.editMessageCaption.mock.calls.at(-1)[3]).toContain('Refund to 1: 0.1 SOL pending');
+    expect(bot.telegram.editMessageCaption.mock.calls.at(-1)[4].reply_markup.inline_keyboard).toEqual([]);
+  });
+
 });
