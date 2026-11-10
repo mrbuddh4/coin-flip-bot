@@ -28,19 +28,21 @@ async function main() {
   const genesis = await startupStep('rpc', () => chain.validate());
   const release = await startupStep('database-lock', () => acquireInstanceLock());
   const store = new SolanaStore();
-  let timer, feeTimer, fees, server, bot;
+  let timer, presentationTimer, feeTimer, fees, server, bot;
   let stopping = false;
   let pollingStarted = false;
   let cycleRunning = false;
+  let presentationRunning = false;
   let scanner;
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
     clearInterval(timer);
+    clearInterval(presentationTimer);
     clearInterval(feeTimer);
     if (bot && pollingStarted) { try { bot.stop('shutdown'); } catch (_) {} }
     // Keep the DB lock until the worker finishes its current signed transaction operation.
-    while (cycleRunning || scanner?.running || service?.workerRunning || fees?.running) await new Promise(resolve => setTimeout(resolve, 50));
+    while (cycleRunning || presentationRunning || scanner?.running || service?.workerRunning || fees?.running) await new Promise(resolve => setTimeout(resolve, 50));
     if (server) await new Promise(resolve => server.close(resolve));
     await store.pool.end();
     await release();
@@ -71,10 +73,18 @@ async function main() {
     const noticeCleanup = new ObsoleteNoticeCleanup(store, bot.telegram);
     ui.register();
     bot.catch(() => console.error('Solana command failed; check private configuration and ledger.'));
+    // Rendering waits only for Telegram and the persisted game state, never for
+    // an unrelated RPC scan or pending payout to finish before revealing a flip.
+    const present = async () => {
+      if (presentationRunning || stopping) return;
+      presentationRunning = true;
+      try { await ui.render(); await ui.refreshPrivateScreens(); }
+      finally { presentationRunning = false; }
+    };
     const cycle = async () => {
       if (cycleRunning || stopping) return;
       cycleRunning = true;
-      try { await scanner.tick(); await service.work(); await ui.render(); await ui.refreshPrivateScreens(); }
+      try { await scanner.tick(); await service.work(); await present(); }
       finally {
         // Removing obsolete verbose notices must never affect payments or polling.
         try { await noticeCleanup.tick(); }
@@ -84,6 +94,7 @@ async function main() {
     };
     await startupStep('worker', () => cycle());
     timer = setInterval(() => cycle().catch(() => console.error('Solana worker check failed; ledger retained.')), 5000);
+    presentationTimer = setInterval(() => present().catch(() => console.error('PRESENTATION_RETRY: financial records retained.')), 1000);
     const rewardTick = () => { if (!stopping) fees.tick().catch(() => console.error('Holder fee check failed; allocations retained.')); };
     if (fees.mode === 'paxeer') {
       rewardTick();

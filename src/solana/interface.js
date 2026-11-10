@@ -8,7 +8,6 @@ const { PrivateScreen, ScreenTransportError } = require('./screen');
 const { ChallengeBusyError, ChallengeTakenError } = require('./errors');
 const { fromUnits, toUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
-const { getVideoDuration } = require('../utils/helpers');
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const button = (text, callback_data) => ({ text, callback_data });
 const keyboard = rows => ({ parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: rows } });
@@ -437,11 +436,11 @@ class SolanaInterface {
       });
       game.ui = claimed.ui;
       if (send) {
-        const video = path.join(__dirname, '../../assets/coinflip.MP4');
+        const video = path.join(__dirname, '../../assets/coinflip-fast.mp4');
         try {
           if (!fs.existsSync(video)) throw new Error('Animation file missing');
           const me = await this.me();
-          const mediaId = `coinflip-video:${me.id || me.username}`;
+          const mediaId = `coinflip-fast-v1-video:${me.id || me.username}`;
           const cached = await this.store.media(mediaId);
           // The clock starts AFTER Telegram acknowledges the uploaded/cached
           // video, never when an upload merely begins.
@@ -453,7 +452,7 @@ class SolanaInterface {
             await this.store.saveMedia(mediaId, {});
             sent = await this.telegram.sendVideo(game.chatId, { source: video }, options);
           }
-          this.videoDuration ??= cached?.durationMs || (sent.video?.duration ? sent.video.duration * 1000 : await getVideoDuration(video));
+          this.videoDuration ??= cached?.durationMs || (sent.video?.duration ? sent.video.duration * 1000 : 3000);
           const duration = Math.max(this.videoDuration, Number(sent.video?.duration || 0) * 1000);
           const updated = await this.store.mutate(game.id, g => {
             Object.assign(g.ui, { animationPhase: 'PLAYING', videoMessageId: sent.message_id, revealAt: this.service.now() + duration + 250 });

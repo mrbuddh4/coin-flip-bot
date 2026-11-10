@@ -560,7 +560,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
   test('an explicitly rejected cached file is refreshed, while network ambiguity never triggers a second upload', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
     await presentationGame(); const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.videoDuration = 1000;
-    await store.saveMedia('coinflip-video:TestCoinFlipBot', { fileId: 'stale' });
+    await store.saveMedia('coinflip-fast-v1-video:TestCoinFlipBot', { fileId: 'stale' });
     bot.telegram.sendVideo.mockRejectedValueOnce({ response: { error_code: 400 } });
     await ui.render(); expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(2);
     expect(bot.telegram.sendVideo.mock.calls[0][1]).toBe('stale'); expect(bot.telegram.sendVideo.mock.calls[1][1]).toHaveProperty('source');

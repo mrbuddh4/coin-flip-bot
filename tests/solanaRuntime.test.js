@@ -38,6 +38,7 @@ test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42
   DepositScanner.mockImplementation(() => scanner); SolanaInterface.mockImplementation(() => ui); Telegraf.mockImplementation(() => bot);
   const release = jest.fn(async () => {}); acquireInstanceLock.mockResolvedValue(release);
   startHealthServer.mockResolvedValue({ close: cb => cb() });
+  const interval = jest.spyOn(global, 'setInterval');
   const handlers = {};
   const once = jest.spyOn(process, 'once').mockImplementation((event, fn) => { handlers[event] = fn; return process; });
   const snapshot = jest.spyOn(FlipSnapshotSource.prototype, 'snapshot').mockRejectedValue(new Error('Paxeer offline'));
@@ -50,6 +51,26 @@ test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42
     expect(ObsoleteNoticeCleanup.mock.results[0].value.tick).toHaveBeenCalledTimes(1);
     expect(ui.refreshPrivateScreens).toHaveBeenCalledTimes(1);
     expect(service.work).toHaveBeenCalledTimes(1); expect(scanner.tick).toHaveBeenCalledTimes(1);
+    const callbacks = new Map(interval.mock.calls.map(([fn, ms]) => [ms, fn]));
+    expect(callbacks.has(1000)).toBe(true); expect(callbacks.has(5000)).toBe(true);
+    // A slow RPC scan must not prevent the completed animation's result card.
+    let finishScan;
+    scanner.tick.mockImplementationOnce(() => new Promise(resolve => { finishScan = resolve; }));
+    const scanning = callbacks.get(5000)();
+    await Promise.resolve();
+    const beforeRender = ui.render.mock.calls.length;
+    await callbacks.get(1000)();
+    expect(ui.render).toHaveBeenCalledTimes(beforeRender + 1);
+    finishScan(); await scanning;
+    // Fast UI callbacks cannot overlap a slow Telegram operation.
+    let finishRender;
+    ui.render.mockImplementationOnce(() => new Promise(resolve => { finishRender = resolve; }));
+    const rendering = callbacks.get(1000)();
+    const calls = ui.render.mock.calls.length;
+    await callbacks.get(1000)();
+    expect(ui.render).toHaveBeenCalledTimes(calls);
+    finishRender(); await rendering;
+
     const options = startHealthServer.mock.calls[0][0];
     expect(options.status()).toMatchObject({ ready: true, mode: 'solana-mainnet-beta', holderRewards: 'deferred' });
     expect(await options.handle({ url: '/holder/' + 'ab'.repeat(16) }, {})).toBe(false);
@@ -57,7 +78,7 @@ test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42
     expect(store.pool.end).toHaveBeenCalledTimes(1); expect(release).toHaveBeenCalledTimes(1);
   } finally {
     if (handlers.SIGTERM) await handlers.SIGTERM();
-    once.mockRestore(); snapshot.mockRestore(); process.env = originalEnv;
+    interval.mockRestore(); once.mockRestore(); snapshot.mockRestore(); process.env = originalEnv;
   }
 });
 

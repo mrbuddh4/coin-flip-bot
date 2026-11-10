@@ -236,3 +236,14 @@ A Telegram outage can delay posting/deletion; Telegram does not provide an
 idempotency key for message sends, so an ambiguous upload timeout cannot promise
 exactly-once delivery. Deploy the latest recovery branch with the existing
 database and variables; no fresh initialization or variable changes are needed.
+
+
+## Faster flip presentation
+
+Solana games use the same animation retimed to three seconds in
+`assets/coinflip-fast.mp4`, with a separate cache ID so the earlier eleven-second
+clip is not reused. The playback clock still starts after Telegram acknowledges
+the upload. Result cards refresh on a separate one-second UI timer, even while
+the five-second deposit/payment worker is waiting on RPC. The result follows the
+clip; confirmed payout links still depend on actual blockchain finality.
+Deploy the latest recovery branch with the existing database and variables.
