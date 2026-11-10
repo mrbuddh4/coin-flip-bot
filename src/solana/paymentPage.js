@@ -24,11 +24,11 @@ function paymentHandler(service) {
 <h1>Coin Flip deposit</h1><p><b>${escape(networkName(service.chain))}</b></p>
 <p>Send exactly <b>${escape(amount)} ${escape(game.token.symbol)}</b> from your registered wallet:</p><p><code>${escape(player.wallet)}</code></p>
 <p>Recipient:</p><p><code>${escape(game.depositAddress)}</code></p><p>Mint:</p><p><code>${escape(game.token.address)}</code></p>
-<p>Required memo:</p><p><code>${escape(player.memo)}</code></p>
+<p>Game memo:</p><p><code>${escape(player.memo)}</code></p>
 <p><a href="${escape(uri)}">Open in a Solana Pay compatible wallet</a></p>
-<p>Check your wallet's network, amount, recipient and memo before sending. If your wallet omits the memo or cannot open this request, do not send. This link cannot authorize a transfer.</p>
+<p>Check your wallet's network, amount, recipient and memo before sending. A plain transfer can be matched only when its sender, exact asset, exact amount and on-chain time identify one request. Include the memo when requests overlap. This link cannot authorize a transfer.</p>
 <p>Payment request (press and hold to copy):</p><textarea readonly rows="6">${escape(uri)}</textarea>
-<p><small>Return to Telegram after sending. The bot waits for finalized confirmation and checks deposits automatically. A closed request cannot stop a transfer you already authorized in your wallet.</small></p></html>`);
+<p><small>Return to Telegram after sending. Tap Confirm Deposit in Telegram. The bot waits for finalized confirmation before posting your funded challenge. A closed request cannot stop a transfer you already authorized in your wallet.</small></p></html>`);
   };
 }
 module.exports = { paymentHandler };

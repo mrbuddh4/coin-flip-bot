@@ -1,6 +1,7 @@
 const { randomUUID, randomInt, randomBytes } = require('node:crypto');
 const { publicKey } = require('./chain');
 const { toUnits, splitPool } = require('./amounts');
+const { DepositValidationError } = require('./errors');
 class SolanaService {
   constructor({ store, chain, now = () => Date.now(), coin = () => randomInt(2) }) {
     Object.assign(this, { store, chain, now, coin });
@@ -19,7 +20,7 @@ class SolanaService {
     return this.store.create({ id, chatId: String(chatId), token, wager, status: 'OPEN',
       depositAddress: this.chain.address, cluster: this.chain.env?.SOLANA_CLUSTER || 'devnet', createdAt: this.now(), expiresAt: this.now() + (interfaceVersion ? 3 : 15) * 60 * 1000,
       ...(interfaceVersion ? { interfaceVersion, ui: {} } : {}),
-      creator: { userId: String(userId), wallet, receiveWallet, name, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:creator` }, challenger: null });
+      creator: { userId: String(userId), wallet, receiveWallet, name, depositExpiresAt: this.now() + (interfaceVersion ? 3 : 15) * 60 * 1000, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:creator` }, challenger: null });
   }
   async join({ id, userId, wallet, chatId, receiveWallet = wallet, name }) {
     publicKey(wallet);
@@ -31,7 +32,8 @@ class SolanaService {
       if (g.creator.userId === String(userId) || g.creator.wallet === wallet) throw new Error('A different player and sending wallet must join');
       if (g.challenger) throw new Error('Game already has a challenger');
       if (g.interfaceVersion && !g.creator.deposit) throw new Error('Creator has not funded this challenge');
-      g.challenger = { userId: String(userId), wallet, receiveWallet, name, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:challenger` };
+      if (g.interfaceVersion >= 2 && !g.ui?.publishRequested) throw new Error('Creator has not confirmed this challenge for publication');
+      g.challenger = { userId: String(userId), wallet, receiveWallet, name, joinedAt: this.now(), depositExpiresAt: this.now() + (g.interfaceVersion ? 3 : 15) * 60 * 1000, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:challenger` };
       if (g.interfaceVersion) g.expiresAt = this.now() + 3 * 60 * 1000;
     });
   }
@@ -47,15 +49,22 @@ class SolanaService {
     g.status = 'CANCELLED';
     for (const player of [g.creator, g.challenger]) if (player?.deposit) await this.refund(g, tx, player, player.deposit);
   }
-  async deposit({ id, userId, signature, detectedMint, transaction }) {
+  async deposit({ id, userId, signature, detectedMint, transaction, noMemo = false }) {
     const snapshot = await this.store.get(id);
     const participant = this.member(snapshot, userId);
     if (snapshot.depositAddress !== this.chain.address) throw new Error('Game belongs to a different deposit wallet; reconcile before changing keys');
     const mint = detectedMint || snapshot.token.address;
     if (mint !== snapshot.token.address) await this.chain.tokenInfo(mint);
-    const amount = await this.chain.verifyDeposit({ signature, sender: participant.wallet, mint, memo: participant.memo, transaction });
+    const plain = noMemo ? { sender: participant.wallet, mint, amount: snapshot.wager, at: transaction?.blockTime * 1000 } : null;
+    const assertUnique = matches => {
+      if (matches.length !== 1 || matches[0].gameId !== id || matches[0].userId !== String(userId)) throw new DepositValidationError('Plain transfer does not uniquely identify this game; reconcile the receipt.');
+    };
+    if (plain) assertUnique(await this.store.noMemoCandidates(plain));
+    const amount = await this.chain.verifyDeposit({ signature, sender: participant.wallet, mint, memo: participant.memo, transaction, ...(noMemo ? { allowNoMemo: true } : {}) });
+    if (noMemo && amount !== BigInt(snapshot.wager)) throw new DepositValidationError('Plain transfer amount does not match this wager');
     return this.store.mutate(id, async (g, tx) => {
       const player = this.member(g, userId);
+      if (plain) assertUnique(await tx.noMemoCandidates(plain));
       if (!await tx.consume(signature, String(userId), amount.toString())) return;
       const receipt = { signature, amount: amount.toString() };
       if (mint !== g.token.address) { await this.refund(g, tx, player, receipt, mint); return; }

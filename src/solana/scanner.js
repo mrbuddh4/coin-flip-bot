@@ -18,10 +18,19 @@ class DepositScanner {
       }
     } finally { this.running = false; }
   }
-  async scan(address) {
+  async confirm(id, userId) {
+    const game = await this.service.store.get(id);
+    const player = this.service.member(game, userId);
+    // Explicit confirmation replays the request window even when the routine
+    // scanner previously skipped a memo-free transaction. Global receipt
+    // uniqueness still prevents double credit and duplicate refunds.
+    await this.scan(player.wallet, { replayFrom: game.createdAt });
+  }
+  async scan(address, { replayFrom } = {}) {
     const { store, chain } = this.service;
-    const cursor = await store.cursor(address);
-    const firstTime = await store.firstGameTime(address);
+    const replay = Number.isSafeInteger(replayFrom);
+    const cursor = replay ? null : await store.cursor(address);
+    const firstTime = replay ? replayFrom : await store.firstGameTime(address);
     const signatures = [];
     let before;
     for (;;) {
@@ -36,6 +45,10 @@ class DepositScanner {
       if (transaction.meta?.err) continue;
       const instructions = transaction.transaction.message.instructions;
       const memos = instructions.filter(i => i.programId.equals(MEMO));
+      if (memos.length === 0) {
+        await this.plainTransfer(address, entry.signature, transaction);
+        continue;
+      }
       if (memos.length !== 1 || typeof memos[0].parsed !== 'string') continue;
       const match = /^coinflip:([0-9a-f-]{36}):(creator|challenger)$/.exec(memos[0].parsed);
       if (!match) continue;
@@ -65,7 +78,30 @@ class DepositScanner {
         await store.reviewDeposit(entry.signature, game.id, error.message);
       }
     }
-    if (signatures.length) await store.setCursor(address, signatures[0].signature);
+    if (!replay && signatures.length) await store.setCursor(address, signatures[0].signature);
+  }
+  async plainTransfer(address, signature, transaction) {
+    const instructions = transaction.transaction.message.instructions;
+    const transfers = instructions.filter(i => ['transfer', 'transferChecked'].includes(i.parsed?.type));
+    if (transfers.length !== 1 || !Number.isSafeInteger(transaction.blockTime)) return;
+    const transfer = transfers[0], info = transfer.parsed.info;
+    const native = transfer.programId.equals(SystemProgram.programId);
+    const mint = native ? 'NATIVE' : info.mint;
+    const amount = native ? info.lamports : info.tokenAmount?.amount;
+    if (!mint || (native ? !Number.isSafeInteger(amount) : !/^\d+$/.test(amount || ''))) return;
+    if (native && info.source !== address) return;
+    const { store } = this.service;
+    const matches = await store.noMemoCandidates({ sender: address, mint, amount: String(amount), at: transaction.blockTime * 1000 });
+    if (matches.length !== 1) {
+      if (matches.length) await store.reviewDeposit(signature, matches[0].gameId, 'Ambiguous plain transfer; no game was credited.');
+      return;
+    }
+    try {
+      await this.service.deposit({ id: matches[0].gameId, userId: matches[0].userId, signature, detectedMint: mint, transaction, noMemo: true });
+    } catch (error) {
+      if (!(error instanceof DepositValidationError)) throw error;
+      await store.reviewDeposit(signature, matches[0].gameId, error.message);
+    }
   }
 }
 module.exports = { DepositScanner };

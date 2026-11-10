@@ -1,0 +1,18 @@
+const { noMemoCandidates } = require('../src/solana/depositMatch');
+const game = { id: 'g', createdAt: 1000, expiresAt: 5000, token: { address: 'NATIVE' }, wager: '100', creator: { userId: '1', wallet: 'alice', depositExpiresAt: 4000 }, challenger: { userId: '2', wallet: 'bob', joinedAt: 2000, depositExpiresAt: 4500 } };
+const request = { sender: 'alice', mint: 'NATIVE', amount: '100', at: 3000 };
+test('matches exact historical sender, asset, amount and frozen payment window', () => {
+  expect(noMemoCandidates([game], request)).toEqual([{ gameId: 'g', userId: '1' }]);
+  expect(noMemoCandidates([{ ...game, status: 'CANCELLED' }], request)).toHaveLength(1);
+});
+test.each([{ sender: 'mallory' }, { mint: 'OTHER' }, { amount: '99' }, { at: 999 }, { at: 4000 }, { at: NaN }, { at: null }])('rejects mismatched or missing proof fields %j', override => {
+  expect(noMemoCandidates([game], { ...request, ...override })).toEqual([]);
+});
+test('a challenger receipt cannot predate joining, and legacy missing join time is refused', () => {
+  expect(noMemoCandidates([game], { ...request, sender: 'bob', at: 1000 })).toEqual([]);
+  expect(noMemoCandidates([game], { ...request, sender: 'bob', at: 2000 })).toHaveLength(1);
+  expect(noMemoCandidates([{ ...game, challenger: { ...game.challenger, joinedAt: undefined } }], { ...request, sender: 'bob' })).toEqual([]);
+});
+test('closed and already funded overlaps remain candidates rather than authorizing a different game', () => {
+  expect(noMemoCandidates([game, { ...game, id: 'other', status: 'SETTLED', creator: { ...game.creator, deposit: {} } }], request)).toHaveLength(2);
+});

@@ -44,7 +44,7 @@ class SolanaChain {
     // Symbols are labels, never token identity. Use exact case-sensitive mint for identity.
     return displayToken({ address: address.toBase58(), symbol: `${mint.slice(0, 5)}…${mint.slice(-4)}`, decimals: info.decimals, program: info.program, extensions: info.extensions }, this.env.SOLANA_CLUSTER);
   }
-  async verifyDeposit({ signature, sender, mint, memo, transaction }) {
+  async verifyDeposit({ signature, sender, mint, memo, transaction, allowNoMemo = false }) {
     let validSignature = false;
     try { validSignature = typeof signature === 'string' && bs58.decode(signature).length === 64; } catch (_) {}
     if (!validSignature) throw new DepositValidationError('Invalid transaction signature');
@@ -57,7 +57,7 @@ class SolanaChain {
     if (!message.accountKeys.some(k => k.pubkey.toBase58() === sender && k.signer)) throw new DepositValidationError('Registered sending wallet did not sign this deposit');
     // Only simple, direct top-level wallet transfers. No balance-delta heuristics, swaps or CPI guesses.
     const memos = message.instructions.filter(i => i.programId.equals(MEMO));
-    if (memos.length !== 1 || memos[0].parsed !== memo) throw new DepositValidationError('Deposit requires the exact game memo');
+    if (!(allowNoMemo && memos.length === 0) && (memos.length !== 1 || memos[0].parsed !== memo)) throw new DepositValidationError('Deposit requires the exact game memo or a unique plain-transfer match');
     const transfers = message.instructions.filter(i => ['transfer', 'transferChecked'].includes(i.parsed?.type));
     if (transfers.length !== 1 || tx.meta.innerInstructions?.some(i => i.instructions.some(inner => ['transfer', 'transferChecked'].includes(inner.parsed?.type)))) throw new DepositValidationError('Use one direct transfer with no program-invoked transfers');
     const instruction = transfers[0];

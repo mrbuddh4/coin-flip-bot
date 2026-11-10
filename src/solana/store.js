@@ -3,6 +3,11 @@ const { connectionOptions } = require('../database/connection');
 const config = require('../config');
 const { accrueFees, SCHEMA: FEE_SCHEMA } = require('./fees');
 const custody = require('./custody');
+const { noMemoCandidates } = require('./depositMatch');
+async function findNoMemoCandidates(client, input) {
+  const { rows } = await client.query(`SELECT state FROM "SolGames" WHERE state->'token'->>'address'=$1 AND state->>'wager'=$2 AND (state->'creator'->>'wallet'=$3 OR state->'challenger'->>'wallet'=$3)`, [input.mint, String(input.amount), input.sender]);
+  return noMemoCandidates(rows.map(r => r.state), input);
+}
 class SolanaStore {
   constructor(pool = new Pool(connectionOptions(config.database))) { this.pool = pool; }
   async verifySchema() {
@@ -29,6 +34,7 @@ class SolanaStore {
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
   }
+  async noMemoCandidates(input) { return findNoMemoCandidates(this.pool, input); }
   async get(id) {
     const { rows } = await this.pool.query('SELECT state FROM "SolGames" WHERE id=$1', [id]);
     if (!rows.length) throw new Error('Unknown Solana game');
@@ -50,6 +56,7 @@ class SolanaStore {
           await client.query('INSERT INTO "SolOutbox" (id, "gameId", payment) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [payment.id, id, JSON.stringify(payment)]);
         },
         accrueFees: (game, split) => accrueFees(client, game, split),
+        noMemoCandidates: input => findNoMemoCandidates(client, input),
       };
       await fn(game, transaction);
       await client.query('UPDATE "SolGames" SET state=$2 WHERE id=$1', [id, JSON.stringify(game)]);

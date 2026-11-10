@@ -231,3 +231,16 @@ test('holder reserve audit reads the separate wallet and token ATA without signi
   expect(connection.sendRawTransaction).not.toHaveBeenCalled();
   expect(connection.getLatestBlockhash).not.toHaveBeenCalled();
 });
+
+test.each([true, false])('a unique plain transfer still verifies the full native/SPL proof (native=%s)', async native => {
+  const tx = fixture(native); tx.transaction.message.instructions.shift();
+  const input = { signature, sender, mint: native ? 'NATIVE' : mint, memo: 'game-memo' };
+  await expect(setup(tx).chain.verifyDeposit(input)).rejects.toThrow('memo');
+  await expect(setup(tx).chain.verifyDeposit({ ...input, allowNoMemo: true })).resolves.toBe(native ? 1000000001n : 123456789012345678n);
+  tx.transaction.message.accountKeys[0].signer = false;
+  await expect(setup(tx).chain.verifyDeposit({ ...input, allowNoMemo: true })).rejects.toThrow('sign');
+});
+test('plain-transfer allowance never accepts an incorrect game memo', async () => {
+  const tx = fixture(); tx.transaction.message.instructions[0].parsed = 'another-game';
+  await expect(setup(tx).chain.verifyDeposit({ signature, sender, mint: 'NATIVE', memo: 'game-memo', allowNoMemo: true })).rejects.toThrow('memo');
+});

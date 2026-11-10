@@ -77,3 +77,33 @@ test('unsupported transfer layouts are retained for review without consuming the
   expect(service.deposit).not.toHaveBeenCalled();
   expect(store.setCursor).toHaveBeenCalled();
 });
+
+test('plain finalized transfers use unique historical matching and retain the full proof', async () => {
+  const { scanner, service, store, tx } = setup();
+  tx.blockTime = 101;
+  tx.transaction.message.instructions.shift();
+  tx.transaction.message.instructions[0].parsed.info = { source: wallet, lamports: 100000000 };
+  store.noMemoCandidates = jest.fn().mockResolvedValue([{ gameId: id, userId: '1' }]);
+  await scanner.scan(wallet);
+  expect(store.noMemoCandidates).toHaveBeenCalledWith({ sender: wallet, mint: 'NATIVE', amount: '100000000', at: 101000 });
+  expect(service.deposit).toHaveBeenCalledWith(expect.objectContaining({ id, userId: '1', noMemo: true, transaction: tx }));
+});
+test('ambiguous memo-free transfers are retained for review without credit', async () => {
+  const { scanner, service, store, tx } = setup();
+  tx.blockTime = 101; tx.transaction.message.instructions.shift();
+  tx.transaction.message.instructions[0].parsed.info = { source: wallet, lamports: 100000000 };
+  store.noMemoCandidates = jest.fn().mockResolvedValue([{ gameId: id, userId: '1' }, { gameId: 'other', userId: '2' }]);
+  await scanner.scan(wallet);
+  expect(service.deposit).not.toHaveBeenCalled();
+  expect(store.reviewDeposit).toHaveBeenCalledWith('a', id, expect.stringContaining('Ambiguous'));
+});
+test('explicit confirmation replays past a skipped cursor without changing the routine cursor', async () => {
+  const { scanner, service, store, connection } = setup();
+  store.get.mockResolvedValue({ id, createdAt: 100000, creator: { userId: '1', wallet } });
+  service.member = (g, userId) => { if (userId !== '1') throw new Error('Not a player'); return g.creator; };
+  store.cursor.mockResolvedValue('already-skipped');
+  await scanner.confirm(id, '1');
+  expect(connection.getSignaturesForAddress.mock.calls[0][1]).not.toHaveProperty('until');
+  expect(store.setCursor).not.toHaveBeenCalled();
+  await expect(scanner.confirm(id, '2')).rejects.toThrow('Not a player');
+});

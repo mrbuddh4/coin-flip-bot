@@ -3,7 +3,7 @@
 
 # Railway setup from an iPhone or iPad
 
-No laptop, local installation or terminal is required for this path. The assistant has prepared the source, deployment configuration and database initialization step. Railway account actions and private credential entry still belong to the owner. Railway is not a connected service available to the assistant. The owner has confirmed a recovery service on Railway; a live Telegram/funds deployment has not been verified.
+No laptop, local installation or terminal is required for this path. The assistant has prepared the source, deployment configuration and database initialization step. Railway account actions and private credential entry still belong to the owner. Railway is not a connected service available to the assistant. The owner has confirmed a recovery service on Railway; a Solana-mainnet Telegram /start dashboard has now been observed. Financial end-to-end operation is still being verified.
 
 ## 1. Put the recovery service online first
 
@@ -65,3 +65,9 @@ In the bot service's Variables, set `SOLANA_HOLDER_WALLET_ADDRESS` to the public
 The bot queues the 5% holder share from settled games into this wallet in each original asset. Existing unallocated holder pools also move there; already allocated historical payouts retain their original destinations. The treasury pays transaction fees and any required recipient token-account rent, so allow for that extra fee use. Only finalized transfers become recorded holder-wallet reserves. Unknown/failed transfers stay visible and cannot be automatically sent a second time with new signed bytes.
 
 Receiving this share needs only the public holder-wallet address. Its private key will be needed later for automatic holder payouts, but no such key is loaded or used by this custody-only implementation. Payouts remain deferred pending a supported exact reward token and distribution policy. Enter that key privately in Railway only when the separate payout worker is ready; never send it through chat or put it in GitHub. `/solaudit` can already check the separate wallet's recorded reserves against finalized balances without its key. Once the custody address is bound, removing/changing it refuses startup until a deliberate reconciliation/migration is implemented.
+
+## Updated deposit flow
+
+Type the wager amount in the Telegram chat first. Then copy the shared deposit address and exact amount from the transfer screen. Transfer from your registered sending wallet and tap **Confirm Deposit**. A plain transfer needs an exact token/amount and a unique historical request at its finalized transaction timestamp; use the game memo when requests overlap. New group challenges appear after the creator confirms a matched deposit.
+
+If an older build skipped a memo-free transfer, use the original game's Confirm Deposit button after updating. It replays that request window without sending another deposit. An expired/cancelled game's attributable deposit is recorded for a full refund, rather than reviving the wager. Missing or ambiguous request proof remains for review. Source tests do not prove a refund has finalized.
