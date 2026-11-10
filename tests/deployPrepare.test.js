@@ -106,4 +106,26 @@ describe('separate empty mainnet database setup never enables funds', () => {
     expect(initialize).not.toHaveBeenCalled();
     await expect(main(env, { verifyMainnet: async () => {}, initialize: async () => { throw new Error('Database is not empty'); } })).rejects.toThrow('not empty');
   });
+  test.each(['BOT_CHAIN', 'SOLANA_CLUSTER', 'BOT_MODE', 'LIVE_FUNDS_ENABLED', 'DATABASE_URL', 'SOLANA_RPC_URL', 'SOLANA_WALLET_ADDRESS'])('names only missing mainnet setting %s before accessing anything', async name => {
+    const deps = { verifyMainnet: jest.fn(), initialize: jest.fn() };
+    await expect(main({ ...env, [name]: '' }, deps)).rejects.toMatchObject({ invalidSettings: [name] });
+    await main({ ...env, [name]: '' }, deps).catch(error => {
+      expect(formatFailure(error)).toContain(`variables: ${name}.`);
+    });
+    expect(deps.verifyMainnet).not.toHaveBeenCalled();
+    expect(deps.initialize).not.toHaveBeenCalled();
+  });
+  test('mainnet diagnostics redact incorrect values and unrecognized field names', async () => {
+    const secret = 'private-setting-must-never-appear';
+    const deps = { verifyMainnet: jest.fn(), initialize: jest.fn() };
+    await main({ ...env, BOT_MODE: secret, LIVE_FUNDS_ENABLED: secret, SOLANA_INIT_FRESH: 'true' }, deps).catch(error => {
+      error.invalidSettings.push(secret);
+      error.message = secret;
+      const text = formatFailure(error);
+      expect(text).toContain('variables: BOT_MODE, LIVE_FUNDS_ENABLED, SOLANA_INIT_FRESH.');
+      expect(text).not.toContain(secret);
+    });
+    expect(deps.verifyMainnet).not.toHaveBeenCalled();
+    expect(deps.initialize).not.toHaveBeenCalled();
+  });
 });

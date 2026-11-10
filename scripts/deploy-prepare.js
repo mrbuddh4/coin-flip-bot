@@ -57,7 +57,10 @@ async function initializeMainnet(env, dependencies) {
 // Never print raw errors, URLs, connection strings or stack traces: providers
 // can include credentials in them. Only fixed categories and variable NAMES.
 function formatFailure(error) {
-  if (error.initStage === 'mainnet-configuration') return 'SETUP_MAINNET_CONFIG: Fresh mainnet setup requires BOT_CHAIN=solana, SOLANA_CLUSTER=mainnet-beta, BOT_MODE=recovery, LIVE_FUNDS_ENABLED=false, SOLANA_INIT_FRESH=false and a new empty DATABASE_URL, SOLANA_RPC_URL and public SOLANA_WALLET_ADDRESS. No funds are enabled.';
+  if (error.initStage === 'mainnet-configuration') {
+    const names = (error.invalidSettings || []).filter(name => ['BOT_CHAIN', 'SOLANA_CLUSTER', 'BOT_MODE', 'LIVE_FUNDS_ENABLED', 'SOLANA_INIT_FRESH', 'DATABASE_URL', 'SOLANA_RPC_URL', 'SOLANA_WALLET_ADDRESS'].includes(name));
+    return `SETUP_MAINNET_CONFIG: Check these missing/incorrect variables: ${names.join(', ')}. Fresh mainnet setup requires recovery mode with funds disabled. No RPC or database access attempted.`;
+  }
   if (error.initStage === 'mainnet-rpc') return 'SETUP_MAINNET_RPC: Could not verify the mainnet RPC and public wallet. No database initialization attempted.';
   if (error.initStage === 'configuration') {
     const names = (error.invalidSettings || []).filter(name => ['BOT_CHAIN', 'SOLANA_CLUSTER', 'DATABASE_URL', 'SOLANA_RPC_URL'].includes(name));
