@@ -182,41 +182,51 @@ class SolanaInterface {
     ctx.solGameId = game.id; ctx.solView = 'deposit';
     ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), await this.store.payments(game.id)]);
     const player = this.service.member(game, ctx.from.id);
+    if (game.status !== 'OPEN' || player.deposit) return this.status(ctx, game.id);
+    const checking = Boolean(game.ui?.depositChecks?.[String(ctx.from.id)]);
     const base = this.env.PUBLIC_BASE_URL || (this.env.RAILWAY_PUBLIC_DOMAIN ? `https://${this.env.RAILWAY_PUBLIC_DOMAIN}` : '');
     const role = player.userId === game.creator.userId ? 'creator' : 'challenger';
     const rows = [];
     rows.push([{ text: '📋 Copy Deposit Address', copy_text: { text: game.depositAddress } }]);
     rows.push([{ text: '📋 Copy Exact Amount', copy_text: { text: fromUnits(game.wager, game.token.decimals) } }, { text: '📋 Copy Game Memo', copy_text: { text: player.memo } }]);
     if (/^https:\/\//.test(base) && player.payToken) rows.push([{ text: '💳 Open Deposit', url: `${base.replace(/\/$/, '')}/pay/${game.id}/${role}/${player.payToken}` }]);
-    rows.push([button('✅ Confirm Deposit', `s:check:${game.id}`)], [button('Game Status', `s:status:${game.id}`)]);
+    if (!checking) rows.push([button('✅ Check Deposit', `s:check:${game.id}`)]);
+    rows.push([button(checking ? '‹ Checking Deposit' : 'Game Status', `s:status:${game.id}`)]);
     if (role === 'creator') rows.push([button('Cancel Challenge', `s:cancel:${game.id}`)]);
-    return this.reply(ctx, `<b>Step 3 of 3: Transfer Your Wager</b>\n${escape(networkName(this.service.chain))}\n\nAmount: <b>${summary(game)}</b>\nFrom: <code>${escape(player.wallet)}</code>\nTo: <code>${escape(game.depositAddress)}</code>\nMint: <code>${escape(game.token.address)}</code>\nGame memo (optional for a unique matching transfer): <code>${escape(player.memo)}</code>\nWinnings go to: <code>${escape(player.receiveWallet || player.wallet)}</code>\n\n1. Copy the deposit address and exact amount above.\n2. Transfer from your registered sending wallet. Including the game memo helps identify the payment if requests overlap.\n3. Return here and tap Confirm Deposit.\n\nThis screen updates automatically. Final results and refunds include short transaction links in the originating group. ${role === 'creator' ? 'Once your deposit is confirmed, the challenge is posted to the group where you started /flip.' : 'Once both deposits are confirmed, the game resolves.'} A plain transfer is matched only when the signing wallet, exact token, exact amount and transaction time identify one request. If requests overlap, include the game memo or use Open Deposit.\n\nPayment URI:\n<code>${escape(paymentURI(game, player))}</code>`, rows);
+    return this.reply(ctx, `<b>Step 3 of 3: Transfer Your Wager</b>\n${escape(networkName(this.service.chain))}\n\nAmount: <b>${summary(game)}</b>\nFrom: <code>${escape(player.wallet)}</code>\nTo: <code>${escape(game.depositAddress)}</code>\nMint: <code>${escape(game.token.address)}</code>\nGame memo (optional for a unique matching transfer): <code>${escape(player.memo)}</code>\nWinnings go to: <code>${escape(player.receiveWallet || player.wallet)}</code>\n\n1. Copy the deposit address and exact amount above.\n2. Transfer from your registered sending wallet. Including the game memo helps identify the payment if requests overlap.\n3. ${checking ? 'Automatic deposit checking is active. No further tap is needed.' : 'Return here and tap Check Deposit once.'}\n\nThis screen updates automatically. Final results and refunds include short transaction links in the originating group. ${role === 'creator' ? 'Once your deposit is confirmed, the challenge is posted to the group where you started /flip.' : 'Once both deposits are confirmed, the game resolves.'} A plain transfer is matched only when the signing wallet, exact token, exact amount and transaction time identify one request. If requests overlap, include the game memo or use Open Deposit.\n\nPayment URI:\n<code>${escape(paymentURI(game, player))}</code>`, rows);
+  }
+  async checkingDeposit(ctx, game) {
+    ctx.solGameId = game.id; ctx.solView = 'checking';
+    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), await this.store.payments(game.id)]);
+    const rows = [[button('Deposit Details', `s:deposit:${game.id}`)]];
+    if (game.creator.userId === String(ctx.from.id)) rows.push([button('Cancel Challenge', `s:cancel:${game.id}`)]);
+    return this.reply(ctx, `<b>⏳ Checking your deposit…</b>\n${summary(game)}\n\nWe’ll confirm here automatically once your transfer is matched and finalized. No need to tap again. You can leave this screen and return through your dashboard.\n\n${game.creator.userId === String(ctx.from.id) ? 'Your funded challenge will be posted to the group automatically.' : 'The flip starts once both deposits are confirmed.'}`, rows);
   }
   async confirmDeposit(ctx, id) {
-    const before = await this.store.get(id);
-    this.service.member(before, ctx.from.id);
-    if (this.scanner.confirm) await this.scanner.confirm(id, ctx.from.id);
-    else await this.scanner.tick();
-    await this.service.work();
-    const game = await this.store.get(id);
+    // Persist intent before scanning: a later finalized receipt or a restart must
+    // never require another tap to publish the creator's funded challenge.
+    const game = await this.store.mutate(id, g => {
+      this.service.member(g, ctx.from.id);
+      if (g.status === 'OPEN' && this.service.now() < g.expiresAt) {
+        g.ui ||= {}; g.ui.depositChecks ||= {};
+        g.ui.depositChecks[String(ctx.from.id)] = true;
+      }
+    });
     const player = this.service.member(game, ctx.from.id);
-    if (player.deposit && game.creator.userId === String(ctx.from.id)) {
-      await this.store.mutate(id, g => {
-        if (g.status === 'OPEN' && g.creator.deposit && this.service.now() < g.expiresAt) {
-          g.ui ||= {};
-          g.ui.publishRequested = true;
-        }
-      });
+    if (game.status !== 'OPEN') return this.status(ctx, id);
+    if (!player.deposit) await this.checkingDeposit(ctx, game);
+    try {
+      if (this.scanner.confirm) await this.scanner.confirm(id, ctx.from.id);
+      else await this.scanner.tick();
+    } catch (_) {
+      // The normal worker keeps scanning. Preserve the pending screen and intent
+      // on a transient RPC failure instead of asking for another confirmation.
+      console.error('DEPOSIT_CHECK_RETRY: automatic scan remains active.');
     }
+    await this.service.work();
     await this.render();
-    if (!player.deposit && game.status === 'OPEN') {
-      ctx.solGameId = game.id; ctx.solView = 'deposit';
-      ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), await this.store.payments(game.id)]);
-      return this.reply(ctx, 'Your deposit has not been matched yet. Check the amount, registered sending wallet, destination and whether another request overlaps. A game memo identifies the payment when requests overlap. If you already transferred, this screen updates when the deposit is matched. You can also tap Confirm Deposit to recheck.', [
-        [button('✅ Confirm Deposit', `s:check:${id}`)],
-        [button('Game Status', `s:status:${id}`)],
-      ]);
-    }
+    const current = await this.store.get(id);
+    if (!this.service.member(current, ctx.from.id).deposit && current.status === 'OPEN') return;
     return this.status(ctx, id);
   }
   async status(ctx, id) {
@@ -227,11 +237,12 @@ class SolanaInterface {
     ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), payments]);
     const revealed = resultVisible(game), flipping = game.status === 'SETTLED' && !revealed;
     const player = this.service.member(game, ctx.from.id);
+    if (game.status === 'OPEN' && !player.deposit && game.ui?.depositChecks?.[String(ctx.from.id)]) return this.checkingDeposit(ctx, game);
     const next = game.status === 'OPEN' && !player.deposit ? [[button('💳 Deposit Instructions', `s:deposit:${id}`)]] : [];
     if (game.status === 'OPEN' && player.userId === game.creator.userId && player.deposit && !game.ui?.publishRequested) next.push([button('Post Funded Challenge', `s:check:${id}`)]);
     const waiting = game.status !== 'OPEN' ? '' : !player.deposit ? 'Next: open Deposit Instructions and transfer your wager.' : !game.ui?.publishRequested ? 'Deposit recorded. Tap Post Funded Challenge to open it to the group.' : !game.challenger ? 'Your deposit is recorded. Waiting for an opponent in the originating group.' : 'Your deposit is recorded. Waiting for the other player’s deposit.';
     const winner = revealed && [game.creator, game.challenger].find(p => p?.userId === game.winnerId);
-    return this.reply(ctx, `<b>Game Status</b>\n${summary(game)}\nState: ${flipping ? 'FLIPPING' : escape(game.status)}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n\n${escape(waiting)}\n` + (winner ? `Winner: ${mention(winner)}\n` : '') + (flipping ? 'Both deposits are recorded. The flip video plays before the result and payment details are revealed.' : compactPayments(game, payments, signature => this.explorer(signature))), [...next, [button('Refresh', `s:status:${id}`)], [button('🏠 Home', 's:home')]]);
+    return this.reply(ctx, `<b>Game Status</b>\n${summary(game)}\nState: ${flipping ? 'FLIPPING' : escape(game.status)}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n\n${player.deposit ? '✅ Your deposit is confirmed.\n' : ''}${escape(waiting)}\n` + (winner ? `Winner: ${mention(winner)}\n` : '') + (flipping ? 'Both deposits are recorded. The flip video plays before the result and payment details are revealed.' : compactPayments(game, payments, signature => this.explorer(signature))), [...next, [button('Refresh', `s:status:${id}`)], [button('🏠 Home', 's:home')]]);
   }
   explorer(signature) { return `https://explorer.solana.com/tx/${signature}${this.service.chain.env.SOLANA_CLUSTER === 'mainnet-beta' ? '' : '?cluster=devnet'}`; }
   async action(ctx) {
@@ -345,7 +356,7 @@ class SolanaInterface {
     }
   }
   async help(ctx) {
-    return this.reply(ctx, `<b>How to Play</b>\n\n1. Set sending and receiving wallets using /wallet.\n2. Use /flip in a group and choose a token and amount privately.\n3. Type the wager amount in chat, then copy the deposit address from the transfer screen. Transfer the wager from your registered wallet and tap Confirm Deposit. The funded challenge is then posted to the originating group.\n4. Another player reviews and accepts the challenge, then deposits.\n5. The coin animation plays, the result is announced, and the winner receives 90% of the pool automatically.\n\nCancelled and expired games refund recorded deposits to their sending wallets. The result card updates automatically with short Prize, Burn and Holder fee links. Cancelled or expired games show refund links on their card. Pending or uncertain payments remain visible in Game Status.\n\n${escape(networkName(this.service.chain))}`, [[button('🏠 Home', 's:home')]]);
+    return this.reply(ctx, `<b>How to Play</b>\n\n1. Set sending and receiving wallets using /wallet.\n2. Use /flip in a group and choose a token and amount privately.\n3. Type the wager amount in chat, then copy the deposit address from the transfer screen. Transfer the wager from your registered wallet and tap Check Deposit once. The funded challenge is then posted to the originating group.\n4. Another player reviews and accepts the challenge, then deposits.\n5. The coin animation plays, the result is announced, and the winner receives 90% of the pool automatically.\n\nCancelled and expired games refund recorded deposits to their sending wallets. The result card updates automatically with short Prize, Burn and Holder fee links. Cancelled or expired games show refund links on their card. Pending or uncertain payments remain visible in Game Status.\n\n${escape(networkName(this.service.chain))}`, [[button('🏠 Home', 's:home')]]);
   }
   async fees(ctx) {
     const fees = this.service.feeService;
@@ -511,11 +522,16 @@ class SolanaInterface {
       const me = await this.me();
       for (const draft of await this.store.usedDraftCards()) await this.cleanupDraft(draft);
       for (const snapshot of await this.store.groupGames()) {
-        const game = await this.store.get(snapshot.id);
+        let game = await this.store.get(snapshot.id);
+        if (game.status === 'OPEN' && game.creator.deposit && game.ui?.depositChecks?.[game.creator.userId] && !game.ui?.publishRequested && this.service.now() < game.expiresAt) {
+          game = await this.store.mutate(game.id, g => {
+            if (g.status === 'OPEN' && g.creator.deposit && g.ui?.depositChecks?.[g.creator.userId] && this.service.now() < g.expiresAt) g.ui.publishRequested = true;
+          });
+        }
         await this.cleanupRetiredCards(game);
         // An existing card may still need cancellation/refund updates. A new
         // challenge is published only after creator funding; v2 also requires
-        // the creator's explicit Confirm Deposit action.
+        // the creator's persisted one-tap Check Deposit request.
         const payments = await this.store.payments(game.id);
         if (!game.ui?.messageId && ((game.status === 'OPEN' && (!game.creator.deposit || (game.interfaceVersion >= 2 && !game.ui?.publishRequested))) || (game.status === 'CANCELLED' && !payments.length))) {
           if (game.status === 'CANCELLED') await this.store.mutate(game.id, g => { g.ui ||= {}; g.ui.terminal = true; g.ui.compactVersion = 1; });

@@ -125,3 +125,8 @@ The funded group challenge supports a video with its caption and Accept button o
 ## Expired challenge video
 
 The owner's Hannibal Buress “WACK” clip is bundled as `assets/expired.mp4`. When a challenge times out, the bot replaces the existing group card media in place, removes Accept, and keeps the compact refund links in its caption. Refund finality updates that same caption. Manual cancellations keep their existing card. Unfunded drafts do not produce a new group notification. New cancellation records distinguish manual cancellation from expiry; older records retain the generic label. `SOLANA_EXPIRY_VIDEO` optionally overrides the bundled clip with a Telegram file ID or HTTPS video URL. No new variable or database reset is needed.
+
+
+### One-tap deposit checking
+
+After transferring, tap **Check Deposit** once. The same private card immediately shows that checking is active, without another check button. It confirms automatically when a matching finalized deposit is recorded. A creator’s funded challenge is then published automatically, even if the user navigates Home or the bot restarts. Challenger confirmations advance to the existing animation/result flow. Pending checks expire with the game; existing matching, refund and payment safeguards remain in force. No environment changes or database reset are required.
