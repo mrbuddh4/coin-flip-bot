@@ -164,7 +164,7 @@ class SolanaInterface {
       return this.selectTokens(ctx);
     }
     await this.store.setSession(ctx.from.id, { ...state, token, step: 'amount' });
-    return this.reply(ctx, `<b>Step 2 of 3: Wager Amount</b>\n\nToken: ${escape(token.symbol)}\nMint: <code>${escape(token.address)}</code>\n\nType the amount you want each player to wager here in this chat, for example <code>0.01</code>. The next screen will show the deposit address and transfer instructions. Winner receives 90% of the pool.`, [[button('‹ Change Token', 's:back')], [button('🏠 Home', 's:home')]]);
+    return this.reply(ctx, `<b>Step 2 of 3: Wager Amount</b>\n\nToken: ${escape(token.symbol)}\nMint: <code>${escape(token.address)}</code>\n\nType the amount you want each player to wager here in this chat, for example <code>0.01</code>. Use the full available precision; if your wallet rounds the displayed balance, choose a slightly lower wager. Keep some SOL for network fees. The next screen will show the deposit address and transfer instructions. Winner receives 90% of the pool.`, [[button('‹ Change Token', 's:back')], [button('🏠 Home', 's:home')]]);
   }
   async reviewJoin(ctx, id, walletsReady = false) {
     const game = await this.store.get(id);

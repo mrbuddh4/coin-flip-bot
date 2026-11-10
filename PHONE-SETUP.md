@@ -247,3 +247,10 @@ the upload. Result cards refresh on a separate one-second UI timer, even while
 the five-second deposit/payment worker is waiting on RPC. The result follows the
 clip; confirmed payout links still depend on actual blockchain finality.
 Deploy the latest recovery branch with the existing database and variables.
+
+
+### Wrong-amount plain transfers
+
+Plain-transfer wager funding still requires the exact amount. An underpayment or overpayment cannot resize or fund a wager. If a verified direct transfer uses the registered sending wallet and correct asset near a saved payment window, refund recovery now uses its actual positive amount. It waits for all nearby requests from that wallet for that asset to close, then records the receipt once and queues the entire actual transfer back to its verified sending wallet. The original wager, payout split, proof checks and one-use receipt rules remain unchanged.
+
+The historical scanner replays recent game windows after deployment, including receipts an earlier version skipped. Keep the existing database and variables. No fresh initialization or extra deposit is needed. `/depositcheck SIGNATURE` now shows expected and received amounts separately from timing, plus the shortfall or excess. This diagnostic is read only. A queued refund is not a confirmed on-chain refund; verify the refund link/status before claiming it was paid.

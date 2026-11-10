@@ -25,5 +25,8 @@ test('refund-only matching allows bounded late and clock-margin sends without au
   expect(refundCandidates([game], { ...request, at: 4000 + 15 * 60000 })).toHaveLength(0);
   expect(refundCandidates([game], { ...request, at: NaN })).toHaveLength(0);
   expect(refundCandidates([game], { ...request, sender: 'mallory' })).toHaveLength(0);
-  expect(refundCandidates([game], { ...request, amount: '99' })).toHaveLength(0);
+  expect(refundCandidates([game], { ...request, amount: '99' })).toHaveLength(1);
+  expect(refundCandidates([game], { ...request, amount: '101' })).toHaveLength(1);
+  for (const amount of ['0', '-1', '1.5', 'invalid', '18446744073709551616']) expect(refundCandidates([game], { ...request, amount })).toHaveLength(0);
+  expect(refundCandidates([game], { ...request, mint: 'OTHER' })).toHaveLength(0);
 });

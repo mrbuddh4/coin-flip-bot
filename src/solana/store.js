@@ -13,7 +13,10 @@ const custody = require('./custody');
 const { noMemoCandidates, refundCandidates } = require('./depositMatch');
 const { SCHEMA: NOTIFICATION_SCHEMA } = require('./notifications');
 async function findNoMemoCandidates(client, input, matcher = noMemoCandidates) {
-  const { rows } = await client.query(`SELECT state FROM "SolGames" WHERE state->'token'->>'address'=$1 AND state->>'wager'=$2 AND (state->'creator'->>'wallet'=$3 OR state->'challenger'->>'wallet'=$3)`, [input.mint, String(input.amount), input.sender]);
+  // Only refund lookup may ignore wager size. Funding keeps exact amount SQL
+  // and the strict historical matcher, independently of refund recovery.
+  const refundsOnly = matcher === refundCandidates;
+  const { rows } = await client.query(`SELECT state FROM "SolGames" WHERE state->'token'->>'address'=$1 ${refundsOnly ? '' : "AND state->>'wager'=$3"} AND (state->'creator'->>'wallet'=$2 OR state->'challenger'->>'wallet'=$2)`, refundsOnly ? [input.mint, input.sender] : [input.mint, input.sender, String(input.amount)]);
   return matcher(rows.map(r => r.state), input);
 }
 class SolanaStore {

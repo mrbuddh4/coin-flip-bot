@@ -1,6 +1,7 @@
 const bs58 = require('bs58').default;
 const { SystemProgram } = require('@solana/web3.js');
-const { noMemoCandidates } = require('./depositMatch');
+const { refundCandidates } = require('./depositMatch');
+const { fromUnits } = require('./amounts');
 const { directTransferAuthority } = require('./token');
 const time = value => Number.isSafeInteger(value) ? new Date(value).toISOString() : 'unknown';
 // Read-only diagnostics. Never imports a receipt, changes a game or signs a
@@ -21,11 +22,13 @@ async function traceDeposit(service, userId, input) {
   const amount = String(native ? info.lamports : info.tokenAmount?.amount);
   const at = Number.isSafeInteger(transaction.blockTime) ? transaction.blockTime * 1000 : NaN;
   const games = await service.store.history(userId);
-  const related = games.filter(g => g.token.address === mint && g.wager === amount).slice(0, 3);
+  const nearby = new Set(refundCandidates(games, { sender, mint, amount, at }).map(c => c.gameId));
+  const related = games.filter(g => g.token.address === mint && (g.wager === amount || nearby.has(g.id)))
+    .sort((a, b) => Number(nearby.has(b.id)) - Number(nearby.has(a.id)) || b.createdAt - a.createdAt).slice(0, 3);
   const matches = Number.isSafeInteger(transaction.blockTime) ? await service.store.noMemoCandidates({ sender, mint, amount, at }) : [];
   const receipt = (await service.store.pool.query('SELECT "gameId","userId" FROM "SolDeposits" WHERE signature=$1', [signature])).rows[0];
   const lines = ['Deposit diagnostic (read only)', `Chain time: ${time(at)}`, `Exact plain-transfer matches: ${matches.length}`, `Receipt: ${receipt ? 'already recorded' : 'not recorded'}`];
-  if (!related.length) lines.push('No saved game for your account has this exact asset and amount.');
+  if (!related.length) lines.push('No saved game for your account matches this asset and amount or nearby payment window.');
   for (const g of related) {
     const p = service.member(g, userId), challenger = p.userId === g.challenger?.userId;
     const start = challenger ? p.joinedAt : g.createdAt, end = p.depositExpiresAt ?? g.expiresAt;
@@ -37,10 +40,14 @@ async function traceDeposit(service, userId, input) {
         proof = error instanceof DepositValidationError ? error.message : 'RPC verification unavailable';
       }
     }
+    const difference = BigInt(g.wager) - BigInt(amount);
     lines.push('', `Game ${g.id}: ${g.status} (${challenger ? 'challenger' : 'creator'})`,
       `Sending wallet matches: ${p.wallet === sender ? 'yes' : 'NO'}`,
       `Payment window: ${time(start)} to ${time(end)}`,
-      `Inside window: ${noMemoCandidates([g], { sender, mint, amount, at }).length ? 'yes' : 'NO'}`,
+      `Inside window: ${Number.isSafeInteger(at) && Number.isSafeInteger(start) && Number.isSafeInteger(end) && at >= start && at < end ? 'yes' : 'NO'}`,
+      `Expected amount: ${fromUnits(g.wager, g.token.decimals)} ${g.token.symbol}`,
+      `Received amount: ${fromUnits(amount, g.token.decimals)} ${g.token.symbol}`,
+      `Amount matches: ${difference === 0n ? 'yes' : `NO (${difference > 0n ? 'short' : 'over'} by ${fromUnits(difference < 0n ? -difference : difference, g.token.decimals)})`}`,
       `Check requested: ${g.ui?.depositChecks?.[String(userId)] ? 'yes' : 'no'}`, `Proof: ${proof}`);
     const refunds = (await service.store.payments(g.id)).filter(r => r.id === `refund:${signature}`);
     for (const r of refunds) lines.push(`This refund: ${r.status}${r.signature ? '\n' + r.signature : ''}`);
