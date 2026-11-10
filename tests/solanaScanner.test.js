@@ -25,22 +25,22 @@ test('automatically submits finalized direct deposits with exact game/player and
   expect(service.deposit).toHaveBeenCalledWith({ id, userId: '1', signature: 'a', detectedMint: 'NATIVE', transaction: tx });
   expect(store.setCursor).toHaveBeenCalledWith(wallet, 'a');
 });
-test('pagination processes full finalized range oldest first, retaining old cursor until complete', async () => {
+test('pagination prioritizes newest receipts, retaining old cursor until the full range completes', async () => {
   const { scanner, service, store, connection } = setup();
   store.cursor.mockResolvedValue('old');
   const page = Array.from({ length: 100 }, (_, i) => ({ signature: `p${i}`, blockTime: 101 }));
   connection.getSignaturesForAddress.mockResolvedValueOnce(page).mockResolvedValueOnce([{ signature: 'older', blockTime: 101 }]);
   await scanner.scan(wallet);
   expect(connection.getSignaturesForAddress.mock.calls[1][1]).toEqual({ limit: 100, before: 'p99', until: 'old' });
-  expect(service.deposit.mock.calls[0][0].signature).toBe('older');
-  expect(service.deposit.mock.calls.at(-1)[0].signature).toBe('p0');
+  expect(service.deposit.mock.calls[0][0].signature).toBe('p0');
+  expect(service.deposit.mock.calls.at(-1)[0].signature).toBe('older');
   expect(store.setCursor).toHaveBeenCalledTimes(1);
   expect(store.setCursor).toHaveBeenCalledWith(wallet, 'p0');
 });
 test('a permanent rejected transfer is recorded for review and cannot block later deposits', async () => {
   const { scanner, service, store, connection } = setup();
   connection.getSignaturesForAddress.mockResolvedValue([{ signature: 'new' }, { signature: 'bad' }]);
-  service.deposit.mockRejectedValueOnce(new DepositValidationError('Wrong token recipient'));
+  service.deposit.mockImplementation(async ({ signature }) => { if (signature === 'bad') throw new DepositValidationError('Wrong token recipient'); });
   await scanner.scan(wallet);
   expect(store.reviewDeposit).toHaveBeenCalledWith('bad', id, 'Wrong token recipient');
   expect(service.deposit).toHaveBeenCalledTimes(2);
@@ -116,4 +116,47 @@ test('automatic recovery replays recent requests once per throttle period, witho
   await scanner.tick();
   expect(connection.getSignaturesForAddress.mock.calls.filter(([, options]) => !options.until)).toHaveLength(1);
   expect(connection.getSignaturesForAddress.mock.calls.filter(([, options]) => options.until === 'already-skipped')).toHaveLength(2);
+});
+
+test('unsupported version-1 history entries cannot starve a valid newer deposit and are saved before advancing', async () => {
+  const { scanner, service, store, connection, tx } = setup();
+  const saved = new Map();
+  store.scanReview = jest.fn(async signature => saved.get(signature));
+  store.reviewScan = jest.fn(async (signature, address, reason) => saved.set(signature, { address, reason }));
+  connection.getSignaturesForAddress.mockResolvedValue([{ signature: 'new-deposit', blockTime: 101 }, { signature: 'version-1-b', blockTime: 100 }, { signature: 'version-1-a', blockTime: 100 }]);
+  connection.getParsedTransaction.mockImplementation(async signature => {
+    if (signature.startsWith('version-1')) throw Object.assign(new Error('Transaction version (1) is not supported by the requesting client.'), { code: -32015 });
+    return tx;
+  });
+  await scanner.scan(wallet);
+  expect(service.deposit).toHaveBeenCalledWith(expect.objectContaining({ signature: 'new-deposit' }));
+  expect(store.reviewScan).toHaveBeenCalledTimes(2);
+  expect(store.setCursor).toHaveBeenCalledWith(wallet, 'new-deposit');
+  connection.getParsedTransaction.mockClear();
+  await scanner.scan(wallet);
+  expect(connection.getParsedTransaction.mock.calls.every(([signature]) => signature === 'new-deposit')).toBe(true);
+});
+test('a failed older lookup does not block a newer receipt and still retains the cursor for retry', async () => {
+  const { scanner, service, store, connection, tx } = setup();
+  connection.getSignaturesForAddress.mockResolvedValue([{ signature: 'new', blockTime: 101 }, { signature: 'older', blockTime: 100 }]);
+  connection.getParsedTransaction.mockImplementation(async signature => { if (signature === 'older') throw new Error('RPC timeout'); return tx; });
+  await expect(scanner.scan(wallet)).rejects.toThrow('RPC timeout');
+  expect(service.deposit).toHaveBeenCalledWith(expect.objectContaining({ signature: 'new' }));
+  expect(store.setCursor).not.toHaveBeenCalled();
+});
+test('a later page failure does not discard receipts fetched on the first page', async () => {
+  const { scanner, service, store, connection } = setup();
+  connection.getSignaturesForAddress.mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => ({ signature: `page-${i}`, blockTime: 101 }))).mockRejectedValueOnce(new Error('RPC pagination failed'));
+  await expect(scanner.scan(wallet)).rejects.toThrow('RPC pagination failed');
+  expect(service.deposit).toHaveBeenCalledTimes(100);
+  expect(store.setCursor).not.toHaveBeenCalled();
+});
+test('failed unsupported-version review persistence retains the cursor while other receipts continue', async () => {
+  const { scanner, service, store, connection, tx } = setup();
+  store.reviewScan = jest.fn().mockRejectedValue(new Error('database disconnected'));
+  connection.getSignaturesForAddress.mockResolvedValue([{ signature: 'unsupported', blockTime: 101 }, { signature: 'valid', blockTime: 100 }]);
+  connection.getParsedTransaction.mockImplementation(async signature => { if (signature === 'unsupported') throw Object.assign(new Error('unsupported version'), { code: -32015 }); return tx; });
+  await expect(scanner.scan(wallet)).rejects.toThrow('database disconnected');
+  expect(service.deposit).toHaveBeenCalledWith(expect.objectContaining({ signature: 'valid' }));
+  expect(store.setCursor).not.toHaveBeenCalled();
 });

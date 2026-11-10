@@ -2,6 +2,14 @@ const { PublicKey, SystemProgram } = require('@solana/web3.js');
 const { MEMO } = require('./chain');
 const { DepositValidationError } = require('./errors');
 const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } = require('./token');
+function retryCode(error) {
+  const message = String(error?.message || '');
+  if (error?.code === -32015 || /transaction version .*not supported/i.test(message)) return 'RPC_UNSUPPORTED_VERSION';
+  if (/429|too many requests|rate.?limit/i.test(message)) return 'RPC_RATE_LIMIT';
+  if (/timeout|timed out|abort/i.test(message)) return 'RPC_TIMEOUT';
+  if (/^[0-9A-Z]{5}$/.test(String(error?.code || ''))) return `DATABASE_${error.code}`;
+  return 'LOOKUP_OR_LEDGER_FAILURE';
+}
 class DepositScanner {
   constructor(service) { this.service = service; this.running = false; this.offset = 0; this.recoveryOffset = 0; this.replayed = new Map(); }
   async tick() {
@@ -45,53 +53,87 @@ class DepositScanner {
     const cursor = replay ? null : await store.cursor(address);
     const firstTime = replay ? replayFrom : await store.firstGameTime(address);
     const signatures = [];
-    let before;
+    let before, failed;
     for (;;) {
-      const page = await chain.connection.getSignaturesForAddress(new PublicKey(address), { limit: 100, ...(cursor ? { until: cursor } : {}), ...(before ? { before } : {}) }, 'finalized');
+      let page;
+      try {
+        page = await chain.connection.getSignaturesForAddress(new PublicKey(address), { limit: 100, ...(cursor ? { until: cursor } : {}), ...(before ? { before } : {}) }, 'finalized');
+      } catch (error) {
+        console.error(`DEPOSIT_RANGE_RETRY: ${retryCode(error)}; cursor retained.`);
+        failed = error;
+        break;
+      }
       signatures.push(...page.filter(p => !p.err && (p.blockTime == null || p.blockTime * 1000 >= firstTime - 60000)));
       if (!page.length || page.length < 100 || (!cursor && page.some(p => p.blockTime != null && p.blockTime * 1000 < firstTime - 60000))) break;
       before = page[page.length - 1].signature;
     }
-    for (const entry of [...signatures].reverse()) {
-      const transaction = await chain.connection.getParsedTransaction(entry.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 });
-      if (!transaction) throw new Error('Finalized transaction unavailable; retain cursor');
-      if (transaction.meta?.err) continue;
-      const instructions = transaction.transaction.message.instructions;
-      const memos = instructions.filter(i => i.programId.equals(MEMO));
-      if (memos.length === 0) {
-        await this.plainTransfer(address, entry.signature, transaction);
-        continue;
-      }
-      if (memos.length !== 1 || typeof memos[0].parsed !== 'string') continue;
-      const match = /^coinflip:([0-9a-f-]{36}):(creator|challenger)$/.exec(memos[0].parsed);
-      if (!match) continue;
-      let game;
-      try { game = await store.get(match[1]); } catch (error) { if (error.message === 'Unknown Solana game') continue; throw error; }
-      const player = game[match[2]];
-      if (!player || player.wallet !== address) continue;
-      const transfers = instructions.filter(i => ['transfer', 'transferChecked'].includes(i.parsed?.type));
-      const transfer = transfers[0];
-      const info = transfer?.parsed?.info;
-      const program = transfer?.programId?.toBase58();
-      let mint;
-      if (transfer?.programId.equals(SystemProgram.programId)) mint = 'NATIVE';
-      else if ([TOKEN_PROGRAM_ID.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58()].includes(program)) mint = info?.mint;
-      if (transfers.length !== 1 || !mint) {
-        await store.reviewDeposit(entry.signature, game.id, 'Unsupported transfer layout; reconcile on chain.');
-        continue;
-      }
-      // Structural validation is repeated by verifyDeposit, including sender,
-      // signature, program, recipient ATA, exact memo, owner and positive units.
-      // Permanent rejected transfers are retained for review. RPC/DB failures
-      // keep the cursor so the range is replayed rather than losing a receipt.
+    // Prioritize current payments and isolate each lookup. One unavailable old
+    // transaction must not starve a newer valid deposit. Keep the old cursor if
+    // any page or receipt failed, so isolation never discards unresolved proof.
+    for (const entry of signatures) {
       try {
-        await this.service.deposit({ id: game.id, userId: player.userId, signature: entry.signature, detectedMint: mint, transaction });
-      } catch (error) {
-        if (!(error instanceof DepositValidationError)) throw error;
-        await store.reviewDeposit(entry.signature, game.id, error.message);
+        // Unsupported versions remain in a durable review queue. The ordinary
+        // cursor may pass them only after that record commits successfully.
+        if (await store.scanReview?.(entry.signature)) continue;
+        await this.process(address, entry);
+      }
+      catch (error) {
+        if (retryCode(error) === 'RPC_UNSUPPORTED_VERSION' && store.reviewScan) {
+          try {
+            await store.reviewScan(entry.signature, address, 'Unsupported transaction version; client supports legacy/v0 only. No deposit credited.');
+            console.error(`DEPOSIT_VERSION_REVIEW: signature=${entry.signature}; saved for review, other receipts continue.`);
+          } catch (reviewError) {
+            failed ||= reviewError;
+            console.error(`DEPOSIT_REVIEW_SAVE_RETRY: ${retryCode(reviewError)}; cursor retained.`);
+          }
+          continue;
+        }
+        console.error(`DEPOSIT_RECEIPT_RETRY: ${retryCode(error)}; signature=${entry.signature}; cursor retained.`);
+        failed ||= error;
       }
     }
+    if (failed) throw failed;
     if (!replay && signatures.length) await store.setCursor(address, signatures[0].signature);
+  }
+  async process(address, entry) {
+    const { store, chain } = this.service;
+    const transaction = await chain.connection.getParsedTransaction(entry.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 });
+    if (!transaction) throw new Error('Finalized transaction unavailable; retain cursor');
+    if (transaction.meta?.err) return;
+    const instructions = transaction.transaction.message.instructions;
+    const memos = instructions.filter(i => i.programId.equals(MEMO));
+    if (memos.length === 0) {
+      await this.plainTransfer(address, entry.signature, transaction);
+      return;
+    }
+    if (memos.length !== 1 || typeof memos[0].parsed !== 'string') return;
+    const match = /^coinflip:([0-9a-f-]{36}):(creator|challenger)$/.exec(memos[0].parsed);
+    if (!match) return;
+    let game;
+    try { game = await store.get(match[1]); } catch (error) { if (error.message === 'Unknown Solana game') return; throw error; }
+    const player = game[match[2]];
+    if (!player || player.wallet !== address) return;
+    const transfers = instructions.filter(i => ['transfer', 'transferChecked'].includes(i.parsed?.type));
+    const transfer = transfers[0];
+    const info = transfer?.parsed?.info;
+    const program = transfer?.programId?.toBase58();
+    let mint;
+    if (transfer?.programId.equals(SystemProgram.programId)) mint = 'NATIVE';
+    else if ([TOKEN_PROGRAM_ID.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58()].includes(program)) mint = info?.mint;
+    if (transfers.length !== 1 || !mint) {
+      await store.reviewDeposit(entry.signature, game.id, 'Unsupported transfer layout; reconcile on chain.');
+      return;
+    }
+    // Structural validation is repeated by verifyDeposit, including sender,
+    // signature, program, recipient ATA, exact memo, owner and positive units.
+    // Permanent rejected transfers are retained for review. RPC/DB failures
+    // keep the cursor so the range is replayed rather than losing a receipt.
+    try {
+      await this.service.deposit({ id: game.id, userId: player.userId, signature: entry.signature, detectedMint: mint, transaction });
+    } catch (error) {
+      if (!(error instanceof DepositValidationError)) throw error;
+      await store.reviewDeposit(entry.signature, game.id, error.message);
+    }
   }
   async plainTransfer(address, signature, transaction) {
     const instructions = transaction.transaction.message.instructions;

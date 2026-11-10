@@ -30,7 +30,7 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     if (admin) { if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   });
   beforeEach(async () => {
-    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges", "SolMediaCache", "SolNotificationDeliveries"');
+    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolScanReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges", "SolMediaCache", "SolNotificationDeliveries"');
     await pool.query('DROP TABLE IF EXISTS \"SolNetwork\"');
     now = 1000;
     chain = {
@@ -140,6 +140,47 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     expect(await store.payments(g.id)).toHaveLength(0);
     expect(chain.broadcast).not.toHaveBeenCalled();
     expect(await traceDeposit(service, '2', 'bad')).toContain('public transaction signature');
+  });
+  test('version-1 wallet history cannot block recording and refunding an expired challenger payment', async () => {
+    const { DepositScanner } = require('../src/solana/scanner');
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    await service.deposit({ id: g.id, userId: '1', signature: 'creator-funded' });
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; });
+    await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId });
+    const { signature, transaction } = nativeScannerReceipt(walletB, 20);
+    chain.connection.getSignaturesForAddress.mockResolvedValue([{ signature, blockTime: 20 }, { signature: 'older-version-1', blockTime: 10 }]);
+    chain.connection.getParsedTransaction.mockImplementation(async signature => {
+      if (signature === 'older-version-1') throw Object.assign(new Error('Transaction version (1) is not supported by the requesting client.'), { code: -32015 });
+      return transaction;
+    });
+    now = 1000000;
+    await service.expire();
+    await new DepositScanner(service).confirm(g.id, '2');
+    await new DepositScanner(service).confirm(g.id, '2');
+    expect((await store.get(g.id)).status).toBe('CANCELLED');
+    expect(await store.scanReview('older-version-1')).toMatchObject({ signature: 'older-version-1', address: walletB });
+    expect((await store.payments(g.id)).filter(p => p.id === `refund:${signature}`)).toHaveLength(1);
+    expect(service.coin).not.toHaveBeenCalled();
+    await service.work();
+    expect(chain.broadcast).toHaveBeenCalledTimes(2);
+  });
+  test('direct /soldeposit proof submission recovers a unique memo-free challenger payment without scanning unrelated history', async () => {
+    const { registerSolanaCommands } = require('../src/solana/telegram');
+    const commands = {}, bot = { command: (name, handler) => { commands[name] = handler; } };
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    await service.deposit({ id: g.id, userId: '1', signature: 'creator-funded' });
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; });
+    await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId });
+    const { signature } = nativeScannerReceipt(walletB, 20);
+    now = 1000000;
+    await service.expire();
+    registerSolanaCommands(bot, service, { includeStart: false, allowLegacyGames: false });
+    const ctx = { from: { id: '2' }, chat: { type: 'private', id: '2' }, message: { text: `/soldeposit ${g.id} ${signature}` }, reply: jest.fn() };
+    await commands.soldeposit(ctx);
+    await commands.soldeposit(ctx);
+    expect((await store.payments(g.id)).filter(p => p.id === `refund:${signature}`)).toHaveLength(1);
+    expect(chain.connection.getSignaturesForAddress).not.toHaveBeenCalled();
+    expect(ctx.reply.mock.calls[0][0]).toContain('CANCELLED');
   });
   test('refund recovery rejects wrong recipient and cannot refund an already consumed game payment', async () => {
     const g = await service.create(input);

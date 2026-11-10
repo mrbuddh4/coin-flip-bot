@@ -163,3 +163,28 @@ same-amount game requests, including the challenger acceptance time. It shows th
 number of exact historical matches, proof validation and recorded/refund state.
 It does not import deposits, place a wager or send funds. Share that report to
 establish the actual rejection reason instead of inferring it from a pending card.
+
+
+## Unsupported wallet-history transactions must not block deposits
+
+The scanner now prioritizes newer receipts and isolates lookup failures. A failed
+older lookup or later pagination page cannot prevent already fetched valid
+payments from being processed. Transient lookup/database errors retain the old
+cursor for retry. Unsupported transaction-version errors are retained in the
+additive `SolScanReviews` table before the cursor may advance; replays skip those
+persisted review records, avoiding a permanent retry loop. No unsupported payment
+is guessed or credited. The private administrator `/solaudit` report lists the
+latest unsupported signatures for investigation. The existing client supports
+legacy/v0, not version 1; upgrading that parser and reconciling the review queue
+is separate from allowing supported receipts to proceed.
+
+`/soldeposit GAME_ID SIGNATURE` can now submit a unique finalized memo-free proof
+directly, without fetching unrelated wallet history. It still validates the
+registered signer, destination, exact historical asset/amount/time match and
+receipt uniqueness. A wrong memo is never treated as no memo. An expired or
+cancelled game returns the full verified transfer through the durable refund
+outbox and is never revived. Normal automatic recovery should perform this after
+deployment; the command is a fallback for a known signature.
+
+Deploy the latest recovery branch with the existing database. Runtime preparation
+creates only the additional review table; no reset or fresh-init flag is needed.

@@ -2,6 +2,7 @@ const { resultVisible } = require('./presentation');
 const { fromUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 const { traceDeposit } = require('./depositTrace');
+const { MEMO } = require('./chain');
 function args(ctx) { return ctx.message.text.trim().split(/\s+/).slice(1); }
 function depositInstructions(game, member, address) {
   const mainnet = game.cluster === 'mainnet-beta';
@@ -53,7 +54,13 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
     await ctx.reply(depositInstructions(game, game.challenger, service.chain.address));
   });
   command('soldeposit', async (ctx, [id, signature]) => {
-    const game = await service.deposit({ id, signature, userId: ctx.from.id });
+    // A supplied proof bypasses unrelated wallet-history lookups, while the
+    // service repeats sender, exact historical matching and receipt uniqueness.
+    // Never treat a wrong/unsupported memo as a plain transfer.
+    const transaction = await service.chain.connection.getParsedTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 });
+    if (!transaction) return ctx.reply('This payment is not finalized or is unavailable. No receipt was changed.');
+    const noMemo = !transaction.transaction.message.instructions.some(i => i.programId.equals(MEMO));
+    const game = await service.deposit({ id, signature, userId: ctx.from.id, transaction, noMemo });
     await ctx.reply(`Game ${id}: ${game.status}. ` + (game.winnerId && resultVisible(game) ? `Winner Telegram ID: ${game.winnerId}. Payout queued; use /solstatus to check finality.` : 'Deposit processed. Wrong amounts, duplicate extra deposits and late payments are queued for full refund.'));
   });
   command('solcancel', async (ctx, [id]) => {
@@ -76,6 +83,7 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
     let coverage = 'Verified: recorded liabilities and SOL reserve are covered.';
     try { await service.chain.assertSolvent(liabilities); } catch (_) { coverage = 'NOT VERIFIED: treasury balance/RPC/reserve needs review. New unsigned payments stay pending when coverage fails.'; }
     const reviews = (await service.store.pool.query('SELECT id,signed->>\'signature\' AS signature FROM "SolOutbox" WHERE status=\'REVIEW\' ORDER BY "createdAt" LIMIT 10')).rows;
+    const scanReviews = (await service.store.pool.query('SELECT signature FROM "SolScanReviews" ORDER BY "createdAt" DESC LIMIT 5')).rows;
     const custody = await service.store.holderCustody?.();
     let holderCoverage = '';
     if (custody) {
@@ -84,7 +92,7 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
       catch (_) { verified = 'NOT VERIFIED: holder wallet balance/RPC needs review.'; }
       holderCoverage = `\n\nHolder wallet: ${custody.wallet}\n${verified}\nRecorded reserves (first 5, atomic units):\n${custody.reserves.slice(0, 5).map(p => `${p.mint}: ${p.amount}`).join('\n') || 'None'}\nHolder distributions remain deferred.`;
     }
-    await ctx.reply(`Treasury: ${service.chain.address}\n${coverage}\nLiabilities (atomic units):\n${liabilities.map(p => `${p.mint}: ${p.amount}`).join('\n') || 'None'}${holderCoverage}\n\nReview payments (first 10):\n${reviews.map(p => `${p.id}\n${p.signature || 'No signed transaction'}`).join('\n') || 'None'}\nUse /solrecheck PAYMENT_ID to inspect the original signature. It never resends or creates a replacement.`);
+    await ctx.reply(`Treasury: ${service.chain.address}\n${coverage}\nLiabilities (atomic units):\n${liabilities.map(p => `${p.mint}: ${p.amount}`).join('\n') || 'None'}${holderCoverage}\n\nReview payments (first 10):\n${reviews.map(p => `${p.id}\n${p.signature || 'No signed transaction'}`).join('\n') || 'None'}\nUse /solrecheck PAYMENT_ID to inspect the original signature. It never resends or creates a replacement.\n\nUnsupported transaction versions saved for review (latest 5):\n${scanReviews.map(r => r.signature).join('\n') || 'None'}\nThese have not been credited as deposits. Other supported receipts continue normally.`);
   });
   command('solrecheck', async (ctx, [id]) => {
     if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');

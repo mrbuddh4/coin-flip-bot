@@ -138,6 +138,7 @@ class SolanaStore {
       CREATE TABLE IF NOT EXISTS "SolDrafts" (id text PRIMARY KEY, "userId" text NOT NULL, "chatId" text NOT NULL, "expiresAt" timestamptz NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolScanCursors" (address text PRIMARY KEY, signature text NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolDepositReviews" (signature text PRIMARY KEY, "gameId" text NOT NULL, reason text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
+      CREATE TABLE IF NOT EXISTS "SolScanReviews" (signature text PRIMARY KEY, address text NOT NULL, reason text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
     `);
     await this.pool.query('ALTER TABLE "SolDrafts" ADD COLUMN IF NOT EXISTS "messageId" bigint');
     await this.pool.query(FEE_SCHEMA);
@@ -201,6 +202,8 @@ class SolanaStore {
     return Number((await this.pool.query('SELECT MIN((state->>\'createdAt\')::bigint) AS time FROM "SolGames" WHERE state->\'creator\'->>\'wallet\'=$1 OR state->\'challenger\'->>\'wallet\'=$1', [address])).rows[0]?.time || Date.now());
   }
   async reviewDeposit(signature, gameId, reason) { await this.pool.query('INSERT INTO "SolDepositReviews" (signature,"gameId",reason) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [signature, gameId, reason]); }
+  async scanReview(signature) { return (await this.pool.query('SELECT signature,address,reason FROM "SolScanReviews" WHERE signature=$1', [signature])).rows[0]; }
+  async reviewScan(signature, address, reason) { await this.pool.query('INSERT INTO "SolScanReviews" (signature,address,reason) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [signature, address, reason]); }
   async bindNetwork(genesis, wallet) {
     const client = await this.pool.connect();
     try {
