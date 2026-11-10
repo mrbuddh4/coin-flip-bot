@@ -13,7 +13,7 @@ const { network } = require('./network');
 const { SolanaFees, holderRewardsMode } = require('./fees');
 const { holderHandler } = require('./holderPage');
 const { holderWallet } = require('./custody');
-const { PaymentNotifications } = require('./notifications');
+const { ObsoleteNoticeCleanup } = require('./notifications');
 const { startupStep, formatStartupFailure } = require('../utils/startupDiagnostics');
 function assertLaunchReady(env = process.env) {
   const rewards = holderRewardsMode(env);
@@ -68,7 +68,7 @@ async function main() {
     bot.botInfo = await startupStep('telegram', () => bot.telegram.getMe());
     registerSolanaCommands(bot, service, { includeStart: false, allowLegacyGames: false });
     const ui = new SolanaInterface(bot, service, scanner);
-    const notifications = new PaymentNotifications(store, bot.telegram);
+    const noticeCleanup = new ObsoleteNoticeCleanup(store, bot.telegram);
     ui.register();
     bot.catch(() => console.error('Solana command failed; check private configuration and ledger.'));
     const cycle = async () => {
@@ -76,9 +76,9 @@ async function main() {
       cycleRunning = true;
       try { await scanner.tick(); await service.work(); await ui.render(); await ui.refreshPrivateScreens(); }
       finally {
-        // Delivery failures must never block signing, reconciliation or polling.
-        try { await notifications.tick(); }
-        catch (_) { console.error('PAYMENT_NOTICE_RETRY: financial records retained.'); }
+        // Removing obsolete verbose notices must never affect payments or polling.
+        try { await noticeCleanup.tick(); }
+        catch (_) { console.error('OBSOLETE_NOTICE_CLEANUP_RETRY: financial records retained.'); }
         cycleRunning = false;
       }
     };

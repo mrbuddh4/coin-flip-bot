@@ -30,7 +30,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     if (admin) { if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   });
   beforeEach(async () => {
-    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges", "SolMediaCache"');
+    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges", "SolMediaCache", "SolNotificationDeliveries"');
     await pool.query('DROP TABLE IF EXISTS \"SolNetwork\"');
     now = 1000;
     chain = {
@@ -420,7 +420,6 @@ integration('Solana durable ledger on real PostgreSQL', () => {
   }
   test('slow video upload cannot reveal a winner through group, private status, statistics or automatic notices', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
-    const { PaymentNotifications } = require('../src/solana/notifications');
     const game = await presentationGame();
     const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.videoDuration = 1000;
     let finishUpload, signalUpload;
@@ -433,7 +432,6 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect((await store.profile('1')).privateScreen.text).toContain('FLIPPING'); expect((await store.profile('1')).privateScreen.text).not.toContain('Winner:');
     const stats = context('1'); await ui.stats(stats); expect((await store.profile('1')).privateScreen.text).toContain('Flips: 0');
     const board = context('1'); await ui.leaderboard(board); expect((await store.profile('1')).privateScreen.text).toContain('No completed flips yet');
-    const notifier = new PaymentNotifications(store, bot.telegram); await notifier.tick();
     expect(bot.telegram.sendMessage.mock.calls.some(c => c[1].includes('Winner payout'))).toBe(false);
     const restarted = new SolanaInterface(bot, service, {}); restarted.videoDuration = 1000;
     await restarted.render(); expect(bot.telegram.sendPhoto).not.toHaveBeenCalled(); expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
@@ -445,8 +443,8 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(1);
     expect(bot.telegram.deleteMessage.mock.invocationCallOrder[0]).toBeLessThan(bot.telegram.sendPhoto.mock.invocationCallOrder[0]);
     expect(bot.telegram.sendPhoto.mock.calls[0][2].caption).toContain('Winner:');
-    for (let n = 0; n < 5; n++) await notifier.tick();
-    expect(bot.telegram.sendMessage.mock.calls.some(c => c[1].includes('Winner payout'))).toBe(true);
+    expect(bot.telegram.sendMessage.mock.calls.some(c => c[1].includes('Winner payout'))).toBe(false);
+    expect(bot.telegram.sendPhoto.mock.calls[0][2].caption).toContain('Prize pending');
   });
   test('video ID and cleanup survive restart; the next flip uses cached video instead of another upload', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
@@ -586,6 +584,52 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect((await store.profile('1')).privateScreen.text).toContain('Dashboard');
     expect((await store.profile('2')).privateScreen.text).toContain('FLIPPING');
     expect((await store.profile('2')).privateScreen.text).not.toContain('Winner:');
+  });
+
+  test('winner card contains short prize, burn and holder links and edits as transactions finalize', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    await store.bindHolderWallet(Keypair.fromSeed(Buffer.alloc(32, 21)).publicKey.toBase58());
+    const g = await presentationGame(), bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.videoDuration = 1;
+    await ui.render(); now += 252; await ui.render();
+    const initial = bot.telegram.sendPhoto.mock.calls[0][2].caption;
+    expect(initial).toContain('Prize pending'); expect(initial).toContain('Burn pending'); expect(initial).toContain('Holder fee pending');
+    const payments = await store.payments(g.id);
+    for (const p of payments) { await store.saveSigned(p.id, { signature: 'proof-' + p.id }); await store.paymentState(p.id, 'CONFIRMED'); }
+    await ui.render();
+    const final = bot.telegram.editMessageCaption.mock.calls.at(-1)[3];
+    for (const label of ['Prize', 'Burn', 'Holder fee']) expect(final).toContain('>' + label + ' ✓</a>');
+    expect(final.replace(/<[^>]*>/g, '')).not.toContain('https://');
+    expect((await store.get(g.id)).ui.terminal).toBe(true);
+  });
+  test('cancelled card gets refund proofs automatically, including a late deposit after terminal status', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const g = await service.create({ ...input, interfaceVersion: 2 }), bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
+    await service.deposit({ id: g.id, userId: '1', signature: 'refund-deposit' });
+    await service.cancel({ id: g.id, userId: '1', chatId: '-100' });
+    await ui.render();
+    expect(bot.telegram.sendMessage.mock.calls[0][1]).toContain('Refund to 1: 0.1 SOL pending');
+    await store.saveSigned('refund:refund-deposit', { signature: 'refund-tx' }); await store.paymentState('refund:refund-deposit', 'CONFIRMED');
+    await ui.render();
+    expect(bot.telegram.editMessageText.mock.calls.at(-1)[3]).toContain('>Refund to 1: 0.1 SOL ✓</a>');
+    expect((await store.get(g.id)).ui.terminal).toBe(true);
+    await service.deposit({ id: g.id, userId: '1', signature: 'late-extra-deposit' });
+    expect((await store.get(g.id)).ui.terminal).toBe(false);
+    await ui.render();
+    expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.editMessageText.mock.calls.at(-1)[3]).toContain('Refund to 1: 0.1 SOL pending');
+    await store.saveSigned('refund:late-extra-deposit', { signature: 'late-refund-tx' }); await store.paymentState('refund:late-extra-deposit', 'CONFIRMED');
+    await ui.render(); expect(bot.telegram.editMessageText.mock.calls.at(-1)[3]).toContain('/tx/late-refund-tx');
+  });
+  test('upgrade cleanup keeps notice delivery history and financial facts while removing only obsolete message IDs', async () => {
+    const { ObsoleteNoticeCleanup } = require('../src/solana/notifications');
+    const g = await service.create(input); await service.deposit({ id: g.id, userId: '1', signature: 'old-receipt' });
+    await pool.query('INSERT INTO "SolNotificationDeliveries" ("eventId","chatId","messageId","deliveredAt") VALUES ($1,$2,$3,now())', ['deposit:old-receipt', '-100', 800]);
+    const telegram = { deleteMessage: jest.fn().mockResolvedValue({}), sendMessage: jest.fn() };
+    const before = await store.get(g.id); await new ObsoleteNoticeCleanup(store, telegram).tick();
+    expect(telegram.deleteMessage).toHaveBeenCalledWith('-100', 800); expect(telegram.sendMessage).not.toHaveBeenCalled();
+    expect(await store.get(g.id)).toEqual(before);
+    const row = (await pool.query('SELECT "messageId","cleanupState" FROM "SolNotificationDeliveries" WHERE "eventId"=$1', ['deposit:old-receipt'])).rows[0];
+    expect(row).toEqual({ messageId: '800', cleanupState: 'REMOVED' });
   });
 
 });

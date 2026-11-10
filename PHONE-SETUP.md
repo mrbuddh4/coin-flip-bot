@@ -74,11 +74,13 @@ If an older build skipped a memo-free transfer, use the original game's Confirm 
 
 ### Automatic payment transparency
 
-The worker automatically sends deposit and outgoing-payment status notices to both players privately and the group where the flip began. Each includes the exact asset, amount, wallets and transaction link when signed; only finalized proof is labeled confirmed. This includes expired-game refunds, burn allocations and holder-wallet custody transfers, even after the challenge card closes. Holder custody is not a distribution to holders. A blocked chat retries without preventing other destinations or payments. Accepted notices are remembered across restarts; a lost Telegram response can exceptionally cause a duplicate notice, never a replacement payment. One notice per destination per five-second worker pass limits chat bursts. Existing ledger receipts receive an initial catch-up notice after this upgrade. Refresh remains an optional manual status check. Amount input accepts both `0.01` and `.01`.
+The worker updates the current game screen and the originating group card automatically. The winner announcement includes short Prize, Burn and Holder fee transaction links. Cancelled/expired games include refund links with player and amount; late refunds reopen the same card for updates. Pending/needs-review states remain explicit, and only finalized proof gets a check mark. Holder fee means transfer into holder custody, not distribution to individual holders. No standalone deposit/payment notices or historical catch-up messages are sent. Refresh is an optional manual check. Amount input accepts both `0.01` and `.01`.
+
+The bot also attempts to delete the older verbose notices using its saved delivery message IDs, preserving the database history. Telegram restrictions may prevent deletion of old or inaccessible messages; those are recorded as undeletable. It never deletes unrelated chat messages or financial records.
 
 ### Flip reveal order
 
-The group video is sent first and its playback timer starts after Telegram acknowledges delivery. The video message ID and playback deadline persist across restarts, and its Telegram file ID is cached for future flips. Once playback ends, the bot removes the video and posts the result image, then updates its payout confirmation. Private status, statistics, leaderboards and automatic payment notices hold back the winner until the group result is announced. Deposit notices remain immediate. Blockchain payout processing continues independently; an external wallet/explorer can therefore show payment before the Telegram presentation finishes. Failed video cleanup retries. A restart during an upload with no acknowledged message ID waits up to five minutes before falling back to the result, without automatically uploading another potentially duplicate clip.
+The group video is sent first and its playback timer starts after Telegram acknowledges delivery. The video message ID and playback deadline persist across restarts, and its Telegram file ID is cached for future flips. Once playback ends, the bot removes the video and posts the result image, then updates its payout confirmation. Private status, statistics and leaderboards hold back the winner until the group result is announced. Blockchain payout processing continues independently; an external wallet/explorer can therefore show payment before the Telegram presentation finishes. Failed video cleanup retries. A restart during an upload with no acknowledged message ID waits up to five minutes before falling back to the result, without automatically uploading another potentially duplicate clip.
 
 ## Smooth Telegram navigation
 
@@ -103,6 +105,6 @@ Group setup cards are removed when their owner opens the DM flow, with cleanup
 retries for consumed/expired drafts. The challenge updates in place; its used
 card and the video are removed when the final result is shown. Failed cleanup
 is retried and old keyboards are disabled where Telegram permits it. Final
-results and automatic payment receipts remain as the transparent game history.
+results and compact transaction links remain as the transparent game history.
 Existing untracked messages from older deployments cannot be discovered or
 removed retroactively by this version.

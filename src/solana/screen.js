@@ -32,7 +32,7 @@ class PrivateScreen {
     const revision = randomBytes(4).toString('hex');
     const buttons = rows.map(row => row.map(b => b.callback_data ? { ...b, callback_data: `${b.callback_data}|${revision}` } : b));
     if (buttons.flat().some(b => b.callback_data && Buffer.byteLength(b.callback_data) > 64)) throw new Error('Navigation button too long');
-    const options = { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } };
+    const options = { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: buttons } };
     let messageId = old?.messageId;
     if (messageId) {
       try { await this.telegram.editMessageText(ctx.chat.id, messageId, undefined, text, options); }

@@ -4,7 +4,7 @@ jest.mock('../src/solana/chain', () => ({ SolanaChain: jest.fn(), publicKey: jes
 jest.mock('../src/solana/store', () => ({ SolanaStore: jest.fn() }));
 jest.mock('../src/solana/service', () => ({ SolanaService: jest.fn() }));
 jest.mock('../src/solana/scanner', () => ({ DepositScanner: jest.fn() }));
-jest.mock('../src/solana/notifications', () => ({ PaymentNotifications: jest.fn().mockImplementation(() => ({ tick: jest.fn().mockResolvedValue() })) }));
+jest.mock('../src/solana/notifications', () => ({ ObsoleteNoticeCleanup: jest.fn().mockImplementation(() => ({ tick: jest.fn().mockResolvedValue() })) }));
 jest.mock('../src/solana/interface', () => ({ SolanaInterface: jest.fn() }));
 jest.mock('../src/solana/telegram', () => ({ registerSolanaCommands: jest.fn() }));
 jest.mock('../src/utils/instanceLock', () => ({ acquireInstanceLock: jest.fn() }));
@@ -16,7 +16,7 @@ const { SolanaStore } = require('../src/solana/store');
 const { SolanaService } = require('../src/solana/service');
 const { DepositScanner } = require('../src/solana/scanner');
 const { SolanaInterface } = require('../src/solana/interface');
-const { PaymentNotifications } = require('../src/solana/notifications');
+const { ObsoleteNoticeCleanup } = require('../src/solana/notifications');
 const { acquireInstanceLock } = require('../src/utils/instanceLock');
 const { startHealthServer } = require('../src/utils/healthServer');
 const { Telegraf } = require('telegraf');
@@ -46,8 +46,8 @@ test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42
     expect(snapshot).not.toHaveBeenCalled(); expect(bot.launch).toHaveBeenCalledTimes(1);
     expect(service.feeService.mode).toBe('deferred'); expect(service.feeService.source).toBeNull();
     expect(store.bindHolderWallet).toHaveBeenCalledWith(wallet);
-    expect(PaymentNotifications).toHaveBeenCalledWith(store, bot.telegram);
-    expect(PaymentNotifications.mock.results[0].value.tick).toHaveBeenCalledTimes(1);
+    expect(ObsoleteNoticeCleanup).toHaveBeenCalledWith(store, bot.telegram);
+    expect(ObsoleteNoticeCleanup.mock.results[0].value.tick).toHaveBeenCalledTimes(1);
     expect(ui.refreshPrivateScreens).toHaveBeenCalledTimes(1);
     expect(service.work).toHaveBeenCalledTimes(1); expect(scanner.tick).toHaveBeenCalledTimes(1);
     const options = startHealthServer.mock.calls[0][0];

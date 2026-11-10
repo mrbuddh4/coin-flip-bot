@@ -54,6 +54,7 @@ class SolanaStore {
           return result.rowCount === 1;
         },
         enqueue: async payment => {
+          if (game.interfaceVersion) { game.ui ||= {}; game.ui.terminal = false; }
           await client.query('INSERT INTO "SolOutbox" (id, "gameId", payment) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [payment.id, id, JSON.stringify(payment)]);
         },
         accrueFees: (game, split) => accrueFees(client, game, split),
@@ -107,7 +108,7 @@ class SolanaStore {
   async queueHolderReserves(treasury) { await custody.queueRetainedPools(this.pool, treasury); }
   async holderCustody() { return custody.custodyState(this.pool); }
   async payments(gameId) {
-    return (await this.pool.query('SELECT id, status, signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND payment->>\'kind\'<>\'holder\' ORDER BY id', [gameId])).rows;
+    return (await this.pool.query('SELECT id, status, payment, signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND payment->>\'kind\'<>\'holder\' ORDER BY id', [gameId])).rows;
   }
   async saveToken(userId, token) {
     await this.pool.query('INSERT INTO "SolTokens" ("userId",mint,metadata) VALUES ($1,$2,$3) ON CONFLICT ("userId",mint) DO UPDATE SET metadata=EXCLUDED.metadata', [userId, token.address, JSON.stringify(token)]);
@@ -164,7 +165,7 @@ class SolanaStore {
     const { rows } = await this.pool.query('SELECT state FROM "SolGames" WHERE state->\'creator\'->>\'userId\'=$1 OR state->\'challenger\'->>\'userId\'=$1 ORDER BY "createdAt" DESC LIMIT $2', [String(userId), limit]);
     return rows.map(r => r.state);
   }
-  async groupGames() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state ? \'interfaceVersion\' AND COALESCE(state->\'ui\'->>\'terminal\',\'false\')<>\'true\' ORDER BY "createdAt"')).rows.map(r => r.state); }
+  async groupGames() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state ? \'interfaceVersion\' AND (COALESCE(state->\'ui\'->>\'terminal\',\'false\')<>\'true\' OR COALESCE(state->\'ui\'->>\'compactVersion\',\'0\')<>\'1\') ORDER BY "createdAt"')).rows.map(r => r.state); }
   async allResults() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state->>\'status\'=\'SETTLED\'')).rows.map(r => r.state); }
   async watchedAddresses() {
     return (await this.pool.query('SELECT DISTINCT state->\'creator\'->>\'wallet\' AS address FROM "SolGames" UNION SELECT DISTINCT state->\'challenger\'->>\'wallet\' AS address FROM "SolGames" WHERE state->\'challenger\' IS NOT NULL')).rows.map(r => r.address).filter(Boolean);
