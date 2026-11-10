@@ -1,3 +1,5 @@
+> Restoration update: This branch now includes the group/private button flow and automatic deposit scanning described in [SOLANA.md](SOLANA.md). SOL and the exact SID mint are defaults for mainnet accounts. Mainnet wagering remains blocked until the confirmed holder/burn fee implementation is completed. Keep the existing recovery settings while that work continues. No database reset is needed for the additive menu/scanner state. For a future mainnet launch, use a separate ledger from any occupied devnet database.
+
 # Railway setup from an iPhone or iPad
 
 No laptop, local installation or terminal is required for this path. The assistant has prepared the source, deployment configuration and database initialization step. Railway account actions and private credential entry still belong to the owner. Railway is not a connected service available to the assistant. Nothing is deployed yet.

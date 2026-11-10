@@ -23,16 +23,19 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await pool.query(fs.readFileSync(path.join(__dirname, '../src/solana/schema.sql'), 'utf8'));
     store = new SolanaStore(pool);
     await store.verifySchema();
+    await store.prepareInterface();
   });
   afterAll(async () => {
     if (pool) await pool.end();
     if (admin) { if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   });
   beforeEach(async () => {
-    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens"');
+    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews"');
+    await pool.query('DROP TABLE IF EXISTS \"SolNetwork\"');
     now = 1000;
     chain = {
-      address: walletA,
+      address: Keypair.fromSeed(Buffer.alloc(32, 10)).publicKey.toBase58(),
+      env: { SOLANA_CLUSTER: 'devnet' },
       tokenInfo: jest.fn().mockResolvedValue({ address: 'NATIVE', symbol: 'SOL', decimals: 9 }),
       verifyDeposit: jest.fn().mockResolvedValue(100000000n),
       buildPayment: jest.fn(async payment => ({ signature: `signed-${payment.id}`, raw: 'same-bytes', lastValidBlockHeight: 100 })),
@@ -153,4 +156,225 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await store.saveToken('1', { address: walletA, symbol: 'CUSTOM', decimals: 6 });
     expect(await store.tokens('1')).toEqual([{ address: walletA, symbol: 'CUSTOM', decimals: 6 }]);
   });
+  test('UI games require creator funding before accept, then snapshot receiving wallets and timeouts', async () => {
+    const receive = Keypair.fromSeed(Buffer.alloc(32, 11)).publicKey.toBase58();
+    const g = await service.create({ ...input, receiveWallet: receive, interfaceVersion: 1 });
+    expect(g.expiresAt - now).toBe(180000);
+    await expect(service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId })).rejects.toThrow('not funded');
+    await service.deposit({ id: g.id, userId: '1', signature: 'creator' });
+    expect((await store.get(g.id)).expiresAt - now).toBe(240000);
+    await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId });
+    expect((await store.get(g.id)).expiresAt - now).toBe(180000);
+    await store.updateProfile('1', { receiveWallet: walletB });
+    await service.deposit({ id: g.id, userId: '2', signature: 'challenger' });
+    expect((await pool.query('SELECT payment FROM "SolOutbox"')).rows[0].payment.recipient).toBe(receive);
+  });
+  test('UI concurrent creation admits only one game per group and duplicate draft is idempotent', async () => {
+    const results = await Promise.allSettled(Array.from({ length: 3 }, () => service.create({ ...input, interfaceVersion: 1 })));
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    const g = results.find(r => r.status === 'fulfilled').value;
+    const retried = await service.create({ ...input, interfaceVersion: 1, gameId: g.id });
+    expect(retried.creator.payToken).toBe(g.creator.payToken);
+    expect(retried.id).toBe(g.id);
+  });
+  test('wrong supported token refunds the actual asset, preserving the intended wager', async () => {
+    const g = await service.create(input);
+    await service.deposit({ id: g.id, userId: '1', signature: 'wrong-mint', detectedMint: walletB });
+    expect((await store.get(g.id)).creator.deposit).toBeUndefined();
+    expect((await pool.query('SELECT payment FROM "SolOutbox"')).rows[0].payment).toMatchObject({ mint: walletB, amount: '100000000', recipient: walletA });
+  });
+  test('network identity cannot relabel occupied devnet records or change the signing wallet', async () => {
+    const { DEVNET_GENESIS } = require('../src/solana/chain');
+    const { NETWORKS } = require('../src/solana/network');
+    await service.create(input);
+    await expect(store.bindNetwork(NETWORKS['mainnet-beta'].genesis, chain.address)).rejects.toThrow('LEDGER_NETWORK');
+    await store.bindNetwork(DEVNET_GENESIS, chain.address);
+    await expect(store.bindNetwork(DEVNET_GENESIS, walletA)).rejects.toThrow('LEDGER_NETWORK');
+    await expect(store.bindNetwork(NETWORKS['mainnet-beta'].genesis, chain.address)).rejects.toThrow('LEDGER_NETWORK');
+    expect((await store.history('1')).length).toBe(1);
+  });
+  test('empty ledger can bind a deliberate mainnet identity without resetting anything', async () => {
+    const { NETWORKS } = require('../src/solana/network');
+    await store.bindNetwork(NETWORKS['mainnet-beta'].genesis, chain.address);
+    const { rows } = await pool.query('SELECT genesis,wallet FROM "SolNetwork"');
+    expect(rows[0]).toEqual({ genesis: NETWORKS['mainnet-beta'].genesis, wallet: chain.address });
+  });
+  test('profiles, drafts, sessions and scan progress persist and drafts remain user-owned', async () => {
+    await store.updateProfile('1', { wallet: walletA });
+    await store.updateProfile('1', { receiveWallet: walletB });
+    expect(await store.profile('1')).toMatchObject({ wallet: walletA, receiveWallet: walletB });
+    await store.setSession('1', { kind: 'create' });
+    expect(await new SolanaStore(pool).session('1')).toEqual({ kind: 'create' });
+    await store.draft('owned', '1', '-100');
+    await expect(store.draft('owned', '2')).rejects.toThrow('belongs');
+    await store.setCursor(walletA, 'cursor');
+    expect(await new SolanaStore(pool).cursor(walletA)).toBe('cursor');
+    await pool.query('UPDATE "SolSessions" SET "expiresAt"=now()-interval \'1 second\'');
+    expect(await store.session('1')).toBeNull();
+  });
+  test('the shared bot wallet cannot be a player source or receiving wallet', async () => {
+    await expect(service.create({ ...input, wallet: chain.address })).rejects.toThrow('player wallet');
+    await expect(service.create({ ...input, receiveWallet: chain.address })).rejects.toThrow('player wallet');
+  });
+
+  function fakeBot() {
+    let messageId = 0;
+    const handlers = {};
+    const bot = { handlers, start: fn => { handlers.start = fn; }, command: (name, fn) => { handlers[name] = fn; },
+      action: (_, fn) => { handlers.action = fn; }, on: (_, fn) => { handlers.text = fn; },
+      telegram: { getMe: jest.fn().mockResolvedValue({ username: 'TestCoinFlipBot' }),
+        sendMessage: jest.fn(async () => ({ message_id: ++messageId })), editMessageText: jest.fn().mockResolvedValue({}), sendVideo: jest.fn().mockResolvedValue({}) } };
+    return bot;
+  }
+  function context(userId, text = '', type = 'private') {
+    return { from: { id: Number(userId), first_name: userId === '1' ? '<Alice>' : 'Bob' },
+      chat: { id: type === 'private' ? Number(userId) : -100, type }, message: { text },
+      reply: jest.fn().mockResolvedValue({ message_id: 100 }), answerCbQuery: jest.fn().mockResolvedValue() };
+  }
+  async function callback(bot, userId, data) {
+    const ctx = context(userId); ctx.callbackQuery = { data };
+    await bot.handlers.action(ctx); return ctx;
+  }
+  test('restored group/private buttons complete a SID game with saved wallets, automatic proof, animation and finalized payout', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const { SID_MINT } = require('../src/solana/featured');
+    const { TOKEN_2022_PROGRAM_ID } = require('../src/solana/token');
+    const bot = fakeBot(), scanner = { tick: jest.fn() };
+    chain.env.SOLANA_CLUSTER = 'mainnet-beta'; // Offline UI test, no mainnet runtime or transaction.
+    chain.tokenInfo.mockImplementation(async mint => mint === SID_MINT
+      ? { address: mint, decimals: 6, symbol: 'SID', program: TOKEN_2022_PROGRAM_ID.toBase58() }
+      : { address: 'NATIVE', decimals: 9, symbol: 'SOL' });
+    const ui = new SolanaInterface(bot, service, scanner, { PUBLIC_BASE_URL: 'https://bot.example' });
+    ui.videoDuration = 1000; ui.register();
+    const group = context('1', '/flip', 'supergroup');
+    await bot.handlers.flip(group);
+    const url = group.reply.mock.calls[0][1].reply_markup.inline_keyboard[0][0].url;
+    const creator = context('1', '/start ' + url.split('?start=')[1]);
+    await bot.handlers.start(creator);
+    expect((await store.session('1')).field).toBe('wallet');
+    await bot.handlers.text(context('1', walletA));
+    expect((await store.session('1')).field).toBe('receiveWallet');
+    await callback(bot, '1', 's:wallet:same');
+    const select = await store.session('1');
+    expect(select.tokens.map(t => t.symbol)).toEqual(['SOL', 'SID']);
+    await callback(bot, '1', `s:token:1:${select.nonce}`);
+    await bot.handlers.text(context('1', '100'));
+    const [game] = await store.groupGames();
+    expect(game.token.address).toBe(SID_MINT);
+    expect(game.creator.receiveWallet).toBe(walletA);
+    expect(game.wager).toBe('100000000');
+    expect(bot.telegram.sendMessage.mock.calls[0][1]).toContain('&lt;Alice&gt;');
+    const stale = await callback(bot, '1', `s:token:1:${select.nonce}`);
+    expect(stale.reply.mock.calls[0][0]).toContain('could not be completed');
+    await service.deposit({ id: game.id, userId: '1', signature: 'sid-creator' });
+    await ui.render();
+    expect(bot.telegram.editMessageText.mock.calls.at(-1)[4].reply_markup.inline_keyboard[0][0].url).toContain('soljoin_');
+    await store.updateProfile('2', { wallet: walletB, receiveWallet: walletB });
+    await bot.handlers.start(context('2', '/start soljoin_' + game.id));
+    const join = await store.session('2');
+    expect(join.kind).toBe('join');
+    const accepted = await callback(bot, '2', `s:accept:${join.nonce}`);
+    expect(accepted.reply.mock.calls[0][0]).toContain('Memo (required)');
+    expect(accepted.reply.mock.calls[0][1].reply_markup.inline_keyboard[0][0].url).toContain('/pay/');
+    scanner.tick.mockImplementationOnce(() => service.deposit({ id: game.id, userId: '2', signature: 'sid-challenger' }));
+    await callback(bot, '2', 's:check:' + game.id);
+    expect((await store.get(game.id)).status).toBe('SETTLED');
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    const flipping = bot.telegram.editMessageText.mock.calls.at(-1)[3];
+    expect(flipping).toContain('Flipping the coin'); expect(flipping).not.toContain('Winner:');
+    chain.paymentStatus.mockResolvedValue('finalized');
+    await service.work(); now += 1001; await ui.render();
+    const result = bot.telegram.editMessageText.mock.calls.at(-1)[3];
+    expect(result).toContain('Winner:'); expect(result).toContain('CONFIRMED'); expect(result).not.toContain('?cluster=devnet');
+    const restarted = new SolanaInterface(bot, new SolanaService({ store, chain, now: () => now }), scanner);
+    await restarted.render();
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    expect((await store.get(game.id)).ui.terminal).toBe(true);
+  });
+  test('private token menu rejects forwarded/stale selections, removes custom favorites and preserves SID', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const { SID_MINT } = require('../src/solana/featured');
+    chain.env.SOLANA_CLUSTER = 'mainnet-beta';
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    await store.saveToken('1', { address: walletA, symbol: 'CUSTOM', decimals: 6 });
+    await callback(bot, '1', 's:tokens');
+    const state = await store.session('1');
+    const other = await callback(bot, '2', `s:remove:2:${state.nonce}`);
+    expect(other.reply.mock.calls[0][0]).toContain('could not be completed');
+    expect(await store.tokens('1')).toHaveLength(1);
+    await callback(bot, '1', `s:remove:2:${state.nonce}`);
+    expect(await store.tokens('1')).toHaveLength(0);
+    const newer = await store.session('1');
+    expect(newer.tokens[1].address).toBe(SID_MINT);
+    await callback(bot, '1', `s:remove:1:${newer.nonce}`);
+    expect((await store.session('1')).tokens[1].address).toBe(SID_MINT);
+  });
+  test('deleted group card is replaced, while ambiguous Telegram failures never cause an immediate duplicate', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const g = await service.create({ ...input, interfaceVersion: 1 });
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
+    await ui.render();
+    expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
+    await service.deposit({ id: g.id, userId: '1', signature: 'creator' });
+    bot.telegram.editMessageText.mockRejectedValueOnce({ response: { description: 'Bad Request: message to edit not found' } });
+    await ui.render();
+    expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(2);
+    await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId });
+    bot.telegram.editMessageText.mockRejectedValueOnce(new Error('Connection lost'));
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try { await ui.render(); } finally { log.mockRestore(); }
+    expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test('custom-token favorites can be added through the menu, survive restart and be selected for a flip', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    chain.tokenInfo.mockImplementation(async mint => {
+      if (mint !== walletB) throw new Error('Unsupported mint');
+      return { address: mint, symbol: 'CUSTOM', decimals: 6 };
+    });
+    await callback(bot, '1', 's:tokens');
+    const state = await store.session('1');
+    await callback(bot, '1', `s:custom:${state.nonce}`);
+    await bot.handlers.text(context('1', walletB));
+    const restarted = new SolanaStore(pool);
+    expect(await restarted.tokens('1')).toEqual([{ address: walletB, symbol: 'CUSTOM', decimals: 6 }]);
+    expect(await restarted.tokens('2')).toEqual([]);
+    await store.updateProfile('1', { wallet: walletA, receiveWallet: walletA });
+    const group = context('1', '/flip', 'supergroup');
+    await bot.handlers.flip(group);
+    const url = group.reply.mock.calls[0][1].reply_markup.inline_keyboard[0][0].url;
+    await bot.handlers.start(context('1', '/start ' + url.split('?start=')[1]));
+    const selection = await store.session('1');
+    const index = selection.tokens.findIndex(t => t.address === walletB);
+    expect(index).toBeGreaterThan(0);
+    await callback(bot, '1', `s:token:${index}:${selection.nonce}`);
+    await bot.handlers.text(context('1', '12.345678'));
+    const [game] = await store.groupGames();
+    expect(game.token.address).toBe(walletB); expect(game.wager).toBe('12345678');
+    const extra = new SolanaInterface(fakeBot(), service, {});
+    await extra.selectTokens(context('1'));
+    const again = await store.session('1');
+    expect(again.tokens.filter(t => t.address === walletB)).toHaveLength(1);
+  });
+  test('invalid custom mints never become favorites and paginated menus preserve exact selections', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    chain.tokenInfo.mockRejectedValue(new Error('Unsupported mint'));
+    await callback(bot, '1', 's:tokens');
+    let state = await store.session('1');
+    await callback(bot, '1', `s:custom:${state.nonce}`);
+    await bot.handlers.text(context('1', 'invalid-mint'));
+    expect(await store.tokens('1')).toEqual([]);
+    for (let n = 0; n < 25; n++) await store.saveToken('1', { address: String(n).padStart(2, '0'), symbol: `TEST${n}`, decimals: 6 });
+    const first = await callback(bot, '1', 's:tokens');
+    const rows = first.reply.mock.calls[0][1].reply_markup.inline_keyboard;
+    expect(rows.filter(r => r.some(b => b.callback_data.startsWith('s:token:')))).toHaveLength(20);
+    state = await store.session('1');
+    const second = await callback(bot, '1', `s:page:1:${state.nonce}`);
+    const nextRows = second.reply.mock.calls[0][1].reply_markup.inline_keyboard;
+    expect(nextRows[0][0].callback_data).toMatch(/^s:token:20:/);
+    expect((await store.session('1')).page).toBe(1);
+  });
+
 });

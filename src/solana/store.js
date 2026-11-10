@@ -11,8 +11,21 @@ class SolanaStore {
     await this.pool.query('SELECT "userId", mint, metadata FROM "SolTokens" LIMIT 0');
   }
   async create(game) {
-    await this.pool.query('INSERT INTO "SolGames" (id, state) VALUES ($1, $2)', [game.id, JSON.stringify(game)]);
-    return game;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (game.interfaceVersion) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`sol-group:${game.chatId}`]);
+        const existing = await client.query('SELECT id FROM "SolGames" WHERE state->>\'chatId\'=$1 AND state->>\'status\'=\'OPEN\' AND id<>$2', [game.chatId, game.id]);
+        if (existing.rowCount) throw new Error('This group already has an active challenge');
+      }
+      await client.query('INSERT INTO "SolGames" (id, state) VALUES ($1, $2) ON CONFLICT DO NOTHING', [game.id, JSON.stringify(game)]);
+      const result = await client.query('SELECT state FROM "SolGames" WHERE id=$1', [game.id]);
+      if (result.rows[0].state.creator.userId !== game.creator.userId) throw new Error('Game identity conflict');
+      await client.query('COMMIT');
+      return result.rows[0].state;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
   }
   async get(id) {
     const { rows } = await this.pool.query('SELECT state FROM "SolGames" WHERE id=$1', [id]);
@@ -65,6 +78,74 @@ class SolanaStore {
   }
   async tokens(userId) {
     return (await this.pool.query('SELECT metadata FROM "SolTokens" WHERE "userId"=$1 ORDER BY mint', [userId])).rows.map(r => r.metadata);
+  }
+  async prepareInterface() {
+    // Additive UI state only. No existing game/deposit/outbox rows are reset.
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS "SolProfiles" ("userId" text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}');
+      CREATE TABLE IF NOT EXISTS "SolSessions" ("userId" text PRIMARY KEY, data jsonb NOT NULL, "expiresAt" timestamptz NOT NULL);
+      CREATE TABLE IF NOT EXISTS "SolDrafts" (id text PRIMARY KEY, "userId" text NOT NULL, "chatId" text NOT NULL, "expiresAt" timestamptz NOT NULL);
+      CREATE TABLE IF NOT EXISTS "SolScanCursors" (address text PRIMARY KEY, signature text NOT NULL);
+      CREATE TABLE IF NOT EXISTS "SolDepositReviews" (signature text PRIMARY KEY, "gameId" text NOT NULL, reason text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
+    `);
+  }
+  async profile(userId) {
+    const { rows } = await this.pool.query('SELECT data FROM "SolProfiles" WHERE "userId"=$1', [String(userId)]);
+    return rows[0]?.data || {};
+  }
+  async updateProfile(userId, fields) {
+    await this.pool.query('INSERT INTO "SolProfiles" ("userId",data) VALUES ($1,$2) ON CONFLICT ("userId") DO UPDATE SET data="SolProfiles".data || EXCLUDED.data', [String(userId), JSON.stringify(fields)]);
+  }
+  async session(userId) {
+    const { rows } = await this.pool.query('SELECT data FROM "SolSessions" WHERE "userId"=$1 AND "expiresAt">now()', [String(userId)]);
+    return rows[0]?.data || null;
+  }
+  async setSession(userId, data) {
+    await this.pool.query('INSERT INTO "SolSessions" ("userId",data,"expiresAt") VALUES ($1,$2,now()+interval \'15 minutes\') ON CONFLICT ("userId") DO UPDATE SET data=EXCLUDED.data, "expiresAt"=EXCLUDED."expiresAt"', [String(userId), JSON.stringify(data)]);
+  }
+  async clearSession(userId) { await this.pool.query('DELETE FROM "SolSessions" WHERE "userId"=$1', [String(userId)]); }
+  async draft(id, userId, chatId) {
+    if (chatId) await this.pool.query('INSERT INTO "SolDrafts" (id,"userId","chatId","expiresAt") VALUES ($1,$2,$3,now()+interval \'5 minutes\')', [id, String(userId), String(chatId)]);
+    const { rows } = await this.pool.query('SELECT * FROM "SolDrafts" WHERE id=$1 AND "userId"=$2 AND "expiresAt">now()', [id, String(userId)]);
+    if (!rows.length) throw new Error('This start button expired or belongs to another player');
+    return rows[0];
+  }
+  async removeToken(userId, mint) { await this.pool.query('DELETE FROM "SolTokens" WHERE "userId"=$1 AND mint=$2', [String(userId), mint]); }
+  async history(userId, limit = 100) {
+    const { rows } = await this.pool.query('SELECT state FROM "SolGames" WHERE state->\'creator\'->>\'userId\'=$1 OR state->\'challenger\'->>\'userId\'=$1 ORDER BY "createdAt" DESC LIMIT $2', [String(userId), limit]);
+    return rows.map(r => r.state);
+  }
+  async groupGames() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state ? \'interfaceVersion\' AND COALESCE(state->\'ui\'->>\'terminal\',\'false\')<>\'true\' ORDER BY "createdAt"')).rows.map(r => r.state); }
+  async allResults() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state->>\'status\'=\'SETTLED\'')).rows.map(r => r.state); }
+  async watchedAddresses() {
+    return (await this.pool.query('SELECT DISTINCT state->\'creator\'->>\'wallet\' AS address FROM "SolGames" UNION SELECT DISTINCT state->\'challenger\'->>\'wallet\' AS address FROM "SolGames" WHERE state->\'challenger\' IS NOT NULL')).rows.map(r => r.address).filter(Boolean);
+  }
+  async cursor(address) { return (await this.pool.query('SELECT signature FROM "SolScanCursors" WHERE address=$1', [address])).rows[0]?.signature; }
+  async setCursor(address, signature) { await this.pool.query('INSERT INTO "SolScanCursors" (address,signature) VALUES ($1,$2) ON CONFLICT (address) DO UPDATE SET signature=EXCLUDED.signature', [address, signature]); }
+  async firstGameTime(address) {
+    return Number((await this.pool.query('SELECT MIN((state->>\'createdAt\')::bigint) AS time FROM "SolGames" WHERE state->\'creator\'->>\'wallet\'=$1 OR state->\'challenger\'->>\'wallet\'=$1', [address])).rows[0]?.time || Date.now());
+  }
+  async reviewDeposit(signature, gameId, reason) { await this.pool.query('INSERT INTO "SolDepositReviews" (signature,"gameId",reason) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [signature, gameId, reason]); }
+  async bindNetwork(genesis, wallet) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [42424243]);
+      await client.query('CREATE TABLE IF NOT EXISTS "SolNetwork" (id integer PRIMARY KEY CHECK (id=1), genesis text NOT NULL, wallet text NOT NULL)');
+      const { rows } = await client.query('SELECT genesis,wallet FROM "SolNetwork" WHERE id=1 FOR UPDATE');
+      const occupied = (await client.query('SELECT (EXISTS(SELECT 1 FROM "SolGames") OR EXISTS(SELECT 1 FROM "SolTokens")) AS occupied')).rows[0].occupied;
+      if (rows[0] && (rows[0].genesis !== genesis || rows[0].wallet !== wallet) && occupied) throw new Error('LEDGER_NETWORK: Existing records belong to another network or wallet; use a separate database.');
+      if (!rows[0] && occupied) {
+        // Every pre-binding released Solana build was devnet-only. Never
+        // relabel those records as mainnet or move their signing identity.
+        const { DEVNET_GENESIS } = require('./chain');
+        const wrongWallet = (await client.query('SELECT 1 FROM "SolGames" WHERE state->>\'depositAddress\'<>$1 LIMIT 1', [wallet])).rowCount;
+        if (genesis !== DEVNET_GENESIS || wrongWallet) throw new Error('LEDGER_NETWORK: Unbound existing devnet records need separate mainnet storage.');
+      }
+      await client.query('INSERT INTO "SolNetwork" (id,genesis,wallet) VALUES (1,$1,$2) ON CONFLICT (id) DO UPDATE SET genesis=EXCLUDED.genesis,wallet=EXCLUDED.wallet', [genesis, wallet]);
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
   }
 }
 module.exports = { SolanaStore };

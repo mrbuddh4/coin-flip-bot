@@ -21,8 +21,10 @@ async function main() {
   process.once('SIGTERM', shutdown);
 }
 
-if (require.main === module) main().catch(() => {
-  console.error('Startup failed. Check BOT_MODE, funds gate, port and private hosting logs.');
+if (require.main === module) main().catch(error => {
+  console.error(error.message?.startsWith('MAINNET_FEES_PENDING:')
+    ? 'MAINNET_FEES_PENDING: This review build has not completed Solana holder distribution and burn policy. Mainnet wagering is not enabled.'
+    : 'Startup failed. Check BOT_MODE, funds gate, port and private hosting logs.');
   process.exitCode = 1;
 });
 module.exports = { main };

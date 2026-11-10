@@ -1,4 +1,4 @@
-const { randomUUID, randomInt } = require('node:crypto');
+const { randomUUID, randomInt, randomBytes } = require('node:crypto');
 const { publicKey } = require('./chain');
 const { toUnits, splitPool } = require('./amounts');
 class SolanaService {
@@ -6,26 +6,33 @@ class SolanaService {
     Object.assign(this, { store, chain, now, coin });
     this.workerRunning = false;
   }
-  async create({ userId, chatId, wallet, mint, amount }) {
+  async create({ userId, chatId, wallet, mint, amount, receiveWallet = wallet, name, gameId, interfaceVersion }) {
     publicKey(wallet);
+    publicKey(receiveWallet);
+    if ([wallet, receiveWallet].includes(this.chain.address)) throw new Error('Use a player wallet distinct from the shared bot wallet');
     const token = await this.chain.tokenInfo(mint);
     const wager = toUnits(amount, token.decimals).toString();
     if (BigInt(wager) * 2n > 18446744073709551615n) throw new Error('Pool exceeds token amount range');
     // Native SOL JSON RPC amounts are numbers; reject unsafe large transfers rather than rounding.
     if (token.address === 'NATIVE' && BigInt(wager) * 2n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('SOL wager too large');
-    const id = randomUUID();
+    const id = gameId || randomUUID();
     return this.store.create({ id, chatId: String(chatId), token, wager, status: 'OPEN',
-      depositAddress: this.chain.address, createdAt: this.now(), expiresAt: this.now() + 15 * 60 * 1000,
-      creator: { userId: String(userId), wallet, memo: `coinflip:${id}:creator` }, challenger: null });
+      depositAddress: this.chain.address, cluster: this.chain.env?.SOLANA_CLUSTER || 'devnet', createdAt: this.now(), expiresAt: this.now() + (interfaceVersion ? 3 : 15) * 60 * 1000,
+      ...(interfaceVersion ? { interfaceVersion, ui: {} } : {}),
+      creator: { userId: String(userId), wallet, receiveWallet, name, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:creator` }, challenger: null });
   }
-  async join({ id, userId, wallet, chatId }) {
+  async join({ id, userId, wallet, chatId, receiveWallet = wallet, name }) {
     publicKey(wallet);
+    publicKey(receiveWallet);
+    if ([wallet, receiveWallet].includes(this.chain.address)) throw new Error('Use a player wallet distinct from the shared bot wallet');
     return this.store.mutate(id, async g => {
       if (g.chatId !== String(chatId)) throw new Error('Use the original game chat');
       if (g.status !== 'OPEN' || this.now() >= g.expiresAt) throw new Error('Game closed or expired');
       if (g.creator.userId === String(userId) || g.creator.wallet === wallet) throw new Error('A different player and sending wallet must join');
       if (g.challenger) throw new Error('Game already has a challenger');
-      g.challenger = { userId: String(userId), wallet, memo: `coinflip:${id}:challenger` };
+      if (g.interfaceVersion && !g.creator.deposit) throw new Error('Creator has not funded this challenge');
+      g.challenger = { userId: String(userId), wallet, receiveWallet, name, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:challenger` };
+      if (g.interfaceVersion) g.expiresAt = this.now() + 3 * 60 * 1000;
     });
   }
   member(game, userId) {
@@ -33,22 +40,25 @@ class SolanaService {
     if (!member) throw new Error('You are not a player in this game');
     return member;
   }
-  async refund(g, tx, member, receipt) {
-    await tx.enqueue({ id: `refund:${receipt.signature}`, gameId: g.id, mint: g.token.address, recipient: member.wallet, amount: receipt.amount, kind: 'refund', sourceWallet: g.depositAddress });
+  async refund(g, tx, member, receipt, mint = g.token.address) {
+    await tx.enqueue({ id: `refund:${receipt.signature}`, gameId: g.id, mint, recipient: member.wallet, amount: receipt.amount, kind: 'refund', sourceWallet: g.depositAddress });
   }
   async cancelLocked(g, tx) {
     g.status = 'CANCELLED';
     for (const player of [g.creator, g.challenger]) if (player?.deposit) await this.refund(g, tx, player, player.deposit);
   }
-  async deposit({ id, userId, signature }) {
+  async deposit({ id, userId, signature, detectedMint, transaction }) {
     const snapshot = await this.store.get(id);
     const participant = this.member(snapshot, userId);
     if (snapshot.depositAddress !== this.chain.address) throw new Error('Game belongs to a different deposit wallet; reconcile before changing keys');
-    const amount = await this.chain.verifyDeposit({ signature, sender: participant.wallet, mint: snapshot.token.address, memo: participant.memo });
+    const mint = detectedMint || snapshot.token.address;
+    if (mint !== snapshot.token.address) await this.chain.tokenInfo(mint);
+    const amount = await this.chain.verifyDeposit({ signature, sender: participant.wallet, mint, memo: participant.memo, transaction });
     return this.store.mutate(id, async (g, tx) => {
       const player = this.member(g, userId);
       if (!await tx.consume(signature, String(userId), amount.toString())) return;
       const receipt = { signature, amount: amount.toString() };
+      if (mint !== g.token.address) { await this.refund(g, tx, player, receipt, mint); return; }
       if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx);
       // Wrong amounts, second payments and late transfers are recorded and refunded in full.
       if (g.status !== 'OPEN' || player.deposit || amount !== BigInt(g.wager)) {
@@ -56,6 +66,7 @@ class SolanaService {
         return;
       }
       player.deposit = receipt;
+      if (g.interfaceVersion && !g.challenger && player === g.creator) g.expiresAt = this.now() + 4 * 60 * 1000;
       if (g.creator.deposit && g.challenger?.deposit) {
         const result = this.coin();
         if (result !== 0 && result !== 1) throw new Error('Invalid random result');
@@ -65,7 +76,7 @@ class SolanaService {
         g.winnerId = winner.userId;
         g.fees = { holder: split.holderFee.toString(), burn: split.burnFee.toString(), status: 'RETAINED_NOT_DISTRIBUTED' };
         g.prize = split.prize.toString();
-        await tx.enqueue({ id: `prize:${id}`, gameId: id, mint: g.token.address, recipient: winner.wallet, amount: g.prize, kind: 'prize', sourceWallet: g.depositAddress });
+        await tx.enqueue({ id: `prize:${id}`, gameId: id, mint: g.token.address, recipient: winner.receiveWallet || winner.wallet, amount: g.prize, kind: 'prize', sourceWallet: g.depositAddress });
       }
     });
   }
