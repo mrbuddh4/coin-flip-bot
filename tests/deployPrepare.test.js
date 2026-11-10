@@ -65,7 +65,14 @@ describe('phone-friendly Railway pre-deploy initialization', () => {
     expect(formatFailure({ initStage: 'database', message: 'Database is not empty' })).toContain('SETUP_DB_NOT_EMPTY');
     expect(formatFailure({ initStage: 'rpc', message: 'RPC is not Solana devnet' })).toContain('SETUP_RPC_NETWORK');
   });
-  test.each([['EtWTRABZaYq6iMfeYKouRu166VU2xqa1', true], ['5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', false]])('checks actual RPC genesis response %s before initialization', async (genesis, allowed) => {
+  // Full public RPC responses, independent of the production constant. The old
+  // truncated devnet hash must fail, just like another cluster's genesis.
+  test.each([
+    ['EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG', true],
+    ['EtWTRABZaYq6iMfeYKouRu166VU2xqa1', false],
+    ['5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d', false],
+    ['4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY', false],
+  ])('checks actual RPC genesis response %s before initialization', async (genesis, allowed) => {
     const server = require('node:http').createServer(async (request, response) => {
       let body = ''; for await (const part of request) body += part;
       response.setHeader('content-type', 'application/json');

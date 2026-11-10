@@ -3,7 +3,7 @@ const spl = require('./token');
 const bs58 = require('bs58').default;
 const { assertLiveFunds } = require('../utils/recoveryMode');
 const MEMO = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
-const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 function publicKey(address) {
   const key = new PublicKey(address);
   if (key.toBase58() !== address || !PublicKey.isOnCurve(key.toBytes())) throw new Error('Use an on-curve Solana wallet address');

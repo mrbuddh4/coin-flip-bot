@@ -77,6 +77,17 @@ test('pilot rejects mainnet and mismatched signing wallet', async () => {
   const b = setup(undefined, { ...env, SOLANA_WALLET_ADDRESS: sender });
   await expect(b.chain.validate()).rejects.toThrow('mismatch');
 });
+test.each([
+  ['EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG', true],
+  ['EtWTRABZaYq6iMfeYKouRu166VU2xqa1', false],
+  ['5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d', false],
+  ['4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY', false],
+])('runtime verifies full cluster genesis %s independently of its constant', async (genesis, allowed) => {
+  const { chain, connection } = setup();
+  connection.getGenesisHash.mockResolvedValue(genesis);
+  if (allowed) await expect(chain.validate()).resolves.toBe(genesis);
+  else await expect(chain.validate()).rejects.toThrow('devnet');
+});
 test('never signs or broadcasts in recovery mode', async () => {
   const { chain, connection } = setup(undefined, {});
   await expect(chain.buildPayment({ id: 'a', mint: 'NATIVE', recipient: sender, amount: '1' })).rejects.toThrow('Funds disabled');
