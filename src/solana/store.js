@@ -4,6 +4,7 @@ const config = require('../config');
 const { accrueFees, SCHEMA: FEE_SCHEMA } = require('./fees');
 const custody = require('./custody');
 const { noMemoCandidates } = require('./depositMatch');
+const { SCHEMA: NOTIFICATION_SCHEMA } = require('./notifications');
 async function findNoMemoCandidates(client, input) {
   const { rows } = await client.query(`SELECT state FROM "SolGames" WHERE state->'token'->>'address'=$1 AND state->>'wager'=$2 AND (state->'creator'->>'wallet'=$3 OR state->'challenger'->>'wallet'=$3)`, [input.mint, String(input.amount), input.sender]);
   return noMemoCandidates(rows.map(r => r.state), input);
@@ -124,6 +125,7 @@ class SolanaStore {
       CREATE TABLE IF NOT EXISTS "SolDepositReviews" (signature text PRIMARY KEY, "gameId" text NOT NULL, reason text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
     `);
     await this.pool.query(FEE_SCHEMA);
+    await this.pool.query(NOTIFICATION_SCHEMA);
   }
   async profile(userId) {
     const { rows } = await this.pool.query('SELECT data FROM "SolProfiles" WHERE "userId"=$1', [String(userId)]);

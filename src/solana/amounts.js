@@ -1,6 +1,7 @@
 // All monetary arithmetic is integer based; JSON/SQL boundaries use decimal strings.
 function toUnits(text, decimals) {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) throw new Error('Unsupported decimals');
+  if (typeof text === 'string' && /^\.\d+$/.test(text)) text = '0' + text;
   if (typeof text !== 'string' || !/^\d+(\.\d+)?$/.test(text)) throw new Error('Use a positive decimal amount, without exponent notation');
   const [whole, fraction = ''] = text.split('.');
   if (fraction.length > decimals) throw new Error('Too many decimal places');

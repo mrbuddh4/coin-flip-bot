@@ -2,7 +2,7 @@ const { randomUUID, randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { publicKey } = require('./chain');
-const { fromUnits } = require('./amounts');
+const { fromUnits, toUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 const { getVideoDuration } = require('../utils/helpers');
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -143,7 +143,7 @@ class SolanaInterface {
     if (/^https:\/\//.test(base) && player.payToken) rows.push([{ text: '💳 Open Deposit', url: `${base.replace(/\/$/, '')}/pay/${game.id}/${role}/${player.payToken}` }]);
     rows.push([button('✅ Confirm Deposit', `s:check:${game.id}`)], [button('Game Status', `s:status:${game.id}`)]);
     if (role === 'creator') rows.push([button('Cancel Challenge', `s:cancel:${game.id}`)]);
-    return this.reply(ctx, `<b>Transfer Your Wager From Your Wallet</b>\n${escape(networkName(this.service.chain))}\n\nAmount: <b>${summary(game)}</b>\nFrom: <code>${escape(player.wallet)}</code>\nTo: <code>${escape(game.depositAddress)}</code>\nMint: <code>${escape(game.token.address)}</code>\nGame memo (optional for a unique matching transfer): <code>${escape(player.memo)}</code>\nWinnings go to: <code>${escape(player.receiveWallet || player.wallet)}</code>\n\n1. Copy the deposit address and exact amount above.\n2. Transfer from your registered sending wallet. Including the game memo helps identify the payment if requests overlap.\n3. Return here and tap Confirm Deposit.\n\nThe bot checks the finalized transaction. ${role === 'creator' ? 'Once your deposit is confirmed, the challenge is posted to the group where you started /flip.' : 'Once both deposits are confirmed, the game resolves.'} A plain transfer is matched only when the signing wallet, exact token, exact amount and transaction time identify one request. If requests overlap, include the game memo or use Open Deposit.\n\nPayment URI:\n<code>${escape(paymentURI(game, player))}</code>`, rows);
+    return this.reply(ctx, `<b>Transfer Your Wager From Your Wallet</b>\n${escape(networkName(this.service.chain))}\n\nAmount: <b>${summary(game)}</b>\nFrom: <code>${escape(player.wallet)}</code>\nTo: <code>${escape(game.depositAddress)}</code>\nMint: <code>${escape(game.token.address)}</code>\nGame memo (optional for a unique matching transfer): <code>${escape(player.memo)}</code>\nWinnings go to: <code>${escape(player.receiveWallet || player.wallet)}</code>\n\n1. Copy the deposit address and exact amount above.\n2. Transfer from your registered sending wallet. Including the game memo helps identify the payment if requests overlap.\n3. Return here and tap Confirm Deposit.\n\nThe bot automatically reports finalized deposits and payment confirmations here and in the originating group. ${role === 'creator' ? 'Once your deposit is confirmed, the challenge is posted to the group where you started /flip.' : 'Once both deposits are confirmed, the game resolves.'} A plain transfer is matched only when the signing wallet, exact token, exact amount and transaction time identify one request. If requests overlap, include the game memo or use Open Deposit.\n\nPayment URI:\n<code>${escape(paymentURI(game, player))}</code>`, rows);
   }
   async confirmDeposit(ctx, id) {
     const before = await this.store.get(id);
@@ -163,7 +163,7 @@ class SolanaInterface {
     }
     await this.render();
     if (!player.deposit && game.status === 'OPEN') {
-      return this.reply(ctx, 'Your deposit has not been matched yet. Check the amount, registered sending wallet, destination and whether another request overlaps. A game memo identifies the payment when requests overlap. If you already transferred, wait for finalized confirmation and tap Confirm Deposit again.', [
+      return this.reply(ctx, 'Your deposit has not been matched yet. Check the amount, registered sending wallet, destination and whether another request overlaps. A game memo identifies the payment when requests overlap. If you already transferred, the bot will report the finalized deposit automatically. You can also tap Confirm Deposit to recheck.', [
         [button('✅ Confirm Deposit', `s:check:${id}`)],
         [button('Game Status', `s:status:${id}`)],
       ]);
@@ -268,6 +268,8 @@ class SolanaInterface {
       return this.chooseToken(ctx, state, token.address);
     }
     if (state.kind === 'create' && state.step === 'amount') {
+      try { toUnits(text, state.token.decimals); }
+      catch (_) { return this.reply(ctx, 'Enter a positive amount such as 0.01 (or .01), using no more decimal places than this token supports.'); }
       const draft = await this.store.draft(state.draftId, ctx.from.id), profile = await this.store.profile(ctx.from.id);
       const game = await this.service.create({ userId: ctx.from.id, chatId: draft.chatId, wallet: profile.wallet, receiveWallet: profile.receiveWallet, name: profile.name, mint: state.token.address, amount: text, gameId: draft.id, interfaceVersion: 2 });
       await this.store.clearSession(ctx.from.id);
@@ -276,7 +278,7 @@ class SolanaInterface {
     }
   }
   async help(ctx) {
-    return this.reply(ctx, `<b>How to Play</b>\n\n1. Set sending and receiving wallets using /wallet.\n2. Use /flip in a group and choose a token and amount privately.\n3. Type the wager amount in chat, then copy the deposit address from the transfer screen. Transfer the wager from your registered wallet and tap Confirm Deposit. The funded challenge is then posted to the originating group.\n4. Another player reviews and accepts the challenge, then deposits.\n5. The coin animation plays, the result is announced, and the winner receives 90% of the pool automatically.\n\nCancelled and expired games refund recorded deposits to their sending wallets. Pending or uncertain payments remain visible in Game Status.\n\n${escape(networkName(this.service.chain))}`, [[button('🏠 Home', 's:home')]]);
+    return this.reply(ctx, `<b>How to Play</b>\n\n1. Set sending and receiving wallets using /wallet.\n2. Use /flip in a group and choose a token and amount privately.\n3. Type the wager amount in chat, then copy the deposit address from the transfer screen. Transfer the wager from your registered wallet and tap Confirm Deposit. The funded challenge is then posted to the originating group.\n4. Another player reviews and accepts the challenge, then deposits.\n5. The coin animation plays, the result is announced, and the winner receives 90% of the pool automatically.\n\nCancelled and expired games refund recorded deposits to their sending wallets. Deposits, refunds, prize payments, burns and holder-custody transfers are automatically reported here and in the originating group with amounts and transaction links. Pending or uncertain payments remain visible in Game Status.\n\n${escape(networkName(this.service.chain))}`, [[button('🏠 Home', 's:home')]]);
   }
   async fees(ctx) {
     const fees = this.service.feeService;

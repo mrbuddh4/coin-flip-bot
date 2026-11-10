@@ -410,6 +410,25 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const again = await store.session('1');
     expect(again.tokens.filter(t => t.address === walletB)).toHaveLength(1);
   });
+  test('phone amount entry accepts .01 and invalid amounts preserve the prompt', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
+    await store.updateProfile('1', { wallet: walletA, receiveWallet: walletA });
+    const group = context('1', '/flip', 'supergroup');
+    await bot.handlers.flip(group);
+    const url = group.reply.mock.calls[0][1].reply_markup.inline_keyboard[0][0].url;
+    await bot.handlers.start(context('1', '/start ' + url.split('?start=')[1]));
+    const state = await store.session('1');
+    await callback(bot, '1', `s:token:0:${state.nonce}`);
+    const invalid = context('1', '.'); await bot.handlers.text(invalid);
+    expect(invalid.reply.mock.calls[0][0]).toContain('Enter a positive amount');
+    expect((await store.session('1')).step).toBe('amount');
+    const entry = context('1', '.01'); await bot.handlers.text(entry);
+    const [game] = await store.groupGames();
+    expect(game.wager).toBe('10000000');
+    expect(entry.reply.mock.calls[0][0]).toContain('Copy the deposit address');
+    expect(await store.session('1')).toBeNull();
+  });
   test('invalid custom mints never become favorites and paginated menus preserve exact selections', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
     const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.register();
