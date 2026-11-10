@@ -271,8 +271,9 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await ui.render();
     expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
     await callback(bot, '1', 's:check:' + game.id);
-    expect(bot.telegram.sendMessage.mock.calls[0][1]).toContain('&lt;Alice&gt;');
-    expect(bot.telegram.sendMessage.mock.calls[0][2].reply_markup.inline_keyboard[0][0].url).toContain('soljoin_');
+    expect(bot.telegram.sendVideo.mock.calls[0][1]).toEqual({ source: path.join(__dirname, '../assets/challenge.mp4') });
+    expect(bot.telegram.sendVideo.mock.calls[0][2].caption).toContain('&lt;Alice&gt;');
+    expect(bot.telegram.sendVideo.mock.calls[0][2].reply_markup.inline_keyboard[0][0].url).toContain('soljoin_');
     await store.updateProfile('2', { wallet: walletB, receiveWallet: walletB });
     await bot.handlers.start(context('2', '/start soljoin_' + game.id));
     const join = await store.session('2');
@@ -284,8 +285,8 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     scanner.tick.mockImplementationOnce(() => service.deposit({ id: game.id, userId: '2', signature: 'sid-challenger' }));
     await callback(bot, '2', 's:check:' + game.id);
     expect((await store.get(game.id)).status).toBe('SETTLED');
-    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
-    const flipping = bot.telegram.editMessageText.mock.calls.filter(c => String(c[0]) === '-100').at(-1)[3];
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(2);
+    const flipping = bot.telegram.editMessageCaption.mock.calls.filter(c => String(c[0]) === '-100').at(-1)[3];
     expect(flipping).toContain('Flipping the coin'); expect(flipping).not.toContain('Winner:');
     chain.paymentStatus.mockResolvedValue('finalized');
     await service.work(); now += 1251; await ui.render();
@@ -293,7 +294,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect(result).toContain('Winner:'); expect(result).toContain('CONFIRMED'); expect(result).not.toContain('?cluster=devnet');
     const restarted = new SolanaInterface(bot, new SolanaService({ store, chain, now: () => now }), scanner);
     await restarted.render();
-    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(2);
     expect((await store.get(game.id)).ui.terminal).toBe(true);
   });
   test('plain transfers require a unique historical request and consume a signature once', async () => {
@@ -333,13 +334,14 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect((await store.profile('1')).privateScreen.text).toContain('has not been matched');
     expect((await store.get(game.id)).ui.publishRequested).toBeUndefined();
     expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+    expect(bot.telegram.sendVideo).not.toHaveBeenCalled();
     await service.deposit({ id: game.id, userId: '1', signature: 'funded' });
     await callback(bot, '1', 's:check:' + game.id);
     await callback(bot, '1', 's:check:' + game.id);
-    expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
     expect((await store.get(game.id)).ui.publishRequested).toBe(true);
     await new SolanaInterface(bot, service, scanner).render();
-    expect(bot.telegram.sendMessage).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
   });
   test('private token menu rejects forwarded/stale selections, removes custom favorites and preserves SID', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
@@ -363,6 +365,8 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const { SolanaInterface } = require('../src/solana/interface');
     const g = await service.create({ ...input, interfaceVersion: 1 });
     const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
+    // Exercise the text-only fallback independently of bundled media.
+    ui.challengeVideo = jest.fn(() => null);
     await ui.render();
     expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
     await service.deposit({ id: g.id, userId: '1', signature: 'creator' });
