@@ -4,6 +4,11 @@ const { publicKey } = require('./chain');
 const FLIP = '0x2aA5968F710080ea453e7e09E59d769E8C470fac';
 const EXCHANGE = '0xA0Cd0F92f12f881aeBaFF9e0fb3144511c9ebF6c';
 const ABI = new ethers.Interface(['function totalSupply() view returns (uint256)', 'function balanceOf(address) view returns (uint256)']);
+function holderRewardsMode(env = process.env) {
+  const mode = env.SOLANA_HOLDER_REWARDS || 'deferred';
+  if (!['deferred', 'paxeer'].includes(mode)) throw new Error('SOLANA_HOLDER_REWARDS must be deferred or paxeer');
+  return mode;
+}
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS "SolFeeAccruals" (
   "gameId" text PRIMARY KEY REFERENCES "SolGames"(id), mint text NOT NULL,
@@ -94,8 +99,11 @@ class FlipSnapshotSource {
   }
 }
 class SolanaFees {
-  constructor({ store, chain, source = new FlipSnapshotSource(), now = () => Date.now() }) {
-    Object.assign(this, { store, chain, source, now }); this.lastError = null; this.lastSuccess = null; this.nextTry = 0;
+  constructor({ store, chain, source, mode = 'deferred', now = () => Date.now() }) {
+    holderRewardsMode({ SOLANA_HOLDER_REWARDS: mode });
+    Object.assign(this, { store, chain, mode, now });
+    this.source = mode === 'paxeer' ? source || new FlipSnapshotSource() : null;
+    this.lastError = null; this.lastSuccess = null; this.nextTry = 0;
   }
   async prepare() { await this.store.pool.query(SCHEMA); }
   async backfill() {
@@ -111,6 +119,7 @@ class SolanaFees {
     }
   }
   async challenge(userId, evm, recipient) {
+    if (this.mode !== 'paxeer') throw new Error('Holder rewards are deferred; allocations remain reserved');
     evm = ethers.getAddress(evm.toLowerCase()).toLowerCase();
     if (exclusions(this.source.env).includes(evm)) throw new Error('This address is excluded from rewards');
     publicKey(recipient);
@@ -121,9 +130,11 @@ class SolanaFees {
     return { id, message };
   }
   async getChallenge(id) {
+    if (this.mode !== 'paxeer') return null;
     return (await this.store.pool.query('SELECT * FROM "SolHolderChallenges" WHERE id=$1 AND "expiresAt">$2', [id, new Date(this.now())])).rows[0];
   }
   async verify(id, signature) {
+    if (this.mode !== 'paxeer') throw new Error('Holder rewards are deferred; no registration is active');
     const client = await this.store.pool.connect();
     try {
       await client.query('BEGIN');
@@ -138,8 +149,12 @@ class SolanaFees {
     } catch (e) { await client.query('ROLLBACK'); throw e; }
     finally { client.release(); }
   }
-  async link(userId) { return (await this.store.pool.query('SELECT evm,recipient FROM "SolHolderLinks" WHERE "userId"=$1', [String(userId)])).rows[0]; }
+  async link(userId) {
+    if (this.mode !== 'paxeer') return null;
+    return (await this.store.pool.query('SELECT evm,recipient FROM "SolHolderLinks" WHERE "userId"=$1', [String(userId)])).rows[0];
+  }
   async distribute() {
+    if (this.mode !== 'paxeer') return;
     const client = await this.store.pool.connect();
     try {
       await client.query('BEGIN');
@@ -185,6 +200,7 @@ class SolanaFees {
     finally { client.release(); }
   }
   async tick() {
+    if (this.mode !== 'paxeer') return;
     if (this.running || this.now() < this.nextTry) return;
     this.running = true;
     this.nextTry = this.now() + 60000;
@@ -193,4 +209,4 @@ class SolanaFees {
     finally { this.running = false; }
   }
 }
-module.exports = { SolanaFees, FlipSnapshotSource, accrueFees, SCHEMA, FLIP, EXCHANGE, exclusions };
+module.exports = { SolanaFees, FlipSnapshotSource, accrueFees, SCHEMA, FLIP, EXCHANGE, exclusions, holderRewardsMode };

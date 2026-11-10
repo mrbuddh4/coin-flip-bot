@@ -210,6 +210,10 @@ class SolanaInterface {
     const state = await this.store.session(ctx.from.id);
     if (!state) return;
     const text = ctx.message.text.trim();
+    if (['holder-address', 'holder-sign'].includes(state.kind) && this.service.feeService?.mode !== 'paxeer') {
+      await this.store.clearSession(ctx.from.id);
+      return this.fees(ctx);
+    }
     if (state.kind === 'holder-address') {
       const profile = await this.store.profile(ctx.from.id);
       const c = await this.service.feeService.challenge(ctx.from.id, text, profile.receiveWallet);
@@ -251,6 +255,7 @@ class SolanaInterface {
     const fees = this.service.feeService;
     const link = fees ? await fees.link(ctx.from.id) : null;
     const pools = (await this.store.pool.query('SELECT token,amount FROM "SolFeePools" WHERE amount>0 ORDER BY mint LIMIT 10')).rows;
+    if (fees?.mode !== 'paxeer') return this.reply(ctx, '<b>Fee Accounting</b>\n\nWinner: 90% of the pool.\nBurn: 5%, queued with each settled game.\nHolder share: 5%, reserved in the original Solana asset.\n\nPaxeer support and holder distributions are deferred. Reserved fees stay in the treasury and count as liabilities. They are not paid to the operator or represented as distributed. SOL and supported custom-token games run independently.\n\nGame Status shows prize and burn confirmation.\n\nReserved holder pools:\n' + (pools.map(p => `${escape(fromUnits(p.amount, p.token.decimals))} ${escape(p.token.symbol)} (${escape(p.token.address)})`).join('\n') || 'No allocations yet.'), [[button('Refresh', 's:fees')], [button('🏠 Home', 's:home')]]);
     const payments = (await this.store.pool.query('SELECT payment,status,signed->>\'signature\' AS signature FROM "SolOutbox" WHERE payment->>\'kind\'=\'holder\' AND payment->>\'userId\'=$1 ORDER BY "createdAt" DESC LIMIT 5', [String(ctx.from.id)])).rows;
     return this.reply(ctx, '<b>Profit Share</b>\n\nWinner: 90%. FLIP holders: 5%. Burn: 5%.\nBurns are queued with each settled game; Game Status shows actual confirmation.\n\nHolder rewards use your share of eligible Paxeer FLIP supply, paid daily in the original Solana wager asset. Unregistered shares and dust stay pooled. SOL is sent to Solana’s incinerator; supported token burns reduce mint supply.\n\n' +
       (link ? `Verified holding wallet: <code>${escape(link.evm)}</code>\nReward recipient: <code>${escape(link.recipient)}</code>\nWallet menu changes do not redirect rewards; sign a new link to change the recipient.\n` : 'Link your FLIP holding wallet to register for rewards. Ownership signature required.\n') +
@@ -259,6 +264,7 @@ class SolanaInterface {
       (payments.length ? '\n\nYour latest reward payments:\n' + payments.map(p => `${escape(p.payment.amount)} atomic units, ${escape(p.payment.mint)}: ${escape(p.status)}${p.signature ? `\n${escape(this.explorer(p.signature))}` : ''}`).join('\n') : ''), [[button(link ? 'Update Reward Wallet Link' : 'Link FLIP Holding Wallet', 's:holder')], [button('Refresh', 's:fees')], [button('🏠 Home', 's:home')]]);
   }
   async holder(ctx) {
+    if (this.service.feeService?.mode !== 'paxeer') return this.fees(ctx);
     if (!this.service.feeService) throw new Error('Holder service unavailable');
     const profile = await this.store.profile(ctx.from.id);
     if (!profile.receiveWallet) return this.reply(ctx, 'Set your Solana receiving wallet first using /wallet.');

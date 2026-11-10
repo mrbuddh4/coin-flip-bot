@@ -41,7 +41,8 @@ test('temporary database failure returns a private generic failure, preserving h
   expect(await response.text()).not.toContain('credentials');
   expect((await fetch(base.split('/pay/')[0] + '/health')).status).toBe(200);
 });
-test('mainnet requires an explicit holder RPC before runtime supply validation', () => {
-  expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'mainnet-beta' })).toThrow('MAINNET_HOLDER_RPC');
+test('Solana-only mainnet has no Paxeer dependency; explicitly enabled Paxeer rewards require a source', () => {
+  expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'mainnet-beta' })).not.toThrow();
+  expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'mainnet-beta', SOLANA_HOLDER_REWARDS: 'paxeer' })).toThrow('MAINNET_HOLDER_RPC');
   expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'devnet' })).not.toThrow();
 });

@@ -10,10 +10,11 @@ const { DepositScanner } = require('./scanner');
 const { SolanaInterface } = require('./interface');
 const { paymentHandler } = require('./paymentPage');
 const { network } = require('./network');
-const { SolanaFees, FlipSnapshotSource } = require('./fees');
+const { SolanaFees, holderRewardsMode } = require('./fees');
 const { holderHandler } = require('./holderPage');
 function assertLaunchReady(env = process.env) {
-  if (network(env).realFunds && !/^https:\/\//.test(env.FLIP_HOLDER_RPC_URL || '')) throw new Error('MAINNET_HOLDER_RPC: Set a working HTTPS Paxeer FLIP_HOLDER_RPC_URL before accepting mainnet wagers.');
+  const rewards = holderRewardsMode(env);
+  if (network(env).realFunds && rewards === 'paxeer' && !/^https:\/\//.test(env.FLIP_HOLDER_RPC_URL || '')) throw new Error('MAINNET_HOLDER_RPC: Paxeer rewards were explicitly selected; set a working HTTPS FLIP_HOLDER_RPC_URL or use deferred rewards.');
 }
 async function main() {
   assertLiveFunds();
@@ -47,14 +48,13 @@ async function main() {
     await store.bindNetwork(genesis, chain.address);
     await store.prepareInterface();
     service = new SolanaService({ store, chain });
-    const source = new FlipSnapshotSource();
-    // Verify supply/finality even with no registrations; do not launch mainnet
-    // with a reward program that cannot read its underlying FLIP contract.
-    if (network().realFunds) {
-      try { await source.snapshot([]); }
+    fees = new SolanaFees({ store, chain, mode: holderRewardsMode() });
+    // Solana-only mode reserves holder fees and performs no Paxeer requests.
+    // The optional future Paxeer mode must verify its source before launch.
+    if (network().realFunds && fees.mode === 'paxeer') {
+      try { await fees.source.snapshot([]); }
       catch (_) { throw new Error('MAINNET_FLIP_SOURCE: Cannot verify the original FLIP contract, supply and finalized holder source.'); }
     }
-    fees = new SolanaFees({ store, chain, source });
     await fees.backfill();
     service.feeService = fees;
     scanner = new DepositScanner(service);
@@ -75,14 +75,16 @@ async function main() {
     await cycle();
     timer = setInterval(() => cycle().catch(() => console.error('Solana worker check failed; ledger retained.')), 5000);
     const rewardTick = () => { if (!stopping) fees.tick().catch(() => console.error('Holder fee check failed; allocations retained.')); };
-    rewardTick();
-    feeTimer = setInterval(rewardTick, 60000);
+    if (fees.mode === 'paxeer') {
+      rewardTick();
+      feeTimer = setInterval(rewardTick, 60000);
+    }
     const polling = bot.launch({ dropPendingUpdates: false }, () => { pollingStarted = true; });
     polling.catch(async () => { await shutdown(); process.exitCode = 1; });
     const pay = paymentHandler(service), holder = holderHandler(fees);
     server = await startHealthServer({
-      status: () => ({ ready: pollingStarted && !stopping, mode: `solana-${process.env.SOLANA_CLUSTER}`, realFundsEnabled: network().realFunds }),
-      handle: async (req, res) => await pay(req, res) || await holder(req, res),
+      status: () => ({ ready: pollingStarted && !stopping, mode: `solana-${process.env.SOLANA_CLUSTER}`, realFundsEnabled: network().realFunds, holderRewards: fees.mode }),
+      handle: async (req, res) => await pay(req, res) || (fees.mode === 'paxeer' && await holder(req, res)),
     });
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);

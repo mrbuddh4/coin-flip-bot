@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { SolanaStore } = require('../src/solana/store');
 const { SolanaService } = require('../src/solana/service');
-const { SolanaFees, FlipSnapshotSource, FLIP, exclusions } = require('../src/solana/fees');
+const { SolanaFees, FlipSnapshotSource, FLIP, exclusions, holderRewardsMode } = require('../src/solana/fees');
 const { holderHandler } = require('../src/solana/holderPage');
 const token = require('../src/solana/token');
 const holder = new ethers.Wallet('0x' + '19'.repeat(32)); // Deterministic test key only.
@@ -59,6 +59,18 @@ test('burnChecked uses the SDK-defined opcode 15, little-endian u64, decimals an
     expect(ix.keys).toEqual([{ pubkey: source, isSigner: false, isWritable: true }, { pubkey: mint, isSigner: false, isWritable: true }, { pubkey: owner, isSigner: true, isWritable: false }]);
   }
 });
+test('Solana-only rewards default to deferred and never touch a Paxeer source, registry or distribution', async () => {
+  const source = { snapshot: jest.fn(async () => { throw new Error('Paxeer must not be contacted'); }) };
+  const store = { pool: { connect: jest.fn(), query: jest.fn() } };
+  const fees = new SolanaFees({ store, chain: { address: treasury, env: { SOLANA_CLUSTER: 'mainnet-beta' } }, source });
+  expect(holderRewardsMode({})).toBe('deferred'); expect(fees.source).toBeNull();
+  await fees.tick(); await fees.distribute();
+  await expect(fees.challenge('1', holder.address, solA)).rejects.toThrow('deferred');
+  await expect(fees.verify('old-link', 'old-signature')).rejects.toThrow('deferred');
+  expect(await fees.getChallenge('old-link')).toBeNull(); expect(await fees.link('1')).toBeNull();
+  expect(source.snapshot).not.toHaveBeenCalled(); expect(store.pool.connect).not.toHaveBeenCalled(); expect(store.pool.query).not.toHaveBeenCalled();
+  expect(() => holderRewardsMode({ SOLANA_HOLDER_REWARDS: 'mistyped' })).toThrow('SOLANA_HOLDER_REWARDS');
+});
 const url = process.env.SOLANA_TEST_DATABASE_URL;
 (url ? describe : describe.skip)('fees, proof and distribution on real PostgreSQL', () => {
   let admin, pool, store, fees, chain, service, schema, now;
@@ -76,7 +88,7 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     now = Date.parse('2026-11-10T01:00:00Z');
     chain = { address: treasury, env: { SOLANA_CLUSTER: 'devnet' }, tokenInfo: jest.fn(async mint => ({ address: mint === 'SOL' ? 'NATIVE' : mint, decimals: 9, symbol: 'SOL' })), verifyDeposit: jest.fn(async () => 100000000n) };
     const source = { env: {}, snapshot: jest.fn(async links => ({ supply: '1000', balances: Object.fromEntries(links.map(l => [l.evm, '200'])), chainId: 125, blockHash: 'verified-test-snapshot' })) };
-    fees = new SolanaFees({ store, chain, source, now: () => now });
+    fees = new SolanaFees({ store, chain, source, mode: 'paxeer', now: () => now });
     service = new SolanaService({ store, chain, now: () => now, coin: () => 0 });
     service.feeService = fees;
   });
@@ -152,7 +164,7 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     await expect(fees.distribute()).rejects.toThrow();
     expect((await pool.query('SELECT amount FROM "SolFeePools"')).rows[0].amount).toBe('10000000');
     expect((await pool.query('SELECT * FROM "SolFeeCycles"')).rowCount).toBe(0);
-    const restarted = new SolanaFees({ store, chain, source: fees.source, now: () => now }); await restarted.distribute();
+    const restarted = new SolanaFees({ store, chain, source: fees.source, mode: 'paxeer', now: () => now }); await restarted.distribute();
     expect((await pool.query('SELECT * FROM "SolFeeCycles"')).rowCount).toBe(1);
   });
   test('all mint allocations roll back together on invalid supply and keep dust in the pool', async () => {
@@ -208,6 +220,27 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     await store.paymentState(`burn:${id}`, 'SIGNED');
     expect((await store.payments(id)).find(p => p.id === `burn:${id}`).status).toBe('CONFIRMED');
     expect(chain.paymentStatus).toHaveBeenCalledWith('original');
+  });
+  test('Solana-only mainnet game reserves 5% without Paxeer; the UI offers no inactive registration', async () => {
+    chain.env.SOLANA_CLUSTER = 'mainnet-beta';
+    const unavailable = { snapshot: jest.fn(async () => { throw new Error('Paxeer unavailable'); }) };
+    const deferred = new SolanaFees({ store, chain, source: unavailable, now: () => now });
+    service.feeService = deferred;
+    const id = await settle(); await deferred.tick(); await deferred.distribute();
+    expect(unavailable.snapshot).not.toHaveBeenCalled();
+    expect(await store.payments(id)).toHaveLength(2);
+    expect((await pool.query('SELECT amount FROM "SolFeePools"')).rows[0].amount).toBe('10000000');
+    expect((await pool.query('SELECT 1 FROM "SolOutbox" WHERE payment->>\'kind\'=\'holder\'')).rowCount).toBe(0);
+    expect(await store.liabilities()).toEqual([{ mint: 'NATIVE', amount: '200000000' }]);
+    const { SolanaInterface } = require('../src/solana/interface');
+    const ui = new SolanaInterface({ telegram: {} }, service, {});
+    const ctx = { from: { id: 1 }, reply: jest.fn() };
+    await ui.fees(ctx);
+    const [message, options] = ctx.reply.mock.calls[0];
+    expect(message).toContain('reserved in the original Solana asset');
+    expect(message).toContain('distributions are deferred');
+    expect(JSON.stringify(options)).not.toContain('s:holder');
+    await ui.holder(ctx); expect(ctx.reply).toHaveBeenCalledTimes(2);
   });
   test('real HTTP wallet page exposes exact sign-only proof and verifies it, no private key requested', async () => {
     const c = await fees.challenge('1', holder.address, solA);
