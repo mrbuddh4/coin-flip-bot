@@ -139,6 +139,27 @@ class SolanaChain {
     const result = await this.connection.sendRawTransaction(Buffer.from(payment.raw, 'base64'), { skipPreflight: false, maxRetries: 0, preflightCommitment: 'finalized' });
     if (result !== payment.signature) throw new Error('RPC returned an unexpected signature');
   }
+  async assertHolderReserveCoverage(wallet, reserves) {
+    await this.validate();
+    const owner = publicKey(wallet);
+    for (const p of reserves) {
+      const amount = BigInt(p.amount);
+      if (amount <= 0n) continue;
+      let held;
+      if (p.mint === 'NATIVE') {
+        const balance = await this.connection.getBalance(owner, 'finalized');
+        if (!Number.isSafeInteger(balance)) throw new Error('Holder SOL balance unavailable');
+        held = BigInt(balance);
+      } else {
+        const info = await this.tokenInfo(p.mint);
+        const ata = spl.getAssociatedTokenAddressSync(new PublicKey(p.mint), owner, new PublicKey(info.program));
+        const balance = (await this.connection.getTokenAccountBalance(ata, 'finalized')).value.amount;
+        if (!/^\d+$/.test(balance)) throw new Error('Holder token balance unavailable');
+        held = BigInt(balance);
+      }
+      if (held < amount) throw new Error('Holder wallet does not cover its recorded reserves');
+    }
+  }
   async paymentStatus(signature) {
     await this.validate();
     const result = (await this.connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];

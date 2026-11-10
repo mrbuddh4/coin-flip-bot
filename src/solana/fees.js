@@ -1,6 +1,7 @@
 const { randomBytes } = require('node:crypto');
 const { ethers } = require('ethers');
 const { publicKey } = require('./chain');
+const custody = require('./custody');
 const FLIP = '0x2aA5968F710080ea453e7e09E59d769E8C470fac';
 const EXCHANGE = '0xA0Cd0F92f12f881aeBaFF9e0fb3144511c9ebF6c';
 const ABI = new ethers.Interface(['function totalSupply() view returns (uint256)', 'function balanceOf(address) view returns (uint256)']);
@@ -30,17 +31,23 @@ CREATE TABLE IF NOT EXISTS "SolFeeCycles" (
   day text NOT NULL, mint text NOT NULL, snapshot jsonb NOT NULL,
   available numeric(78,0) NOT NULL, allocated numeric(78,0) NOT NULL,
   "createdAt" timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(day,mint)
-);`;
+);
+${custody.SCHEMA}`;
 async function accrueFees(client, game, split) {
   const inserted = await client.query('INSERT INTO "SolFeeAccruals" ("gameId",mint,holder,burn) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING "gameId"', [game.id, game.token.address, split.holderFee.toString(), split.burnFee.toString()]);
   if (!inserted.rowCount) return;
   if (split.holderFee > 0n) {
+    const vault = (await client.query('SELECT wallet FROM "SolHolderCustody" WHERE id=1 FOR SHARE')).rows[0];
+    if (vault) {
+      await custody.enqueueReserve(client, { id: `holder-reserve:${game.id}`, gameId: game.id, token: game.token, amount: split.holderFee, sourceWallet: game.depositAddress, recipient: vault.wallet });
+    } else {
     const result = await client.query(`INSERT INTO "SolFeePools" (mint,token,amount,"sourceWallet","anchorGameId") VALUES ($1,$2,$3,$4,$5)
       ON CONFLICT (mint) DO UPDATE SET amount="SolFeePools".amount+EXCLUDED.amount
       WHERE "SolFeePools"."sourceWallet"=EXCLUDED."sourceWallet" AND "SolFeePools".token->>'decimals'=EXCLUDED.token->>'decimals'
       AND COALESCE("SolFeePools".token->>'program','')=COALESCE(EXCLUDED.token->>'program','') RETURNING mint`,
     [game.token.address, JSON.stringify(game.token), split.holderFee.toString(), game.depositAddress, game.id]);
     if (result.rowCount !== 1) throw new Error('Fee pool asset or wallet conflict; reconcile before settlement');
+    }
   }
   if (split.burnFee > 0n) await client.query('INSERT INTO "SolOutbox" (id,"gameId",payment) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [
     `burn:${game.id}`, game.id, JSON.stringify({ id: `burn:${game.id}`, gameId: game.id, mint: game.token.address, amount: split.burnFee.toString(), kind: 'burn', sourceWallet: game.depositAddress }),
@@ -160,6 +167,7 @@ class SolanaFees {
       await client.query('BEGIN');
       const locked = (await client.query('SELECT pg_try_advisory_xact_lock($1) AS locked', [42424245])).rows[0].locked;
       if (!locked) { await client.query('ROLLBACK'); return; }
+      if ((await client.query('SELECT 1 FROM "SolHolderCustody" WHERE id=1')).rowCount) throw new Error('Separate holder custody has distributions deferred');
       const day = new Date(this.now()).toISOString().slice(0, 10);
       const poolQuery = 'SELECT * FROM "SolFeePools" p WHERE amount>0 AND NOT EXISTS(SELECT 1 FROM "SolFeeCycles" c WHERE c.day=$1 AND c.mint=p.mint) ORDER BY mint';
       let pools = (await client.query(poolQuery, [day])).rows;

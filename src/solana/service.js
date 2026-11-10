@@ -107,6 +107,13 @@ class SolanaService {
     this.workerRunning = true;
     try {
       await this.expire();
+      try {
+        await this.store.queueHolderReserves?.(this.chain.address);
+        this.custodyError = null;
+      } catch (_) {
+        // Retained-pool reconciliation must not starve already-signed payouts.
+        this.custodyError = 'Retained holder fees need reconciliation; their funds remain reserved in the treasury.';
+      }
       for (const item of await this.store.pendingPayments()) {
         let signed = item.signed;
         try {

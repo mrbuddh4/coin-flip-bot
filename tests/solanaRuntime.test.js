@@ -1,6 +1,6 @@
 // Exercise the real startup wiring, using simulated Telegram/Solana I/O only.
 // No credentials, funds or external RPC requests are used by this test.
-jest.mock('../src/solana/chain', () => ({ SolanaChain: jest.fn() }));
+jest.mock('../src/solana/chain', () => ({ SolanaChain: jest.fn(), publicKey: jest.requireActual('../src/solana/chain').publicKey }));
 jest.mock('../src/solana/store', () => ({ SolanaStore: jest.fn() }));
 jest.mock('../src/solana/service', () => ({ SolanaService: jest.fn() }));
 jest.mock('../src/solana/scanner', () => ({ DepositScanner: jest.fn() }));
@@ -19,12 +19,15 @@ const { acquireInstanceLock } = require('../src/utils/instanceLock');
 const { startHealthServer } = require('../src/utils/healthServer');
 const { Telegraf } = require('telegraf');
 const { FlipSnapshotSource } = require('../src/solana/fees');
-test('real mainnet startup wiring starts the Solana-only bot with no Paxeer source, timer or verification page', async () => {
+test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42)).publicKey.toBase58()])('real mainnet startup wiring starts the Solana-only bot with holder custody %s and no Paxeer source, timer or verification page', async wallet => {
+  jest.clearAllMocks();
   const originalEnv = process.env;
   process.env = { ...originalEnv, BOT_MODE: 'live', LIVE_FUNDS_ENABLED: 'true', BOT_CHAIN: 'solana', SOLANA_CLUSTER: 'mainnet-beta', SOLANA_WALLET_ADDRESS: 'test-treasury', TELEGRAM_BOT_TOKEN: 'offline-test-only', DATABASE_URL: 'offline-unused' };
   delete process.env.SOLANA_HOLDER_REWARDS; delete process.env.FLIP_HOLDER_RPC_URL;
+  if (wallet) process.env.SOLANA_HOLDER_WALLET_ADDRESS = wallet;
+  else delete process.env.SOLANA_HOLDER_WALLET_ADDRESS;
   const chain = { address: 'test-treasury', env: process.env, validate: jest.fn(async () => 'mainnet-genesis') };
-  const store = { pool: { end: jest.fn(async () => {}) }, verifySchema: jest.fn(async () => {}), bindNetwork: jest.fn(async () => {}), prepareInterface: jest.fn(async () => {}), allResults: jest.fn(async () => []) };
+  const store = { pool: { end: jest.fn(async () => {}) }, verifySchema: jest.fn(async () => {}), bindNetwork: jest.fn(async () => {}), prepareInterface: jest.fn(async () => {}), bindHolderWallet: jest.fn(async () => {}), allResults: jest.fn(async () => []) };
   const service = { store, chain, work: jest.fn(async () => {}), workerRunning: false };
   const scanner = { tick: jest.fn(async () => {}), running: false };
   const ui = { register: jest.fn(), render: jest.fn(async () => {}) };
@@ -40,6 +43,7 @@ test('real mainnet startup wiring starts the Solana-only bot with no Paxeer sour
     await main();
     expect(snapshot).not.toHaveBeenCalled(); expect(bot.launch).toHaveBeenCalledTimes(1);
     expect(service.feeService.mode).toBe('deferred'); expect(service.feeService.source).toBeNull();
+    expect(store.bindHolderWallet).toHaveBeenCalledWith(wallet);
     expect(service.work).toHaveBeenCalledTimes(1); expect(scanner.tick).toHaveBeenCalledTimes(1);
     const options = startHealthServer.mock.calls[0][0];
     expect(options.status()).toMatchObject({ ready: true, mode: 'solana-mainnet-beta', holderRewards: 'deferred' });

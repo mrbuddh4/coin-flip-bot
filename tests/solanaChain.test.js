@@ -188,3 +188,46 @@ test('solvency reserves every game/pool/outbox liability and independent fee res
   connection.getTokenAccountBalance.mockResolvedValue({ value: { amount: '123456789012345678' } });
   await expect(chain.assertSolvent([{ mint, amount: '123456789012345678' }])).resolves.toBeUndefined();
 });
+
+test.each([null, token.TOKEN_PROGRAM_ID, token.TOKEN_2022_PROGRAM_ID])('holder reserve transfers use only the treasury signer and exact recipient/asset program %s', async program => {
+  const { chain, connection } = setup();
+  if (program) {
+    const data = Buffer.alloc(82); data[44] = 6; data[45] = 1;
+    connection.getAccountInfo = jest.fn().mockResolvedValue({ owner: program, data });
+  }
+  const signed = await chain.buildPayment({ id: 'holder-reserve:game', mint: program ? mint : 'NATIVE', recipient: sender, amount: '123456789', kind: 'holder-reserve' });
+  const tx = Transaction.from(Buffer.from(signed.raw, 'base64'));
+  expect(tx.verifySignatures()).toBe(true); expect(tx.signatures).toHaveLength(1);
+  expect(tx.signatures[0].publicKey).toEqual(signer.publicKey);
+  if (program) {
+    const target = token.getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(sender), program);
+    expect(tx.instructions[1].programId).toEqual(program);
+    expect(tx.instructions[1].keys[2].pubkey).toEqual(target);
+    expect(tx.instructions[1].data.readBigUInt64LE(1)).toBe(123456789n);
+    expect(tx.instructions[1].data[9]).toBe(6);
+  } else {
+    expect(tx.instructions[0].keys[1].pubkey.toBase58()).toBe(sender);
+    expect(tx.instructions[0].data.readBigUInt64LE(4)).toBe(123456789n);
+  }
+  expect(tx.instructions.at(-1).data.toString()).toBe('coinflip:payout:holder-reserve:game');
+  expect(connection.sendRawTransaction).not.toHaveBeenCalled();
+});
+
+test('holder reserve audit reads the separate wallet and token ATA without signing or spending it', async () => {
+  const { chain, connection } = setup();
+  connection.getBalance.mockResolvedValue(100);
+  const data = Buffer.alloc(82); data[44] = 6; data[45] = 1;
+  connection.getAccountInfo = jest.fn().mockResolvedValue({ owner: token.TOKEN_2022_PROGRAM_ID, data });
+  connection.getTokenAccountBalance = jest.fn().mockResolvedValue({ value: { amount: '123456789012345678' } });
+  const reserves = [{ mint: 'NATIVE', amount: '100' }, { mint, amount: '123456789012345678' }];
+  await expect(chain.assertHolderReserveCoverage(sender, reserves)).resolves.toBeUndefined();
+  expect(connection.getBalance).toHaveBeenCalledWith(new PublicKey(sender), 'finalized');
+  expect(connection.getTokenAccountBalance).toHaveBeenCalledWith(token.getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(sender), token.TOKEN_2022_PROGRAM_ID), 'finalized');
+  connection.getBalance.mockResolvedValue(99);
+  await expect(chain.assertHolderReserveCoverage(sender, reserves)).rejects.toThrow('recorded reserves');
+  connection.getBalance.mockResolvedValue(100);
+  connection.getTokenAccountBalance.mockResolvedValue({ value: { amount: '123456789012345677' } });
+  await expect(chain.assertHolderReserveCoverage(sender, reserves)).rejects.toThrow('recorded reserves');
+  expect(connection.sendRawTransaction).not.toHaveBeenCalled();
+  expect(connection.getLatestBlockhash).not.toHaveBeenCalled();
+});

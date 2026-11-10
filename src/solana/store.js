@@ -2,6 +2,7 @@ const { Pool } = require('pg');
 const { connectionOptions } = require('../database/connection');
 const config = require('../config');
 const { accrueFees, SCHEMA: FEE_SCHEMA } = require('./fees');
+const custody = require('./custody');
 class SolanaStore {
   constructor(pool = new Pool(connectionOptions(config.database))) { this.pool = pool; }
   async verifySchema() {
@@ -81,8 +82,22 @@ class SolanaStore {
     if (result.rowCount !== 1) throw new Error('Payment already signed; do not replace it');
   }
   async paymentState(id, status, error = null) {
+    if (status === 'CONFIRMED') {
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await client.query('UPDATE "SolOutbox" SET status=\'CONFIRMED\', "lastError"=NULL WHERE id=$1 AND status<>\'CONFIRMED\' RETURNING payment', [id]);
+        if (result.rowCount) await custody.confirmReserve(client, result.rows[0].payment);
+        await client.query('COMMIT');
+      } catch (error) { await client.query('ROLLBACK'); throw error; }
+      finally { client.release(); }
+      return;
+    }
     await this.pool.query('UPDATE "SolOutbox" SET status=$2, "lastError"=$3 WHERE id=$1 AND (status<>\'CONFIRMED\' OR $2=\'CONFIRMED\')', [id, status, error]);
   }
+  async bindHolderWallet(wallet) { await custody.bindHolderWallet(this.pool, wallet); }
+  async queueHolderReserves(treasury) { await custody.queueRetainedPools(this.pool, treasury); }
+  async holderCustody() { return custody.custodyState(this.pool); }
   async payments(gameId) {
     return (await this.pool.query('SELECT id, status, signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND payment->>\'kind\'<>\'holder\' ORDER BY id', [gameId])).rows;
   }

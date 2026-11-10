@@ -12,8 +12,10 @@ const { paymentHandler } = require('./paymentPage');
 const { network } = require('./network');
 const { SolanaFees, holderRewardsMode } = require('./fees');
 const { holderHandler } = require('./holderPage');
+const { holderWallet } = require('./custody');
 function assertLaunchReady(env = process.env) {
   const rewards = holderRewardsMode(env);
+  holderWallet(env);
   if (network(env).realFunds && rewards === 'paxeer' && !/^https:\/\//.test(env.FLIP_HOLDER_RPC_URL || '')) throw new Error('MAINNET_HOLDER_RPC: Paxeer rewards were explicitly selected; set a working HTTPS FLIP_HOLDER_RPC_URL or use deferred rewards.');
 }
 async function main() {
@@ -47,6 +49,7 @@ async function main() {
     await store.verifySchema();
     await store.bindNetwork(genesis, chain.address);
     await store.prepareInterface();
+    await store.bindHolderWallet(holderWallet());
     service = new SolanaService({ store, chain });
     fees = new SolanaFees({ store, chain, mode: holderRewardsMode() });
     // Solana-only mode reserves holder fees and performs no Paxeer requests.

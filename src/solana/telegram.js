@@ -69,7 +69,15 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
     let coverage = 'Verified: recorded liabilities and SOL reserve are covered.';
     try { await service.chain.assertSolvent(liabilities); } catch (_) { coverage = 'NOT VERIFIED: treasury balance/RPC/reserve needs review. New unsigned payments stay pending when coverage fails.'; }
     const reviews = (await service.store.pool.query('SELECT id,signed->>\'signature\' AS signature FROM "SolOutbox" WHERE status=\'REVIEW\' ORDER BY "createdAt" LIMIT 10')).rows;
-    await ctx.reply(`Treasury: ${service.chain.address}\n${coverage}\nLiabilities (atomic units):\n${liabilities.map(p => `${p.mint}: ${p.amount}`).join('\n') || 'None'}\n\nReview payments (first 10):\n${reviews.map(p => `${p.id}\n${p.signature || 'No signed transaction'}`).join('\n') || 'None'}\nUse /solrecheck PAYMENT_ID to inspect the original signature. It never resends or creates a replacement.`);
+    const custody = await service.store.holderCustody?.();
+    let holderCoverage = '';
+    if (custody) {
+      let verified = 'Verified: holder wallet covers recorded finalized reserves.';
+      try { await service.chain.assertHolderReserveCoverage(custody.wallet, custody.reserves); }
+      catch (_) { verified = 'NOT VERIFIED: holder wallet balance/RPC needs review.'; }
+      holderCoverage = `\n\nHolder wallet: ${custody.wallet}\n${verified}\nRecorded reserves (first 5, atomic units):\n${custody.reserves.slice(0, 5).map(p => `${p.mint}: ${p.amount}`).join('\n') || 'None'}\nHolder distributions remain deferred.`;
+    }
+    await ctx.reply(`Treasury: ${service.chain.address}\n${coverage}\nLiabilities (atomic units):\n${liabilities.map(p => `${p.mint}: ${p.amount}`).join('\n') || 'None'}${holderCoverage}\n\nReview payments (first 10):\n${reviews.map(p => `${p.id}\n${p.signature || 'No signed transaction'}`).join('\n') || 'None'}\nUse /solrecheck PAYMENT_ID to inspect the original signature. It never resends or creates a replacement.`);
   });
   command('solrecheck', async (ctx, [id]) => {
     if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
