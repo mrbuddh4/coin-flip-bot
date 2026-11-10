@@ -30,7 +30,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     if (admin) { if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   });
   beforeEach(async () => {
-    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges"');
+    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges", "SolMediaCache"');
     await pool.query('DROP TABLE IF EXISTS \"SolNetwork\"');
     now = 1000;
     chain = {
@@ -224,7 +224,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const bot = { handlers, start: fn => { handlers.start = fn; }, command: (name, fn) => { handlers[name] = fn; },
       action: (_, fn) => { handlers.action = fn; }, on: (_, fn) => { handlers.text = fn; },
       telegram: { getMe: jest.fn().mockResolvedValue({ username: 'TestCoinFlipBot' }),
-        sendMessage: jest.fn(async () => ({ message_id: ++messageId })), editMessageText: jest.fn().mockResolvedValue({}), sendVideo: jest.fn().mockResolvedValue({}) } };
+        sendMessage: jest.fn(async () => ({ message_id: ++messageId })), editMessageText: jest.fn().mockResolvedValue({}), editMessageCaption: jest.fn().mockResolvedValue({}), deleteMessage: jest.fn().mockResolvedValue({}), sendPhoto: jest.fn(async () => ({ message_id: ++messageId, photo: [{ file_id: 'cached-photo' }] })), sendVideo: jest.fn(async () => ({ message_id: ++messageId, video: { file_id: 'cached-video' } })) } };
     return bot;
   }
   function context(userId, text = '', type = 'private') {
@@ -288,8 +288,8 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const flipping = bot.telegram.editMessageText.mock.calls.at(-1)[3];
     expect(flipping).toContain('Flipping the coin'); expect(flipping).not.toContain('Winner:');
     chain.paymentStatus.mockResolvedValue('finalized');
-    await service.work(); now += 1001; await ui.render();
-    const result = bot.telegram.editMessageText.mock.calls.at(-1)[3];
+    await service.work(); now += 1251; await ui.render();
+    const result = bot.telegram.sendPhoto.mock.calls.at(-1)[2].caption;
     expect(result).toContain('Winner:'); expect(result).toContain('CONFIRMED'); expect(result).not.toContain('?cluster=devnet');
     const restarted = new SolanaInterface(bot, new SolanaService({ store, chain, now: () => now }), scanner);
     await restarted.render();
@@ -409,6 +409,82 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     await extra.selectTokens(context('1'));
     const again = await store.session('1');
     expect(again.tokens.filter(t => t.address === walletB)).toHaveLength(1);
+  });
+  async function presentationGame() {
+    const game = await service.create({ ...input, interfaceVersion: 2 });
+    await service.deposit({ id: game.id, userId: '1', signature: 'creator:' + game.id });
+    await store.mutate(game.id, g => { g.ui.publishRequested = true; });
+    await service.join({ id: game.id, userId: '2', wallet: walletB, chatId: '-100' });
+    await service.deposit({ id: game.id, userId: '2', signature: 'challenger:' + game.id });
+    return game;
+  }
+  test('slow video upload cannot reveal a winner through group, private status, statistics or automatic notices', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const { PaymentNotifications } = require('../src/solana/notifications');
+    const game = await presentationGame();
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.videoDuration = 1000;
+    let finishUpload, signalUpload;
+    const uploadStarted = new Promise(resolve => { signalUpload = resolve; });
+    bot.telegram.sendVideo.mockImplementationOnce(() => new Promise(resolve => { finishUpload = resolve; signalUpload(); }));
+    const rendering = ui.render();
+    await uploadStarted;
+    expect(finishUpload).toBeDefined(); now += 120000;
+    const ctx = context('1'); await ui.status(ctx, game.id);
+    expect(ctx.reply.mock.calls[0][0]).toContain('FLIPPING'); expect(ctx.reply.mock.calls[0][0]).not.toContain('Winner:');
+    const stats = context('1'); await ui.stats(stats); expect(stats.reply.mock.calls[0][0]).toContain('Flips: 0');
+    const board = context('1'); await ui.leaderboard(board); expect(board.reply.mock.calls[0][0]).toContain('No completed flips yet');
+    const notifier = new PaymentNotifications(store, bot.telegram); await notifier.tick();
+    expect(bot.telegram.sendMessage.mock.calls.some(c => c[1].includes('Winner payout'))).toBe(false);
+    const restarted = new SolanaInterface(bot, service, {}); restarted.videoDuration = 1000;
+    await restarted.render(); expect(bot.telegram.sendPhoto).not.toHaveBeenCalled(); expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    finishUpload({ message_id: 77, video: { file_id: 'saved-video' } }); await rendering;
+    expect((await store.get(game.id)).ui.revealAt).toBe(now + 1250);
+    await restarted.render(); expect(bot.telegram.sendPhoto).not.toHaveBeenCalled();
+    now += 1251; await restarted.render();
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith('-100', 77);
+    expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.deleteMessage.mock.invocationCallOrder[0]).toBeLessThan(bot.telegram.sendPhoto.mock.invocationCallOrder[0]);
+    expect(bot.telegram.sendPhoto.mock.calls[0][2].caption).toContain('Winner:');
+    for (let n = 0; n < 5; n++) await notifier.tick();
+    expect(bot.telegram.sendMessage.mock.calls.some(c => c[1].includes('Winner payout'))).toBe(true);
+  });
+  test('video ID and cleanup survive restart; the next flip uses cached video instead of another upload', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const game = await presentationGame();
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.videoDuration = 1000;
+    await ui.render(); const playing = await store.get(game.id);
+    expect(playing.ui.videoMessageId).toBeDefined(); expect(playing.ui.resultAnnounced).toBeUndefined();
+    now += 1251; const restarted = new SolanaInterface(bot, service, {}); await restarted.render();
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith('-100', playing.ui.videoMessageId);
+    expect((await store.get(game.id)).ui.resultAnnounced).toBe(true);
+    await restarted.render(); expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1); expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(1);
+    await presentationGame(); await restarted.render();
+    expect(bot.telegram.sendVideo).toHaveBeenLastCalledWith('-100', 'cached-video', expect.any(Object));
+  });
+  test('a failed video cleanup retries without replaying animation or duplicating the result', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const game = await presentationGame(); const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.videoDuration = 1000;
+    await ui.render(); const videoId = (await store.get(game.id)).ui.videoMessageId;
+    bot.telegram.deleteMessage.mockRejectedValueOnce(new Error('temporary failure'));
+    now += 1251; await ui.render();
+    expect((await store.get(game.id)).ui.videoCleanupPending).toBe(true);
+    await ui.render();
+    expect((await store.get(game.id)).ui.videoDeleted).toBe(true);
+    expect(bot.telegram.deleteMessage.mock.calls.filter(c => c[1] === videoId)).toHaveLength(2);
+    expect(bot.telegram.sendPhoto).toHaveBeenCalledTimes(1); expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+  });
+  test('an explicitly rejected cached file is refreshed, while network ambiguity never triggers a second upload', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    await presentationGame(); const bot = fakeBot(), ui = new SolanaInterface(bot, service, {}); ui.videoDuration = 1000;
+    await store.saveMedia('coinflip-video:TestCoinFlipBot', { fileId: 'stale' });
+    bot.telegram.sendVideo.mockRejectedValueOnce({ response: { error_code: 400 } });
+    await ui.render(); expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(2);
+    expect(bot.telegram.sendVideo.mock.calls[0][1]).toBe('stale'); expect(bot.telegram.sendVideo.mock.calls[1][1]).toHaveProperty('source');
+    now += 1251; await ui.render(); await presentationGame();
+    bot.telegram.sendVideo.mockRejectedValueOnce(new Error('ambiguous timeout'));
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try { await ui.render(); } finally { log.mockRestore(); }
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(3);
   });
   test('phone amount entry accepts .01 and invalid amounts preserve the prompt', async () => {
     const { SolanaInterface } = require('../src/solana/interface');

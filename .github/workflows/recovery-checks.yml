@@ -32,7 +32,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts --no-fund --no-audit
-      - run: npm test -- --runInBand --silent
+      - run: |
+          if ! npm test -- --runInBand --silent --json --outputFile=/tmp/coinflip-tests.json; then
+            node scripts/report-test-failures.js /tmp/coinflip-tests.json
+            exit 1
+          fi
         env:
           SOLANA_TEST_DATABASE_URL: postgresql://postgres:disposable-test-only@127.0.0.1:5432/coinflip_test
       - run: npm run deploy:prepare

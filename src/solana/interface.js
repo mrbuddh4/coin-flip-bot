@@ -2,6 +2,7 @@ const { randomUUID, randomBytes } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { publicKey } = require('./chain');
+const { resultVisible } = require('./presentation');
 const { fromUnits, toUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 const { getVideoDuration } = require('../utils/helpers');
@@ -174,8 +175,9 @@ class SolanaInterface {
     const game = await this.store.get(id);
     this.service.member(game, ctx.from.id);
     const payments = await this.store.payments(id);
-    const winner = [game.creator, game.challenger].find(p => p?.userId === game.winnerId);
-    return this.reply(ctx, `<b>Game Status</b>\n${summary(game)}\nState: ${escape(game.status)}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n` + (winner ? `Winner: ${mention(winner)}\n` : '') + payments.map(p => `${escape(p.id.split(':')[0])}: ${escape(p.status)}${p.signature ? `\n${escape(this.explorer(p.signature))}` : ''}`).join('\n'), [[button('Refresh', `s:status:${id}`)], [button('🏠 Home', 's:home')]]);
+    const revealed = resultVisible(game), flipping = game.status === 'SETTLED' && !revealed;
+    const winner = revealed && [game.creator, game.challenger].find(p => p?.userId === game.winnerId);
+    return this.reply(ctx, `<b>Game Status</b>\n${summary(game)}\nState: ${flipping ? 'FLIPPING' : escape(game.status)}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n` + (winner ? `Winner: ${mention(winner)}\n` : '') + (flipping ? 'Both deposits are recorded. The flip video plays before the result and payment details are revealed.' : payments.map(p => `${escape(p.id.split(':')[0])}: ${escape(p.status)}${p.signature ? `\n${escape(this.explorer(p.signature))}` : ''}`).join('\n')), [[button('Refresh', `s:status:${id}`)], [button('🏠 Home', 's:home')]]);
   }
   explorer(signature) { return `https://explorer.solana.com/tx/${signature}${this.service.chain.env.SOLANA_CLUSTER === 'mainnet-beta' ? '' : '?cluster=devnet'}`; }
   async action(ctx) {
@@ -309,7 +311,7 @@ class SolanaInterface {
     return this.reply(ctx, `Send the public Paxeer EVM address holding your FLIP (0x…). You will sign a message proving ownership and authorizing rewards to <code>${escape(profile.receiveWallet)}</code>. Never send a private key or seed phrase.`);
   }
   async stats(ctx) {
-    const games = (await this.store.allResults()).filter(g => [g.creator.userId, g.challenger?.userId].includes(String(ctx.from.id)));
+    const games = (await this.store.allResults()).filter(g => resultVisible(g) && [g.creator.userId, g.challenger?.userId].includes(String(ctx.from.id)));
     const wins = games.filter(g => g.winnerId === String(ctx.from.id)).length;
     const assets = new Map();
     for (const g of games) {
@@ -321,7 +323,7 @@ class SolanaInterface {
     return this.reply(ctx, `<b>Your Game Statistics</b>\n\nFlips: ${games.length}\nWins: ${wins}\nLosses: ${games.length - wins}\n\n` + [...assets.values()].slice(0, 20).map(a => `${escape(a.token.symbol)} (<code>${escape(a.token.address)}</code>)\nWagered: ${fromUnits(a.wagered, a.token.decimals)}\nPrizes allocated: ${fromUnits(a.allocated, a.token.decimals)}`).join('\n\n') + '\n\nAllocated prizes may still be pending payment. Different tokens are never added together.', [[button('🏠 Home', 's:home')]]);
   }
   async leaderboard(ctx, losers = false) {
-    const results = await this.store.allResults(), ranks = new Map();
+    const results = (await this.store.allResults()).filter(resultVisible), ranks = new Map();
     for (const game of results) for (const player of [game.creator, game.challenger]) {
       const r = ranks.get(player.userId) || { ...player, wins: 0, losses: 0 };
       if (game.winnerId === player.userId) r.wins++; else r.losses++;
@@ -329,6 +331,68 @@ class SolanaInterface {
     }
     const order = [...ranks.values()].sort((a, b) => losers ? b.losses - a.losses : b.wins - a.wins).slice(0, 10);
     return this.reply(ctx, `<b>${losers ? 'Wall of Shame' : 'Leaderboard'}</b>\nRanked by ${losers ? 'losses' : 'wins'}.\n\n` + (order.map((r, i) => `${i + 1}. ${mention(r)}: ${r.wins} wins, ${r.losses} losses`).join('\n') || 'No completed flips yet.'));
+  }
+  async animationReady(game) {
+    if (!game.ui?.animationClaimed && !resultVisible(game)) {
+      let send = false;
+      const claimed = await this.store.mutate(game.id, g => {
+        g.ui ||= {};
+        if (!g.ui.animationClaimed) {
+          Object.assign(g.ui, { animationClaimed: true, animationPhase: 'SENDING', animationClaimedAt: this.service.now(), revealAt: null });
+          send = true;
+        }
+      });
+      game.ui = claimed.ui;
+      if (send) {
+        const video = path.join(__dirname, '../../assets/coinflip.MP4');
+        try {
+          if (!fs.existsSync(video)) throw new Error('Animation file missing');
+          const me = await this.me();
+          const mediaId = `coinflip-video:${me.id || me.username}`;
+          const cached = await this.store.media(mediaId);
+          // The clock starts AFTER Telegram acknowledges the uploaded/cached
+          // video, never when an upload merely begins.
+          const options = { caption: '🪙 Flipping the coin…', supports_streaming: true };
+          let sent;
+          try { sent = await this.telegram.sendVideo(game.chatId, cached?.fileId || { source: video }, options); }
+          catch (error) {
+            if (!cached?.fileId || error.response?.error_code !== 400) throw error;
+            await this.store.saveMedia(mediaId, {});
+            sent = await this.telegram.sendVideo(game.chatId, { source: video }, options);
+          }
+          this.videoDuration ??= cached?.durationMs || (sent.video?.duration ? sent.video.duration * 1000 : await getVideoDuration(video));
+          const duration = Math.max(this.videoDuration, Number(sent.video?.duration || 0) * 1000);
+          const updated = await this.store.mutate(game.id, g => {
+            Object.assign(g.ui, { animationPhase: 'PLAYING', videoMessageId: sent.message_id, revealAt: this.service.now() + duration + 250 });
+          });
+          game.ui = updated.ui;
+          if (sent.video?.file_id) await this.store.saveMedia(mediaId, { fileId: sent.video.file_id, durationMs: duration });
+        } catch (_) {
+          const updated = await this.store.mutate(game.id, g => {
+            // Retain an acknowledged video even if caching failed.
+            if (g.ui.animationPhase === 'SENDING') Object.assign(g.ui, { animationPhase: 'FAILED', revealAt: this.service.now() });
+          });
+          game.ui = updated.ui;
+          console.error('FLIP_VIDEO_UNAVAILABLE: result and financial records retained.');
+        }
+      }
+    }
+    if (game.ui?.animationPhase === 'SENDING') {
+      // A restart during an ambiguous upload must not upload another video or
+      // infer that playback started. Wait a bounded recovery interval.
+      if (this.service.now() < game.ui.animationClaimedAt + 5 * 60 * 1000) return false;
+      const updated = await this.store.mutate(game.id, g => { Object.assign(g.ui, { animationPhase: 'FAILED', revealAt: this.service.now() }); });
+      game.ui = updated.ui;
+    }
+    if (this.service.now() < (game.ui?.revealAt ?? Infinity)) return false;
+    if (game.ui?.videoMessageId && !game.ui?.videoDeleted) {
+      let deleted = false;
+      try { await this.telegram.deleteMessage(game.chatId, game.ui.videoMessageId); deleted = true; }
+      catch (error) { deleted = /message to delete not found/i.test(error.response?.description || ''); }
+      const updated = await this.store.mutate(game.id, g => { g.ui.videoDeleted = deleted; g.ui.videoCleanupPending = !deleted; });
+      game.ui = updated.ui;
+    }
+    return true;
   }
   async render() {
     if (this.rendering) return;
@@ -353,26 +417,8 @@ class SolanaInterface {
         } else if (game.status === 'CANCELLED') {
           text += '\nChallenge cancelled or expired.\n' + (payments.length ? payments.every(p => p.status === 'CONFIRMED') ? 'Recorded refunds finalized.' : 'Recorded refunds pending; check Game Status.' : 'No deposits recorded.');
         } else {
-          if (!game.ui?.animationClaimed) {
-            const video = path.join(__dirname, '../../assets/coinflip.MP4');
-            this.videoDuration ??= fs.existsSync(video) ? await getVideoDuration(video) : 0;
-            let send = false;
-            const claimed = await this.store.mutate(game.id, g => {
-              g.ui ||= {};
-              if (!g.ui.animationClaimed) {
-                g.ui.animationClaimed = true;
-                g.ui.revealAt = this.service.now() + this.videoDuration + 5000;
-                send = true;
-              }
-            });
-            game.ui = claimed.ui;
-            if (send && fs.existsSync(video)) {
-              await this.telegram.sendVideo(game.chatId, { source: video }, { caption: '🪙 Flipping the coin…' }).catch(() => {});
-              const updated = await this.store.mutate(game.id, g => { g.ui.revealAt = this.service.now() + this.videoDuration; });
-              game.ui = updated.ui;
-            }
-          }
-          if (this.service.now() < (game.ui?.revealAt || 0)) text += '\n🪙 Flipping the coin…';
+          const ready = await this.animationReady(game);
+          if (!ready) text += '\n🪙 Flipping the coin…';
           else {
             const winner = [game.creator, game.challenger].find(p => p.userId === game.winnerId);
             const payment = payments.find(p => p.id === `prize:${game.id}`);
@@ -381,20 +427,49 @@ class SolanaInterface {
           }
         }
         const renderKey = JSON.stringify([text, rows]);
-        if (game.ui?.renderKey === renderKey) continue;
+        const terminal = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && payments.every(p => p.status === 'CONFIRMED');
+        if (game.ui?.renderKey === renderKey) {
+          if (Boolean(game.ui?.terminal) !== terminal) await this.store.mutate(game.id, g => { g.ui.terminal = terminal; });
+          continue;
+        }
         try {
-          let messageId = game.ui?.messageId;
-          if (messageId) {
-            try { await this.telegram.editMessageText(game.chatId, messageId, undefined, text, keyboard(rows)); }
+          let messageId = game.ui?.messageId, resultIsPhoto = Boolean(game.ui?.resultIsPhoto);
+          const revealing = game.status === 'SETTLED' && !resultVisible(game) && this.service.now() >= (game.ui?.revealAt ?? Infinity);
+          if (revealing) {
+            const image = path.join(__dirname, '../../assets/coinflip.jpg');
+            const mediaId = `coinflip-photo:${me.id || me.username}`;
+            const cached = await this.store.media(mediaId);
+            let sent;
+            if (fs.existsSync(image)) {
+              try {
+                sent = await this.telegram.sendPhoto(game.chatId, cached?.fileId || { source: image }, { caption: text, ...keyboard(rows) });
+                resultIsPhoto = true;
+                if (sent.photo?.length) await this.store.saveMedia(mediaId, { fileId: sent.photo.at(-1).file_id });
+              } catch (error) {
+                // A network timeout may mean the photo was delivered; don't
+                // immediately add a duplicate text result in that case.
+                if (error.response?.error_code !== 400) throw error;
+              }
+            }
+            if (!sent) { sent = await this.telegram.sendMessage(game.chatId, text, keyboard(rows)); resultIsPhoto = false; }
+            if (messageId) await this.telegram.deleteMessage(game.chatId, messageId).catch(() => {});
+            messageId = sent.message_id;
+            await this.store.mutate(game.id, g => { g.ui.resultAnnounced = true; g.ui.resultIsPhoto = resultIsPhoto; g.ui.messageId = messageId; });
+            game.ui.resultAnnounced = true;
+          } else if (messageId) {
+            try {
+              if (resultIsPhoto) await this.telegram.editMessageCaption(game.chatId, messageId, undefined, text, keyboard(rows));
+              else await this.telegram.editMessageText(game.chatId, messageId, undefined, text, keyboard(rows));
+            }
             catch (error) {
               const description = error.response?.description || '';
-              if (/message to edit not found|message can't be edited/i.test(description)) messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id;
+              if (/message to edit not found|message can't be edited/i.test(description)) { messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id; resultIsPhoto = false; }
               else if (!/message is not modified/i.test(description)) throw error;
             }
           }
           else messageId = (await this.telegram.sendMessage(game.chatId, text, keyboard(rows))).message_id;
-          const terminal = game.status !== 'OPEN' && (game.status !== 'SETTLED' || this.service.now() >= (game.ui?.revealAt || 0)) && (game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : payments.some(p => p.id === `prize:${game.id}` && p.status === 'CONFIRMED'));
-          await this.store.mutate(game.id, g => { g.ui ||= {}; Object.assign(g.ui, { messageId, renderKey, terminal }); });
+          const terminalNow = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && payments.every(p => p.status === 'CONFIRMED');
+          await this.store.mutate(game.id, g => { g.ui ||= {}; Object.assign(g.ui, { messageId, resultIsPhoto, renderKey, terminal: terminalNow }); });
         } catch (_) { console.error('GROUP_CARD_RETRY: game record retained.'); }
       }
     } finally { this.rendering = false; }

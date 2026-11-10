@@ -60,6 +60,9 @@ class PaymentNotifications {
       SELECT 'payment:'||p.id||':'||p.status, p."createdAt",g.state,
         p.payment || jsonb_build_object('status',p.status,'signature',p.signed->>'signature')
       FROM "SolOutbox" p JOIN "SolGames" g ON g.id=p."gameId"
+      WHERE NOT (g.state ? 'interfaceVersion' AND g.state->>'status'='SETTLED')
+        OR COALESCE(g.state->'ui'->>'resultAnnounced','false')='true'
+        OR COALESCE(g.state->'ui'->>'terminal','false')='true' 
     ) SELECT e.id,e.game,e.event,t.chat AS "chatId"
       FROM events e CROSS JOIN LATERAL (
         SELECT DISTINCT chat FROM (VALUES (e.game->>'chatId'),(e.game->'creator'->>'userId'),(e.game->'challenger'->>'userId')) ids(chat) WHERE chat IS NOT NULL

@@ -1,3 +1,4 @@
+const { resultVisible } = require('./presentation');
 const { fromUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 function args(ctx) { return ctx.message.text.trim().split(/\s+/).slice(1); }
@@ -48,7 +49,7 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
   });
   command('soldeposit', async (ctx, [id, signature]) => {
     const game = await service.deposit({ id, signature, userId: ctx.from.id });
-    await ctx.reply(`Game ${id}: ${game.status}. ` + (game.winnerId ? `Winner Telegram ID: ${game.winnerId}. Payout queued; use /solstatus to check finality.` : 'Deposit processed. Wrong amounts, duplicate extra deposits and late payments are queued for full refund.'));
+    await ctx.reply(`Game ${id}: ${game.status}. ` + (game.winnerId && resultVisible(game) ? `Winner Telegram ID: ${game.winnerId}. Payout queued; use /solstatus to check finality.` : 'Deposit processed. Wrong amounts, duplicate extra deposits and late payments are queued for full refund.'));
   });
   command('solcancel', async (ctx, [id]) => {
     await service.cancel({ id, userId: ctx.from.id, chatId: ctx.chat.id });
@@ -57,6 +58,7 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
   command('solstatus', async (ctx, [id]) => {
     const game = await service.store.get(id);
     if (game.chatId !== String(ctx.chat.id)) service.member(game, ctx.from.id);
+    if (game.status === 'SETTLED' && !resultVisible(game)) return ctx.reply('Both deposits are recorded. The flip animation plays before the winner and payment details are revealed.');
     const payments = await service.store.payments(id);
     await ctx.reply(`Game ${id}: ${game.status}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n` +
       (game.winnerId ? `Winner: ${game.winnerId}\nPrize: ${fromUnits(game.prize, game.token.decimals)}\nFee accounting: ${game.fees.status}; individual burn/payment confirmation below\n` : '') +

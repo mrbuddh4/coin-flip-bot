@@ -118,6 +118,7 @@ class SolanaStore {
   async prepareInterface() {
     // Additive UI, scanner and fee tables. No existing financial rows are reset.
     await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS "SolMediaCache" (id text PRIMARY KEY, data jsonb NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolProfiles" ("userId" text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}');
       CREATE TABLE IF NOT EXISTS "SolSessions" ("userId" text PRIMARY KEY, data jsonb NOT NULL, "expiresAt" timestamptz NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolDrafts" (id text PRIMARY KEY, "userId" text NOT NULL, "chatId" text NOT NULL, "expiresAt" timestamptz NOT NULL);
@@ -127,6 +128,8 @@ class SolanaStore {
     await this.pool.query(FEE_SCHEMA);
     await this.pool.query(NOTIFICATION_SCHEMA);
   }
+  async media(id) { return (await this.pool.query('SELECT data FROM "SolMediaCache" WHERE id=$1', [id])).rows[0]?.data; }
+  async saveMedia(id, data) { await this.pool.query('INSERT INTO "SolMediaCache" (id,data) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data', [id, JSON.stringify(data)]); }
   async profile(userId) {
     const { rows } = await this.pool.query('SELECT data FROM "SolProfiles" WHERE "userId"=$1', [String(userId)]);
     return rows[0]?.data || {};

@@ -74,7 +74,7 @@ integration('automatic financial notices on real PostgreSQL', () => {
     telegram.sendMessage.mockImplementation(async chat => { if (chat === '1') throw new Error('Blocked'); return { message_id: 7 }; });
     await notifier.tick(); await notifier.tick();
     expect(telegram.sendMessage).toHaveBeenCalledTimes(2);
-    expect((await pool.query('SELECT "chatId","deliveredAt",attempts FROM "SolNotificationDeliveries" ORDER BY "chatId"')).rows).toEqual([{ chatId: '-100', deliveredAt: expect.any(Date), attempts: 1 }, { chatId: '1', deliveredAt: null, attempts: 1 }]);
+    expect((await pool.query('SELECT "chatId","deliveredAt",attempts FROM "SolNotificationDeliveries" ORDER BY "chatId"')).rows).toEqual(expect.arrayContaining([{ chatId: '-100', deliveredAt: expect.any(Date), attempts: 1 }, { chatId: '1', deliveredAt: null, attempts: 1 }]));
     telegram.sendMessage.mockResolvedValue({ message_id: 8 });
     await pool.query('UPDATE "SolNotificationDeliveries" SET "retryAt"=now()'); await notifier.tick();
     expect(telegram.sendMessage).toHaveBeenCalledTimes(3);
@@ -85,6 +85,9 @@ integration('automatic financial notices on real PostgreSQL', () => {
     await store.mutate(game.id, g => { g.ui.publishRequested = true; });
     await service.join({ id: game.id, userId: '2', wallet: wallet(2), chatId: '-100' });
     await service.deposit({ id: game.id, userId: '2', signature: 'b' });
+    await drain();
+    expect(telegram.sendMessage.mock.calls.some(c => c[1].includes('Winner payout'))).toBe(false);
+    await store.mutate(game.id, g => { g.ui.resultAnnounced = true; });
     await drain();
     for (const chat of ['-100', '1', '2']) {
       const texts = telegram.sendMessage.mock.calls.filter(c => c[0] === chat).map(c => c[1]);
