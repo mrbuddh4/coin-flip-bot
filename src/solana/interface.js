@@ -483,6 +483,11 @@ class SolanaInterface {
     const video = path.join(__dirname, '../../assets/challenge.mp4');
     return fs.existsSync(video) ? { source: video } : null;
   }
+  expiryVideo() {
+    if (this.env.SOLANA_EXPIRY_VIDEO) return this.env.SOLANA_EXPIRY_VIDEO;
+    const video = path.join(__dirname, '../../assets/expired.mp4');
+    return fs.existsSync(video) ? { source: video } : null;
+  }
   async cleanupRetiredCards(game) {
     const pending = [];
     for (const id of game.ui?.retiredMessageIds || []) {
@@ -525,7 +530,8 @@ class SolanaInterface {
             rows.push([{ text: 'Accept Challenge', url: `https://t.me/${me.username}?start=soljoin_${game.id}` }]);
           } else text += `\nChallenger: ${mention(game.challenger)}\nWaiting for challenger deposit.`;
         } else if (game.status === 'CANCELLED') {
-          text += '\nChallenge cancelled or expired.\n' + (payments.length ? payments.every(p => p.status === 'CONFIRMED') ? 'Refunds confirmed.' : 'Refunds processing.' : 'No deposits recorded.');
+          const reason = game.cancelReason === 'EXPIRED' ? 'Challenge expired.' : game.cancelReason === 'CANCELLED' ? 'Challenge cancelled.' : 'Challenge cancelled or expired.';
+          text += '\n' + reason + '\n' + (payments.length ? payments.every(p => p.status === 'CONFIRMED') ? 'Refunds confirmed.' : 'Refunds processing.' : 'No deposits recorded.');
           const refunds = compactPayments(game, payments, signature => this.explorer(signature));
           if (refunds) text += '\n' + refunds;
         } else {
@@ -539,16 +545,40 @@ class SolanaInterface {
             if (links) text += '\n' + links;
           }
         }
+        const expiryVideo = game.status === 'CANCELLED' && game.cancelReason === 'EXPIRED' && this.expiryVideo();
+        const needsExpiryVideo = expiryVideo && !game.ui?.expiryVideoApplied;
         const renderKey = JSON.stringify([text, rows]);
         const terminal = game.status === 'CANCELLED' ? payments.every(p => p.status === 'CONFIRMED') : game.status === 'SETTLED' && resultVisible(game) && !game.ui?.videoCleanupPending && !game.ui?.retiredMessageIds?.length && payments.every(p => p.status === 'CONFIRMED');
-        if (game.ui?.renderKey === renderKey) {
+        if (game.ui?.renderKey === renderKey && !needsExpiryVideo) {
           if (Boolean(game.ui?.terminal) !== terminal || game.ui?.compactVersion !== 1) await this.store.mutate(game.id, g => { g.ui.terminal = terminal; g.ui.compactVersion = 1; });
           continue;
         }
         try {
           let messageId = game.ui?.messageId, resultIsPhoto = Boolean(game.ui?.resultIsPhoto), messageIsVideo = Boolean(game.ui?.messageIsVideo);
           const revealing = game.status === 'SETTLED' && !resultVisible(game) && this.service.now() >= (game.ui?.revealAt ?? Infinity);
-          if (revealing) {
+          if (needsExpiryVideo) {
+            // Replace media in the same group card. A timeout retries the edit
+            // on the same message, never creates a second expiry notification.
+            const options = { caption: text, supports_streaming: true, ...keyboard(rows) };
+            if (messageId) {
+              try {
+                await this.telegram.editMessageMedia(game.chatId, messageId, undefined,
+                  { type: 'video', media: expiryVideo, caption: text, parse_mode: 'HTML', supports_streaming: true },
+                  { reply_markup: { inline_keyboard: [] } });
+              } catch (error) {
+                const description = error.response?.description || '';
+                if (/message to edit not found|message can't be edited/i.test(description)) {
+                  messageId = (await this.telegram.sendVideo(game.chatId, expiryVideo, options)).message_id;
+                } else if (!/message is not modified/i.test(description)) throw error;
+              }
+            } else messageId = (await this.telegram.sendVideo(game.chatId, expiryVideo, options)).message_id;
+            messageIsVideo = true; resultIsPhoto = false;
+            const updated = await this.store.mutate(game.id, g => {
+              g.ui ||= {};
+              Object.assign(g.ui, { expiryVideoApplied: true, messageIsVideo, resultIsPhoto, messageId });
+            });
+            game.ui = updated.ui;
+          } else if (revealing) {
             const image = path.join(__dirname, '../../assets/coinflip.jpg');
             const mediaId = `coinflip-photo:${me.id || me.username}`;
             const cached = await this.store.media(mediaId);

@@ -120,3 +120,8 @@ Concurrent creators are serialized with a PostgreSQL transaction advisory lock. 
 ## Optional challenge-card video
 
 The funded group challenge supports a video with its caption and Accept button on the same card. It edits the caption when the slot is taken, removes the Accept button, and retires the old challenge card when the flip result appears. This clip is separate from the result animation. Set `SOLANA_CHALLENGE_VIDEO` privately in Railway to a Telegram video file ID or an accessible HTTPS MP4 URL, or package the supplied clip as `assets/challenge.mp4`. With neither configured, the existing text challenge is retained. The owner's November 10 Morpheus challenge clip is bundled as `assets/challenge.mp4` (1.4 seconds, H.264 MP4). It is used automatically when `SOLANA_CHALLENGE_VIDEO` is unset. Deploy the latest recovery branch; no media variable or database reset is required. Existing posted challenges keep their current card; new funded challenges use the clip.
+
+
+## Expired challenge video
+
+The owner's Shaq “WACK” clip is bundled as `assets/expired.mp4`. When a challenge times out, the bot replaces the existing group card media in place, removes Accept, and keeps the compact refund links in its caption. Refund finality updates that same caption. Manual cancellations keep their existing card. Unfunded drafts do not produce a new group notification. New cancellation records distinguish manual cancellation from expiry; older records retain the generic label. `SOLANA_EXPIRY_VIDEO` optionally overrides the bundled clip with a Telegram file ID or HTTPS video URL. No new variable or database reset is needed.

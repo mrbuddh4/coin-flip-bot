@@ -45,8 +45,9 @@ class SolanaService {
   async refund(g, tx, member, receipt, mint = g.token.address) {
     await tx.enqueue({ id: `refund:${receipt.signature}`, gameId: g.id, mint, recipient: member.wallet, amount: receipt.amount, kind: 'refund', sourceWallet: g.depositAddress });
   }
-  async cancelLocked(g, tx) {
+  async cancelLocked(g, tx, reason = 'CANCELLED') {
     g.status = 'CANCELLED';
+    g.cancelReason = reason;
     for (const player of [g.creator, g.challenger]) if (player?.deposit) await this.refund(g, tx, player, player.deposit);
   }
   async deposit({ id, userId, signature, detectedMint, transaction, noMemo = false }) {
@@ -68,7 +69,7 @@ class SolanaService {
       if (!await tx.consume(signature, String(userId), amount.toString())) return;
       const receipt = { signature, amount: amount.toString() };
       if (mint !== g.token.address) { await this.refund(g, tx, player, receipt, mint); return; }
-      if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx);
+      if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx, 'EXPIRED');
       // Wrong amounts, second payments and late transfers are recorded and refunded in full.
       if (g.status !== 'OPEN' || player.deposit || amount !== BigInt(g.wager)) {
         await this.refund(g, tx, player, receipt);
@@ -100,7 +101,7 @@ class SolanaService {
   }
   async expire() {
     for (const { id } of await this.store.unfinished()) await this.store.mutate(id, async (g, tx) => {
-      if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx);
+      if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx, 'EXPIRED');
     });
   }
   async recheckPayment(id) {

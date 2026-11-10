@@ -739,6 +739,63 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
     expect(bot.telegram.editMessageCaption.mock.calls.at(-1)[3]).toContain('Refund to 1: 0.1 SOL pending');
     expect(bot.telegram.editMessageCaption.mock.calls.at(-1)[4].reply_markup.inline_keyboard).toEqual([]);
+    expect((await store.get(g.id)).cancelReason).toBe('CANCELLED');
+    expect((await store.get(g.id)).ui.expiryVideoApplied).toBeUndefined();
+  });
+
+  test('expiry replaces the challenge video in place, removes Accept and keeps refund proofs after restart', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
+    bot.telegram.editMessageMedia = jest.fn().mockResolvedValue({});
+    await service.deposit({ id: g.id, userId: '1', signature: 'expiry-creator' });
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; });
+    await ui.render(); const cardId = (await store.get(g.id)).ui.messageId;
+    now = (await store.get(g.id)).expiresAt + 1; await service.expire(); await ui.render();
+    expect(bot.telegram.editMessageMedia).toHaveBeenCalledWith('-100', cardId, undefined, expect.objectContaining({
+      type: 'video', media: { source: path.join(__dirname, '../assets/expired.mp4') },
+      caption: expect.stringContaining('Challenge expired.'),
+    }), { reply_markup: { inline_keyboard: [] } });
+    expect((await store.get(g.id)).cancelReason).toBe('EXPIRED');
+    expect((await store.get(g.id)).ui).toMatchObject({ messageId: cardId, messageIsVideo: true, expiryVideoApplied: true });
+    await store.saveSigned('refund:expiry-creator', { signature: 'expiry-refund-tx' });
+    await store.paymentState('refund:expiry-creator', 'CONFIRMED');
+    const restarted = new SolanaInterface(bot, new SolanaService({ store, chain, now: () => now }), {});
+    await restarted.render(); await restarted.render();
+    expect(bot.telegram.editMessageCaption.mock.calls.at(-1)[3]).toContain('/tx/expiry-refund-tx');
+    expect(bot.telegram.editMessageMedia).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+  });
+  test('an ambiguous expiry media edit retries the same card without a duplicate notification', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
+    await service.deposit({ id: g.id, userId: '1', signature: 'expiry-retry' });
+    await store.mutate(g.id, game => { game.ui.publishRequested = true; }); await ui.render();
+    const cardId = (await store.get(g.id)).ui.messageId;
+    now = (await store.get(g.id)).expiresAt + 1; await service.expire();
+    bot.telegram.editMessageMedia = jest.fn().mockRejectedValueOnce(new Error('Connection lost'))
+      .mockRejectedValueOnce({ response: { description: 'Bad Request: message is not modified' } });
+    await ui.render();
+    expect((await store.get(g.id)).ui.expiryVideoApplied).toBeUndefined();
+    await ui.render();
+    expect((await store.get(g.id)).ui).toMatchObject({ messageId: cardId, expiryVideoApplied: true });
+    expect(bot.telegram.editMessageMedia).toHaveBeenCalledTimes(2);
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+  });
+  test('a late expiry deposit produces a single expiry card and full refund while unfunded drafts stay quiet', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
+    now = (await store.get(g.id)).expiresAt + 1; await service.expire(); await ui.render();
+    expect(bot.telegram.sendVideo).not.toHaveBeenCalled();
+    await service.deposit({ id: g.id, userId: '1', signature: 'late-expiry-video' });
+    await ui.render(); await ui.render();
+    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendVideo.mock.calls[0][2].caption).toContain('Challenge expired.');
+    expect(bot.telegram.sendVideo.mock.calls[0][2].caption).toContain('Refund to 1: 0.1 SOL pending');
+    expect((await store.payments(g.id))[0].payment).toMatchObject({ kind: 'refund', amount: '100000000' });
   });
 
 });
