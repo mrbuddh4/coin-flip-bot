@@ -1,11 +1,15 @@
 require('dotenv').config();
 const { getMode, assertLiveFunds } = require('./utils/recoveryMode');
 const { startHealthServer } = require('./utils/healthServer');
+const { startupStep, formatStartupFailure } = require('./utils/startupDiagnostics');
 
 async function main() {
   if (getMode() === 'live') {
     assertLiveFunds();
-    if (process.env.BOT_CHAIN === 'solana') await require('./solana/runtime').main();
+    if (process.env.BOT_CHAIN === 'solana') {
+      const runtime = await startupStep('dependencies', () => require('./solana/runtime'));
+      await runtime.main();
+    }
     else if (!process.env.BOT_CHAIN || process.env.BOT_CHAIN === 'evm') await require('./index').main();
     else throw new Error('BOT_CHAIN must be evm or solana');
     return;
@@ -22,11 +26,7 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => {
-  console.error(error.message?.startsWith('MAINNET_HOLDER_RPC:')
-    ? 'MAINNET_HOLDER_RPC: Set a working HTTPS Paxeer FLIP_HOLDER_RPC_URL in private Variables. Mainnet wagering has not started.'
-    : error.message?.startsWith('MAINNET_FLIP_SOURCE:')
-      ? 'MAINNET_FLIP_SOURCE: The configured Paxeer source cannot verify the original FLIP contract and supply. Mainnet wagering has not started.'
-      : 'Startup failed. Check BOT_MODE, funds gate, port and private hosting logs.');
+  console.error(formatStartupFailure(error));
   process.exitCode = 1;
 });
 module.exports = { main };

@@ -55,3 +55,19 @@ test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42
     once.mockRestore(); snapshot.mockRestore(); process.env = originalEnv;
   }
 });
+
+test.each([
+  ['rpc', 'RPC unavailable'],
+  ['database-lock', 'Another bot instance holds the database lock'],
+])('real startup wiring identifies %s failures before launching Telegram', async (stage, message) => {
+  jest.clearAllMocks();
+  const originalEnv = process.env;
+  process.env = { ...originalEnv, BOT_MODE: 'live', LIVE_FUNDS_ENABLED: 'true', BOT_CHAIN: 'solana', SOLANA_CLUSTER: 'mainnet-beta', SOLANA_WALLET_ADDRESS: 'test-treasury', TELEGRAM_BOT_TOKEN: 'offline-only', DATABASE_URL: 'offline-unused', SOLANA_HOLDER_REWARDS: 'deferred', SOLANA_HOLDER_WALLET_ADDRESS: '' };
+  const cause = new Error(message);
+  SolanaChain.mockImplementation(() => ({ validate: stage === 'rpc' ? jest.fn().mockRejectedValue(cause) : jest.fn().mockResolvedValue('genesis') }));
+  acquireInstanceLock.mockRejectedValue(cause);
+  try {
+    await expect(main()).rejects.toMatchObject({ startupStage: stage, cause });
+    expect(Telegraf).not.toHaveBeenCalled();
+  } finally { process.env = originalEnv; }
+});
