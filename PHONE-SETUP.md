@@ -188,3 +188,18 @@ deployment; the command is a fallback for a known signature.
 
 Deploy the latest recovery branch with the existing database. Runtime preparation
 creates only the additional review table; no reset or fresh-init flag is needed.
+
+
+## Group links and visible private screens
+
+Opening a group creation or Accept link and pressing Telegram's Start button
+now opens a fresh private screen at the end of the bot chat. The previous
+navigation card is retired only after the new screen has been acknowledged and
+saved. Ordinary Wallets, token, amount and deposit navigation still edits the
+same card. A failed new-screen send preserves the old card. Old buttons cannot
+mutate the new session. This fixes a reproduced hidden-menu issue, not proof
+that every failed handoff has that cause.
+
+If Telegram only opens the bot without sending `/start`, press Start. If no new
+card appears after that, check the active Railway deployment and polling logs.
+Deploy the latest recovery branch; keep the existing database and variables.

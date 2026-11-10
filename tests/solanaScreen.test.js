@@ -60,4 +60,31 @@ describe('private Telegram navigation screen', () => {
     expect(rows[0][0].copy_text.text).toBe('public-wallet');
     expect(Buffer.byteLength(rows[0][1].callback_data)).toBeLessThanOrEqual(64);
   });
+  test('explicit chat re-entry puts the screen at the bottom before retiring the older card', async () => {
+    await screens.show(ctx, 'Old Home', [[{ text: 'Wallets', callback_data: 's:wallets' }]]);
+    const old = profiles.get('1').privateScreen;
+    ctx.reply.mockResolvedValueOnce({ message_id: 99 }); ctx.solNewScreen = true;
+    await screens.show(ctx, 'Choose a token', []);
+    expect(ctx.reply).toHaveBeenCalledTimes(2);
+    expect(telegram.editMessageText).not.toHaveBeenCalled();
+    expect(profiles.get('1').privateScreen.messageId).toBe(99);
+    expect(telegram.deleteMessage).toHaveBeenCalledWith(1, 42);
+    expect(store.updateProfile.mock.invocationCallOrder.at(-1)).toBeLessThan(telegram.deleteMessage.mock.invocationCallOrder.at(-1));
+    ctx.callbackQuery = { data: old.rows[0][0].callback_data, message: { message_id: 42 } };
+    expect(await screens.valid(ctx)).toBe(false);
+    await screens.show(ctx, 'Wager amount', []);
+    expect(ctx.reply).toHaveBeenCalledTimes(2);
+    expect(telegram.editMessageText).toHaveBeenCalledWith(1, 99, undefined, 'Wager amount', expect.anything());
+  });
+  test('failed re-entry send preserves the previous card without deleting it or retrying the send', async () => {
+    await screens.show(ctx, 'Old Home', []);
+    const old = profiles.get('1').privateScreen;
+    ctx.solNewScreen = true; ctx.reply.mockRejectedValueOnce(new Error('ambiguous timeout'));
+    await expect(screens.show(ctx, 'Choose a token', [])).rejects.toBeInstanceOf(ScreenTransportError);
+    expect(profiles.get('1').privateScreen).toEqual(old);
+    expect(telegram.deleteMessage).not.toHaveBeenCalled();
+    expect(telegram.editMessageText).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledTimes(2);
+  });
+
 });

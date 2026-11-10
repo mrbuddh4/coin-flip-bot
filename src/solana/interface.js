@@ -90,6 +90,7 @@ class SolanaInterface {
   }
   async start(ctx) {
     if (ctx.chat.type !== 'private') return;
+    ctx.solNewScreen = true;
     const payload = ctx.startPayload || ctx.message?.text?.split(/\s+/)[1] || '';
     if (payload.startsWith('solcreate_')) {
       const draft = await this.store.draft(payload.slice(10), ctx.from.id);

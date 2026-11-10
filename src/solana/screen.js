@@ -33,7 +33,11 @@ class PrivateScreen {
     const buttons = rows.map(row => row.map(b => b.callback_data ? { ...b, callback_data: `${b.callback_data}|${revision}` } : b));
     if (buttons.flat().some(b => b.callback_data && Buffer.byteLength(b.callback_data) > 64)) throw new Error('Navigation button too long');
     const options = { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: { inline_keyboard: buttons } };
-    let messageId = old?.messageId;
+    // Re-entering from a group link must produce a visible message at the
+    // bottom. Editing an old card does not move Telegram's scroll position.
+    const reenter = Boolean(ctx.solNewScreen);
+    delete ctx.solNewScreen;
+    let messageId = reenter ? null : old?.messageId;
     if (messageId) {
       try { await this.telegram.editMessageText(ctx.chat.id, messageId, undefined, text, options); }
       catch (error) {
@@ -54,6 +58,12 @@ class PrivateScreen {
       catch (_) { throw new ScreenTransportError('Screen send needs retry'); }
     }
     await this.store.updateProfile(ctx.from.id, { privateScreen: { messageId, revision, text, rows: buttons, gameId: ctx.solGameId || null, view: ctx.solView || null, gameStateKey: ctx.solGameStateKey || null } });
+    // Retire the prior navigation card only after Telegram acknowledged the
+    // new card and its pointer is persisted. Never delete it on a send timeout.
+    if (reenter && old?.messageId && String(old.messageId) !== String(messageId)) {
+      await this.telegram.editMessageReplyMarkup(ctx.chat.id, old.messageId, undefined, { inline_keyboard: [] }).catch(() => {});
+      await this.telegram.deleteMessage(ctx.chat.id, old.messageId).catch(() => {});
+    }
     ctx.screenUpdated = true;
     return { message_id: messageId };
   }
