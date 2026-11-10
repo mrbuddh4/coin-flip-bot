@@ -87,3 +87,23 @@ describe('phone-friendly Railway pre-deploy initialization', () => {
     } finally { await new Promise(resolve => server.close(resolve)); }
   });
 });
+
+describe('separate empty mainnet database setup never enables funds', () => {
+  const env = { SOLANA_INIT_MAINNET_FRESH: 'true', SOLANA_INIT_FRESH: 'false', BOT_CHAIN: 'solana', SOLANA_CLUSTER: 'mainnet-beta', BOT_MODE: 'recovery', LIVE_FUNDS_ENABLED: 'false', DATABASE_URL: 'postgresql://unused/mainnet', SOLANA_RPC_URL: 'https://api.mainnet-beta.solana.com', SOLANA_WALLET_ADDRESS: '6izojQcvjazUDZ4jckAnFn15i8fDRkNb4J9NnTpTVBkY' };
+  test('runs genesis verification before the empty-only initializer', async () => {
+    const deps = { verifyMainnet: jest.fn().mockResolvedValue(), initialize: jest.fn().mockResolvedValue() };
+    await expect(main(env, deps)).resolves.toEqual({ initialized: true, mainnet: true });
+    expect(deps.verifyMainnet.mock.invocationCallOrder[0]).toBeLessThan(deps.initialize.mock.invocationCallOrder[0]);
+  });
+  test.each([{ BOT_MODE: 'live' }, { LIVE_FUNDS_ENABLED: 'true' }, { SOLANA_CLUSTER: 'devnet' }, { SOLANA_INIT_FRESH: 'true' }])('rejects unsafe initialization settings %s before any RPC or database', async change => {
+    const deps = { verifyMainnet: jest.fn(), initialize: jest.fn() };
+    await expect(main({ ...env, ...change }, deps)).rejects.toThrow('explicit recovery');
+    expect(deps.verifyMainnet).not.toHaveBeenCalled(); expect(deps.initialize).not.toHaveBeenCalled();
+  });
+  test('wrong mainnet genesis and occupied database cannot be overridden', async () => {
+    const initialize = jest.fn();
+    await expect(main(env, { verifyMainnet: async () => { throw new Error('wrong network'); }, initialize })).rejects.toThrow('wrong network');
+    expect(initialize).not.toHaveBeenCalled();
+    await expect(main(env, { verifyMainnet: async () => {}, initialize: async () => { throw new Error('Database is not empty'); } })).rejects.toThrow('not empty');
+  });
+});

@@ -22,9 +22,11 @@ async function main() {
 }
 
 if (require.main === module) main().catch(error => {
-  console.error(error.message?.startsWith('MAINNET_FEES_PENDING:')
-    ? 'MAINNET_FEES_PENDING: This review build has not completed Solana holder distribution and burn policy. Mainnet wagering is not enabled.'
-    : 'Startup failed. Check BOT_MODE, funds gate, port and private hosting logs.');
+  console.error(error.message?.startsWith('MAINNET_HOLDER_RPC:')
+    ? 'MAINNET_HOLDER_RPC: Set a working HTTPS Paxeer FLIP_HOLDER_RPC_URL in private Variables. Mainnet wagering has not started.'
+    : error.message?.startsWith('MAINNET_FLIP_SOURCE:')
+      ? 'MAINNET_FLIP_SOURCE: The configured Paxeer source cannot verify the original FLIP contract and supply. Mainnet wagering has not started.'
+      : 'Startup failed. Check BOT_MODE, funds gate, port and private hosting logs.');
   process.exitCode = 1;
 });
 module.exports = { main };

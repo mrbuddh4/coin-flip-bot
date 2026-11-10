@@ -30,7 +30,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     if (admin) { if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   });
   beforeEach(async () => {
-    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews"');
+    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges"');
     await pool.query('DROP TABLE IF EXISTS \"SolNetwork\"');
     now = 1000;
     chain = {
@@ -38,6 +38,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
       env: { SOLANA_CLUSTER: 'devnet' },
       tokenInfo: jest.fn().mockResolvedValue({ address: 'NATIVE', symbol: 'SOL', decimals: 9 }),
       verifyDeposit: jest.fn().mockResolvedValue(100000000n),
+      assertSolvent: jest.fn().mockResolvedValue(),
       buildPayment: jest.fn(async payment => ({ signature: `signed-${payment.id}`, raw: 'same-bytes', lastValidBlockHeight: 100 })),
       broadcast: jest.fn().mockResolvedValue(), paymentStatus: jest.fn().mockResolvedValue('unknown'),
       connection: { getBlockHeight: jest.fn().mockResolvedValue(10) },
@@ -63,7 +64,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect(g.status).toBe('SETTLED'); expect(g.prize).toBe('180000000');
     expect(g.fees).toMatchObject({ holder: '10000000', burn: '10000000' });
     expect(service.coin).toHaveBeenCalledTimes(1);
-    expect(await store.payments(id)).toHaveLength(1);
+    expect(await store.payments(id)).toHaveLength(2);
     expect((await pool.query('SELECT COUNT(*)::int AS count FROM "SolDeposits"')).rows[0].count).toBe(2);
   });
   test('same transaction cannot fund a second game', async () => {
@@ -100,7 +101,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     ]);
     const g = await store.get(id); const payments = await store.payments(id);
     if (g.status === 'CANCELLED') expect(payments).toHaveLength(2);
-    else { expect(g.status).toBe('SETTLED'); expect(payments).toHaveLength(1); }
+    else { expect(g.status).toBe('SETTLED'); expect(payments).toHaveLength(2); }
   });
   test('expiry survives restart and late deposits are fully refunded', async () => {
     const g = await service.create(input);
@@ -117,16 +118,16 @@ integration('Solana durable ledger on real PostgreSQL', () => {
   test('signed bytes are persisted before send; timeout and process restart never resign payout', async () => {
     const id = await funded();
     chain.broadcast.mockImplementationOnce(async payment => {
-      const row = (await pool.query('SELECT * FROM "SolOutbox" WHERE "gameId"=$1', [id])).rows[0];
+      const row = (await pool.query('SELECT * FROM "SolOutbox" WHERE signed->>\'signature\'=$1', [payment.signature])).rows[0];
       expect(row.status).toBe('SIGNED'); expect(row.signed).toEqual(payment);
       throw new Error('RPC response lost after send');
     });
     await service.work();
     const restarted = new SolanaService({ store, chain });
     await restarted.work();
-    expect(chain.buildPayment).toHaveBeenCalledTimes(1);
-    expect(chain.broadcast).toHaveBeenCalledTimes(2);
-    expect(chain.broadcast.mock.calls[0][0]).toEqual(chain.broadcast.mock.calls[1][0]);
+    expect(chain.buildPayment).toHaveBeenCalledTimes(2);
+    expect(chain.broadcast).toHaveBeenCalledTimes(4);
+    expect(chain.broadcast.mock.calls[0][0]).toEqual(chain.broadcast.mock.calls[2][0]);
     chain.paymentStatus.mockResolvedValue('finalized');
     await restarted.work();
     expect((await store.payments(id))[0].status).toBe('CONFIRMED');
@@ -137,7 +138,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     chain.connection.getBlockHeight.mockResolvedValue(101);
     await service.work(); await service.work();
     expect((await store.payments(id))[0].status).toBe('REVIEW');
-    expect(chain.buildPayment).toHaveBeenCalledTimes(1); expect(chain.broadcast).toHaveBeenCalledTimes(1);
+    expect(chain.buildPayment).toHaveBeenCalledTimes(2); expect(chain.broadcast).toHaveBeenCalledTimes(2);
   });
   test('on-chain failed payment goes to review and is not automatically retried', async () => {
     const id = await funded();
@@ -150,7 +151,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const id = await funded();
     await service.deposit({ id, userId: '1', signature: 'extra' });
     await service.deposit({ id, userId: '1', signature: 'extra' });
-    expect(await store.payments(id)).toHaveLength(2); expect(service.coin).toHaveBeenCalledTimes(1);
+    expect(await store.payments(id)).toHaveLength(3); expect(service.coin).toHaveBeenCalledTimes(1);
   });
   test('custom tokens persist exact case-sensitive mint independently of labels', async () => {
     await store.saveToken('1', { address: walletA, symbol: 'CUSTOM', decimals: 6 });
@@ -167,7 +168,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     expect((await store.get(g.id)).expiresAt - now).toBe(180000);
     await store.updateProfile('1', { receiveWallet: walletB });
     await service.deposit({ id: g.id, userId: '2', signature: 'challenger' });
-    expect((await pool.query('SELECT payment FROM "SolOutbox"')).rows[0].payment.recipient).toBe(receive);
+    expect((await pool.query('SELECT payment FROM "SolOutbox" WHERE payment->>\'kind\'<>\'burn\'')).rows[0].payment.recipient).toBe(receive);
   });
   test('UI concurrent creation admits only one game per group and duplicate draft is idempotent', async () => {
     const results = await Promise.allSettled(Array.from({ length: 3 }, () => service.create({ ...input, interfaceVersion: 1 })));
@@ -181,7 +182,7 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const g = await service.create(input);
     await service.deposit({ id: g.id, userId: '1', signature: 'wrong-mint', detectedMint: walletB });
     expect((await store.get(g.id)).creator.deposit).toBeUndefined();
-    expect((await pool.query('SELECT payment FROM "SolOutbox"')).rows[0].payment).toMatchObject({ mint: walletB, amount: '100000000', recipient: walletA });
+    expect((await pool.query('SELECT payment FROM "SolOutbox" WHERE payment->>\'kind\'<>\'burn\'')).rows[0].payment).toMatchObject({ mint: walletB, amount: '100000000', recipient: walletA });
   });
   test('network identity cannot relabel occupied devnet records or change the signing wallet', async () => {
     const { DEVNET_GENESIS } = require('../src/solana/chain');

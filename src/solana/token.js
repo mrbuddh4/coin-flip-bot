@@ -53,4 +53,15 @@ function createTransferCheckedInstruction(source, mint, target, owner, amount, d
     { pubkey: target, isSigner: false, isWritable: true }, { pubkey: owner, isSigner: true, isWritable: false },
   ] });
 }
-module.exports = { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, getMint, parseMint, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction };
+function createBurnCheckedInstruction(account, mint, owner, amount, decimals, program = TOKEN_PROGRAM_ID) {
+  const data = Buffer.alloc(10);
+  data[0] = 15;
+  data.writeBigUInt64LE(BigInt(amount), 1);
+  data[9] = decimals;
+  return new TransactionInstruction({ programId: program, data, keys: [
+    { pubkey: account, isSigner: false, isWritable: true },
+    { pubkey: mint, isSigner: false, isWritable: true },
+    { pubkey: owner, isSigner: true, isWritable: false },
+  ] });
+}
+module.exports = { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, getMint, parseMint, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, createBurnCheckedInstruction };

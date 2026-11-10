@@ -41,7 +41,7 @@ test('temporary database failure returns a private generic failure, preserving h
   expect(await response.text()).not.toContain('credentials');
   expect((await fetch(base.split('/pay/')[0] + '/health')).status).toBe(200);
 });
-test('the review build keeps mainnet wagering closed while fee parity remains incomplete', () => {
-  expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'mainnet-beta' })).toThrow('MAINNET_FEES_PENDING');
+test('mainnet requires an explicit holder RPC before runtime supply validation', () => {
+  expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'mainnet-beta' })).toThrow('MAINNET_HOLDER_RPC');
   expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'devnet' })).not.toThrow();
 });

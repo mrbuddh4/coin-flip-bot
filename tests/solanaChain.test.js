@@ -148,3 +148,43 @@ test('custom SPL payout creates the canonical ATA and signs a checked transfer w
   expect(tx.instructions[1].data[9]).toBe(6);
   expect(connection.sendRawTransaction).not.toHaveBeenCalled();
 });
+
+test('native SOL burn signs only the official incinerator destination; regular payouts cannot use it', async () => {
+  const { chain, connection } = setup();
+  const { INCINERATOR } = require('../src/solana/chain');
+  const signed = await chain.buildPayment({ id: 'burn:test', mint: 'NATIVE', amount: '10000000', kind: 'burn' });
+  const tx = Transaction.from(Buffer.from(signed.raw, 'base64'));
+  expect(tx.verifySignatures()).toBe(true);
+  expect(tx.instructions[0].keys[1].pubkey.toBase58()).toBe('1nc1nerator11111111111111111111111111111111');
+  expect(tx.instructions[0].data.readBigUInt64LE(4)).toBe(10000000n);
+  expect(connection.sendRawTransaction).not.toHaveBeenCalled();
+  await expect(chain.buildPayment({ id: 'wrong', mint: 'NATIVE', amount: '1', recipient: sender, kind: 'burn' })).rejects.toThrow('recipient');
+  await expect(chain.buildPayment({ id: 'wrong', mint: 'NATIVE', amount: '1', recipient: INCINERATOR.toBase58(), kind: 'prize' })).rejects.toThrow('on-curve');
+});
+test.each([token.TOKEN_PROGRAM_ID, token.TOKEN_2022_PROGRAM_ID])('token burn reduces mint supply using checked burn with the actual program %s', async program => {
+  const { chain, connection } = setup();
+  const data = Buffer.alloc(82); data[44] = 6; data[45] = 1;
+  connection.getAccountInfo = jest.fn().mockResolvedValue({ owner: program, data });
+  const signed = await chain.buildPayment({ id: 'burn:token', mint, amount: '123456789', kind: 'burn' });
+  const tx = Transaction.from(Buffer.from(signed.raw, 'base64'));
+  expect(tx.verifySignatures()).toBe(true);
+  expect(tx.instructions).toHaveLength(2); // burn + memo, no recipient ATA creation
+  const burn = tx.instructions[0];
+  expect(burn.programId).toEqual(program);
+  expect(burn.keys[0].pubkey).toEqual(token.getAssociatedTokenAddressSync(new PublicKey(mint), signer.publicKey, program));
+  expect(burn.keys[1]).toMatchObject({ pubkey: new PublicKey(mint), isWritable: true });
+  expect(burn.data.toString('hex')).toBe('0f15cd5b070000000006');
+  expect(connection.sendRawTransaction).not.toHaveBeenCalled();
+});
+test('solvency reserves every game/pool/outbox liability and independent fee reserve before signing', async () => {
+  const { chain, connection } = setup();
+  connection.getBalance.mockResolvedValue(1000000000);
+  await expect(chain.assertSolvent([{ mint: 'NATIVE', amount: '1000000000' }])).rejects.toThrow('liabilities');
+  await expect(chain.assertSolvent([{ mint: 'NATIVE', amount: '990000000' }])).resolves.toBeUndefined();
+  const data = Buffer.alloc(82); data[44] = 6; data[45] = 1;
+  connection.getAccountInfo = jest.fn().mockResolvedValue({ owner: token.TOKEN_2022_PROGRAM_ID, data });
+  connection.getTokenAccountBalance = jest.fn().mockResolvedValue({ value: { amount: '123456789012345677' } });
+  await expect(chain.assertSolvent([{ mint, amount: '123456789012345678' }])).rejects.toThrow('Token treasury');
+  connection.getTokenAccountBalance.mockResolvedValue({ value: { amount: '123456789012345678' } });
+  await expect(chain.assertSolvent([{ mint, amount: '123456789012345678' }])).resolves.toBeUndefined();
+});

@@ -74,9 +74,10 @@ class SolanaService {
         const split = splitPool(g.wager);
         g.status = 'SETTLED'; // Economic result committed atomically with durable payout; chain state is separate.
         g.winnerId = winner.userId;
-        g.fees = { holder: split.holderFee.toString(), burn: split.burnFee.toString(), status: 'RETAINED_NOT_DISTRIBUTED' };
+        g.fees = { holder: split.holderFee.toString(), burn: split.burnFee.toString(), status: 'ACCRUED' };
         g.prize = split.prize.toString();
         await tx.enqueue({ id: `prize:${id}`, gameId: id, mint: g.token.address, recipient: winner.receiveWallet || winner.wallet, amount: g.prize, kind: 'prize', sourceWallet: g.depositAddress });
+        await tx.accrueFees(g, split);
       }
     });
   }
@@ -93,6 +94,14 @@ class SolanaService {
       if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx);
     });
   }
+  async recheckPayment(id) {
+    const row = (await this.store.pool.query('SELECT payment,signed,status FROM "SolOutbox" WHERE id=$1', [id])).rows[0];
+    if (!row?.signed || row.payment.sourceWallet !== this.chain.address) throw new Error('No matching signed payment to recheck');
+    await this.chain.validate();
+    if (await this.chain.paymentStatus(row.signed.signature) === 'finalized') await this.store.paymentState(id, 'CONFIRMED');
+    // Unknown, failed and expired signatures never authorize a replacement.
+    return (await this.store.pool.query('SELECT status,signed->>\'signature\' AS signature FROM "SolOutbox" WHERE id=$1', [id])).rows[0];
+  }
   async work() {
     if (this.workerRunning) return;
     this.workerRunning = true;
@@ -106,6 +115,9 @@ class SolanaService {
             continue;
           }
           if (!signed) {
+            // Reserve every recorded liability, including other games and
+            // REVIEW transfers. Do not let fees consume player deposits.
+            await this.chain.assertSolvent(await this.store.liabilities());
             signed = await this.chain.buildPayment(item.payment);
             await this.store.saveSigned(item.id, signed); // Commit before any network send.
           }

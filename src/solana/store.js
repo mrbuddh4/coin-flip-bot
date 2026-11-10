@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const { connectionOptions } = require('../database/connection');
 const config = require('../config');
+const { accrueFees, SCHEMA: FEE_SCHEMA } = require('./fees');
 class SolanaStore {
   constructor(pool = new Pool(connectionOptions(config.database))) { this.pool = pool; }
   async verifySchema() {
@@ -47,6 +48,7 @@ class SolanaStore {
         enqueue: async payment => {
           await client.query('INSERT INTO "SolOutbox" (id, "gameId", payment) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [payment.id, id, JSON.stringify(payment)]);
         },
+        accrueFees: (game, split) => accrueFees(client, game, split),
       };
       await fn(game, transaction);
       await client.query('UPDATE "SolGames" SET state=$2 WHERE id=$1', [id, JSON.stringify(game)]);
@@ -61,17 +63,28 @@ class SolanaStore {
     return (await this.pool.query('SELECT id, state FROM "SolGames" WHERE state->>\'status\' = \'OPEN\'')).rows;
   }
   async pendingPayments() {
-    return (await this.pool.query('SELECT * FROM "SolOutbox" WHERE status IN (\'PENDING\',\'SIGNED\') ORDER BY "createdAt", id LIMIT 20')).rows;
+    return (await this.pool.query('SELECT * FROM "SolOutbox" WHERE status IN (\'PENDING\',\'SIGNED\') ORDER BY (signed IS NOT NULL) DESC, "createdAt", id LIMIT 20')).rows;
+  }
+  async liabilities() {
+    // One statement gives one MVCC snapshot while deposits/results move between
+    // open games, pools and the outbox in concurrent transactions.
+    const { rows } = await this.pool.query(`SELECT mint,SUM(amount)::text AS amount FROM (
+      SELECT payment->>'mint' AS mint,(payment->>'amount')::numeric AS amount FROM "SolOutbox" WHERE status<>'CONFIRMED'
+      UNION ALL SELECT mint,amount FROM "SolFeePools"
+      UNION ALL SELECT state->'token'->>'address',(state->'creator'->'deposit'->>'amount')::numeric FROM "SolGames" WHERE state->>'status'='OPEN' AND state->'creator' ? 'deposit'
+      UNION ALL SELECT state->'token'->>'address',(state->'challenger'->'deposit'->>'amount')::numeric FROM "SolGames" WHERE state->>'status'='OPEN' AND state->'challenger' ? 'deposit'
+    ) obligations GROUP BY mint ORDER BY mint`);
+    return rows;
   }
   async saveSigned(id, signed) {
     const result = await this.pool.query('UPDATE "SolOutbox" SET signed=$2, status=\'SIGNED\', "lastError"=NULL WHERE id=$1 AND status=\'PENDING\' AND signed IS NULL', [id, JSON.stringify(signed)]);
     if (result.rowCount !== 1) throw new Error('Payment already signed; do not replace it');
   }
   async paymentState(id, status, error = null) {
-    await this.pool.query('UPDATE "SolOutbox" SET status=$2, "lastError"=$3 WHERE id=$1', [id, status, error]);
+    await this.pool.query('UPDATE "SolOutbox" SET status=$2, "lastError"=$3 WHERE id=$1 AND (status<>\'CONFIRMED\' OR $2=\'CONFIRMED\')', [id, status, error]);
   }
   async payments(gameId) {
-    return (await this.pool.query('SELECT id, status, signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 ORDER BY id', [gameId])).rows;
+    return (await this.pool.query('SELECT id, status, signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND payment->>\'kind\'<>\'holder\' ORDER BY id', [gameId])).rows;
   }
   async saveToken(userId, token) {
     await this.pool.query('INSERT INTO "SolTokens" ("userId",mint,metadata) VALUES ($1,$2,$3) ON CONFLICT ("userId",mint) DO UPDATE SET metadata=EXCLUDED.metadata', [userId, token.address, JSON.stringify(token)]);
@@ -80,7 +93,7 @@ class SolanaStore {
     return (await this.pool.query('SELECT metadata FROM "SolTokens" WHERE "userId"=$1 ORDER BY mint', [userId])).rows.map(r => r.metadata);
   }
   async prepareInterface() {
-    // Additive UI state only. No existing game/deposit/outbox rows are reset.
+    // Additive UI, scanner and fee tables. No existing financial rows are reset.
     await this.pool.query(`
       CREATE TABLE IF NOT EXISTS "SolProfiles" ("userId" text PRIMARY KEY, data jsonb NOT NULL DEFAULT '{}');
       CREATE TABLE IF NOT EXISTS "SolSessions" ("userId" text PRIMARY KEY, data jsonb NOT NULL, "expiresAt" timestamptz NOT NULL);
@@ -88,6 +101,7 @@ class SolanaStore {
       CREATE TABLE IF NOT EXISTS "SolScanCursors" (address text PRIMARY KEY, signature text NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolDepositReviews" (signature text PRIMARY KEY, "gameId" text NOT NULL, reason text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
     `);
+    await this.pool.query(FEE_SCHEMA);
   }
   async profile(userId) {
     const { rows } = await this.pool.query('SELECT data FROM "SolProfiles" WHERE "userId"=$1', [String(userId)]);

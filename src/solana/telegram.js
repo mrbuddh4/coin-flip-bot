@@ -11,7 +11,7 @@ function depositInstructions(game, member, address) {
     `Shared recipient: ${address}\nMint: ${game.token.address}\nMemo (required): ${member.memo}\n` +
     `Solana Pay URI: solana:${address}?${params}\n` +
     `Then /soldeposit ${game.id} TRANSACTION_SIGNATURE\n` +
-    'Winner receives 90% of the pool (integer rounding remainder included). The other 10% is recorded and retained for now. Payout goes to the game’s saved receiving wallet; refunds return to the sending wallet. Expires in 15 minutes; late payments must still be submitted for refund.';
+    'Winner receives 90% of the pool (integer rounding remainder included). 5% enters the FLIP-holder pool and 5% is queued for burn. Payout goes to the game’s saved receiving wallet; refunds return to the sending wallet. Expires in 15 minutes; late payments must still be submitted for refund.';
 }
 function registerSolanaCommands(bot, service, { includeStart = true, allowLegacyGames = true } = {}) {
   const command = (name, handler) => bot.command(name, async ctx => {
@@ -59,8 +59,22 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
     if (game.chatId !== String(ctx.chat.id)) service.member(game, ctx.from.id);
     const payments = await service.store.payments(id);
     await ctx.reply(`Game ${id}: ${game.status}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n` +
-      (game.winnerId ? `Winner: ${game.winnerId}\nPrize: ${fromUnits(game.prize, game.token.decimals)}\nFees: retained, not distributed/burned\n` : '') +
+      (game.winnerId ? `Winner: ${game.winnerId}\nPrize: ${fromUnits(game.prize, game.token.decimals)}\nFee accounting: ${game.fees.status}; individual burn/payment confirmation below\n` : '') +
       payments.map(p => `${p.id.split(':')[0]}: ${p.status}${p.signature ? `\nhttps://explorer.solana.com/tx/${p.signature}${game.cluster === 'mainnet-beta' ? '' : '?cluster=devnet'}` : ''}`).join('\n'));
+  });
+  const isAdmin = ctx => ctx.chat.type === 'private' && (service.chain.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).includes(String(ctx.from.id));
+  command('solaudit', async ctx => {
+    if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
+    const liabilities = await service.store.liabilities();
+    let coverage = 'Verified: recorded liabilities and SOL reserve are covered.';
+    try { await service.chain.assertSolvent(liabilities); } catch (_) { coverage = 'NOT VERIFIED: treasury balance/RPC/reserve needs review. New unsigned payments stay pending when coverage fails.'; }
+    const reviews = (await service.store.pool.query('SELECT id,signed->>\'signature\' AS signature FROM "SolOutbox" WHERE status=\'REVIEW\' ORDER BY "createdAt" LIMIT 10')).rows;
+    await ctx.reply(`Treasury: ${service.chain.address}\n${coverage}\nLiabilities (atomic units):\n${liabilities.map(p => `${p.mint}: ${p.amount}`).join('\n') || 'None'}\n\nReview payments (first 10):\n${reviews.map(p => `${p.id}\n${p.signature || 'No signed transaction'}`).join('\n') || 'None'}\nUse /solrecheck PAYMENT_ID to inspect the original signature. It never resends or creates a replacement.`);
+  });
+  command('solrecheck', async (ctx, [id]) => {
+    if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
+    const result = await service.recheckPayment(id);
+    await ctx.reply(`${id}: ${result.status}\n${result.signature}\nOnly finalized proof can mark it confirmed. Unknown/failed signatures remain unresolved; no new transaction was created.`);
   });
 }
 module.exports = { registerSolanaCommands, depositInstructions };

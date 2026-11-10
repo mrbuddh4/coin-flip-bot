@@ -7,6 +7,7 @@ const { DepositValidationError, UnsupportedTokenError } = require('./errors');
 const { assertLiveFunds } = require('../utils/recoveryMode');
 const MEMO = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+const INCINERATOR = new PublicKey('1nc1nerator11111111111111111111111111111111');
 function publicKey(address) {
   const key = new PublicKey(address);
   if (key.toBase58() !== address || !PublicKey.isOnCurve(key.toBytes())) throw new Error('Use an on-curve Solana wallet address');
@@ -82,10 +83,12 @@ class SolanaChain {
     if (!/^\d+$/.test(amount || '') || BigInt(amount) <= 0n) throw new DepositValidationError('Invalid token amount');
     return BigInt(amount);
   }
-  async buildPayment({ id, mint, recipient, amount }) {
+  async buildPayment({ id, mint, recipient, amount, kind }) {
     assertLiveFunds(this.env);
     await this.validate();
-    const to = publicKey(recipient);
+    const burning = kind === 'burn';
+    if (burning && recipient) throw new Error('Burn instructions must not specify a recipient');
+    const to = burning ? INCINERATOR : publicKey(recipient);
     const value = BigInt(amount);
     if (value <= 0n || value > 18446744073709551615n) throw new Error('Invalid payout');
     const tx = new Transaction();
@@ -96,9 +99,13 @@ class SolanaChain {
       const mintKey = new PublicKey(mint);
       const program = new PublicKey(info.program);
       const source = spl.getAssociatedTokenAddressSync(mintKey, this.signer.publicKey, program);
-      const target = spl.getAssociatedTokenAddressSync(mintKey, to, program);
-      tx.add(spl.createAssociatedTokenAccountIdempotentInstruction(this.signer.publicKey, target, to, mintKey, program));
-      tx.add(spl.createTransferCheckedInstruction(source, mintKey, target, this.signer.publicKey, value, info.decimals, program));
+      if (burning) {
+        tx.add(spl.createBurnCheckedInstruction(source, mintKey, this.signer.publicKey, value, info.decimals, program));
+      } else {
+        const target = spl.getAssociatedTokenAddressSync(mintKey, to, program);
+        tx.add(spl.createAssociatedTokenAccountIdempotentInstruction(this.signer.publicKey, target, to, mintKey, program));
+        tx.add(spl.createTransferCheckedInstruction(source, mintKey, target, this.signer.publicKey, value, info.decimals, program));
+      }
     }
     tx.add(new TransactionInstruction({ programId: MEMO, keys: [], data: Buffer.from(`coinflip:payout:${id}`) }));
     const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('finalized');
@@ -113,6 +120,18 @@ class SolanaChain {
     if (BigInt(balance) < (mint === 'NATIVE' ? value : 0n) + BigInt(fee) + reserve) throw new Error('Fund the bot fee reserve; full payout retained as pending');
     return { raw: tx.serialize().toString('base64'), signature: bs58.encode(tx.signature), lastValidBlockHeight };
   }
+  async assertSolvent(liabilities) {
+    await this.validate();
+    const requiredSOL = BigInt(liabilities.find(p => p.mint === 'NATIVE')?.amount || '0') + 10000000n;
+    const balance = await this.connection.getBalance(this.signer.publicKey, 'finalized');
+    if (!Number.isSafeInteger(balance) || BigInt(balance) < requiredSOL) throw new Error('Treasury does not cover all liabilities plus the SOL reserve');
+    for (const p of liabilities.filter(p => p.mint !== 'NATIVE' && BigInt(p.amount) > 0n)) {
+      const info = await this.tokenInfo(p.mint);
+      const ata = spl.getAssociatedTokenAddressSync(new PublicKey(p.mint), this.signer.publicKey, new PublicKey(info.program));
+      const held = (await this.connection.getTokenAccountBalance(ata, 'finalized')).value.amount;
+      if (!/^\d+$/.test(held) || BigInt(held) < BigInt(p.amount)) throw new Error('Token treasury does not cover all recorded liabilities');
+    }
+  }
   async broadcast(payment) {
     assertLiveFunds(this.env);
     await this.validate();
@@ -121,10 +140,11 @@ class SolanaChain {
     if (result !== payment.signature) throw new Error('RPC returned an unexpected signature');
   }
   async paymentStatus(signature) {
+    await this.validate();
     const result = (await this.connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
     if (!result) return 'unknown';
     if (result.err) return 'failed';
     return result.confirmationStatus === 'finalized' ? 'finalized' : 'pending';
   }
 }
-module.exports = { SolanaChain, publicKey, loadSigner, DEVNET_GENESIS, MEMO };
+module.exports = { SolanaChain, publicKey, loadSigner, DEVNET_GENESIS, MEMO, INCINERATOR };

@@ -154,7 +154,7 @@ class SolanaInterface {
   async action(ctx) {
     if (!await this.private(ctx)) return;
     const [, action, arg, revision] = ctx.callbackQuery.data.split(':');
-    const simple = { home: () => this.home(ctx), wallets: () => this.wallets(ctx), flip: () => this.flip(ctx), tokens: () => this.selectTokens(ctx), stats: () => this.stats(ctx), help: () => this.help(ctx), fees: () => this.fees(ctx) };
+    const simple = { home: () => this.home(ctx), wallets: () => this.wallets(ctx), flip: () => this.flip(ctx), tokens: () => this.selectTokens(ctx), stats: () => this.stats(ctx), help: () => this.help(ctx), fees: () => this.fees(ctx), holder: () => this.holder(ctx) };
     if (simple[action]) return simple[action]();
     if (action === 'wallet') {
       if (arg === 'same') {
@@ -210,6 +210,20 @@ class SolanaInterface {
     const state = await this.store.session(ctx.from.id);
     if (!state) return;
     const text = ctx.message.text.trim();
+    if (state.kind === 'holder-address') {
+      const profile = await this.store.profile(ctx.from.id);
+      const c = await this.service.feeService.challenge(ctx.from.id, text, profile.receiveWallet);
+      await this.store.setSession(ctx.from.id, { kind: 'holder-sign', id: c.id });
+      const base = this.env.PUBLIC_BASE_URL || (this.env.RAILWAY_PUBLIC_DOMAIN ? `https://${this.env.RAILWAY_PUBLIC_DOMAIN}` : '');
+      const rows = /^https:\/\//.test(base) ? [[{ text: 'Verify Holding Wallet', url: `${base.replace(/\/$/, '')}/holder/${c.id}` }]] : [];
+      rows.push([button('Profit Share', 's:fees')]);
+      return this.reply(ctx, `<b>Verify FLIP Holding Wallet</b>\n\nSign this exact message in your EVM wallet, then paste only the signature here, or open the verification link in your wallet browser. No transaction or spending approval is requested. Link expires in 10 minutes.\n\n<code>${escape(c.message)}</code>`, rows);
+    }
+    if (state.kind === 'holder-sign') {
+      await this.service.feeService.verify(state.id, text);
+      await this.store.clearSession(ctx.from.id);
+      return this.fees(ctx);
+    }
     if (state.kind === 'wallet') {
       publicKey(text);
       if (text === this.service.chain.address) return this.reply(ctx, 'Use your own wallet, rather than the bot’s shared deposit address.');
@@ -234,7 +248,22 @@ class SolanaInterface {
     return this.reply(ctx, `<b>How to Play</b>\n\n1. Set sending and receiving wallets using /wallet.\n2. Use /flip in a group and choose a token and amount privately.\n3. Send the wager with the exact game memo. Deposits are detected automatically.\n4. Another player reviews and accepts the challenge, then deposits.\n5. The coin animation plays, the result is announced, and the winner receives 90% of the pool automatically.\n\nCancelled and expired games refund recorded deposits to their sending wallets. Pending or uncertain payments remain visible in Game Status.\n\n${escape(networkName(this.service.chain))}`, [[button('🏠 Home', 's:home')]]);
   }
   async fees(ctx) {
-    return this.reply(ctx, '<b>Fee Accounting</b>\n\nWinner: 90% of the pool.\nHolder allocation: 5%.\nBurn allocation: 5%.\n\nThis build records and retains the two fee allocations. The original 90/5/5 split is confirmed for Solana. Holder distribution and burn implementation are still in progress. No holder payment or burn is represented as completed.', [[button('🏠 Home', 's:home')]]);
+    const fees = this.service.feeService;
+    const link = fees ? await fees.link(ctx.from.id) : null;
+    const pools = (await this.store.pool.query('SELECT token,amount FROM "SolFeePools" WHERE amount>0 ORDER BY mint LIMIT 10')).rows;
+    const payments = (await this.store.pool.query('SELECT payment,status,signed->>\'signature\' AS signature FROM "SolOutbox" WHERE payment->>\'kind\'=\'holder\' AND payment->>\'userId\'=$1 ORDER BY "createdAt" DESC LIMIT 5', [String(ctx.from.id)])).rows;
+    return this.reply(ctx, '<b>Profit Share</b>\n\nWinner: 90%. FLIP holders: 5%. Burn: 5%.\nBurns are queued with each settled game; Game Status shows actual confirmation.\n\nHolder rewards use your share of eligible Paxeer FLIP supply, paid daily in the original Solana wager asset. Unregistered shares and dust stay pooled. SOL is sent to Solana’s incinerator; supported token burns reduce mint supply.\n\n' +
+      (link ? `Verified holding wallet: <code>${escape(link.evm)}</code>\nReward recipient: <code>${escape(link.recipient)}</code>\nWallet menu changes do not redirect rewards; sign a new link to change the recipient.\n` : 'Link your FLIP holding wallet to register for rewards. Ownership signature required.\n') +
+      (fees?.lastError ? `\n${escape(fees.lastError)}\n` : '') +
+      (pools.length ? '\nUnallocated pools:\n' + pools.map(p => `${escape(fromUnits(p.amount, p.token.decimals))} ${escape(p.token.symbol)} (${escape(p.token.address)})`).join('\n') : '\nNo unallocated fees yet.') +
+      (payments.length ? '\n\nYour latest reward payments:\n' + payments.map(p => `${escape(p.payment.amount)} atomic units, ${escape(p.payment.mint)}: ${escape(p.status)}${p.signature ? `\n${escape(this.explorer(p.signature))}` : ''}`).join('\n') : ''), [[button(link ? 'Update Reward Wallet Link' : 'Link FLIP Holding Wallet', 's:holder')], [button('Refresh', 's:fees')], [button('🏠 Home', 's:home')]]);
+  }
+  async holder(ctx) {
+    if (!this.service.feeService) throw new Error('Holder service unavailable');
+    const profile = await this.store.profile(ctx.from.id);
+    if (!profile.receiveWallet) return this.reply(ctx, 'Set your Solana receiving wallet first using /wallet.');
+    await this.store.setSession(ctx.from.id, { kind: 'holder-address' });
+    return this.reply(ctx, `Send the public Paxeer EVM address holding your FLIP (0x…). You will sign a message proving ownership and authorizing rewards to <code>${escape(profile.receiveWallet)}</code>. Never send a private key or seed phrase.`);
   }
   async stats(ctx) {
     const games = (await this.store.allResults()).filter(g => [g.creator.userId, g.challenger?.userId].includes(String(ctx.from.id)));
