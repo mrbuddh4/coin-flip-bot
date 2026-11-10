@@ -10,11 +10,11 @@ const { connectionOptions } = require('../database/connection');
 const config = require('../config');
 const { accrueFees, SCHEMA: FEE_SCHEMA } = require('./fees');
 const custody = require('./custody');
-const { noMemoCandidates } = require('./depositMatch');
+const { noMemoCandidates, refundCandidates } = require('./depositMatch');
 const { SCHEMA: NOTIFICATION_SCHEMA } = require('./notifications');
-async function findNoMemoCandidates(client, input) {
+async function findNoMemoCandidates(client, input, matcher = noMemoCandidates) {
   const { rows } = await client.query(`SELECT state FROM "SolGames" WHERE state->'token'->>'address'=$1 AND state->>'wager'=$2 AND (state->'creator'->>'wallet'=$3 OR state->'challenger'->>'wallet'=$3)`, [input.mint, String(input.amount), input.sender]);
-  return noMemoCandidates(rows.map(r => r.state), input);
+  return matcher(rows.map(r => r.state), input);
 }
 class SolanaStore {
   constructor(pool = new Pool(connectionOptions(config.database))) { this.pool = pool; }
@@ -47,6 +47,7 @@ class SolanaStore {
     return rows[0]?.state || null;
   }
   async noMemoCandidates(input) { return findNoMemoCandidates(this.pool, input); }
+  async refundCandidates(input) { return findNoMemoCandidates(this.pool, input, refundCandidates); }
   async get(id) {
     const { rows } = await this.pool.query('SELECT state FROM "SolGames" WHERE id=$1', [id]);
     if (!rows.length) throw new Error('Unknown Solana game');
@@ -70,6 +71,7 @@ class SolanaStore {
         },
         accrueFees: (game, split) => accrueFees(client, game, split),
         noMemoCandidates: input => findNoMemoCandidates(client, input),
+        refundCandidates: input => findNoMemoCandidates(client, input, refundCandidates),
       };
       await fn(game, transaction);
       await client.query('UPDATE "SolGames" SET state=$2 WHERE id=$1', [id, JSON.stringify(game)]);
@@ -180,6 +182,18 @@ class SolanaStore {
   async allResults() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state->>\'status\'=\'SETTLED\'')).rows.map(r => r.state); }
   async watchedAddresses() {
     return (await this.pool.query('SELECT DISTINCT state->\'creator\'->>\'wallet\' AS address FROM "SolGames" UNION SELECT DISTINCT state->\'challenger\'->>\'wallet\' AS address FROM "SolGames" WHERE state->\'challenger\' IS NOT NULL')).rows.map(r => r.address).filter(Boolean);
+  }
+  async depositRecoveryRequests() {
+    // Persisted requests, rather than UI state, also recover skipped receipts
+    // after navigating away or deploying a scanner fix. Recent terminal games
+    // stay eligible, including cards previously marked fully delivered.
+    const { rows } = await this.pool.query(`SELECT state FROM "SolGames" WHERE state->>'status'='OPEN' OR (state->>'expiresAt')::bigint >= $1 ORDER BY (state->>'createdAt')::bigint DESC`, [Date.now() - 24 * 60 * 60000]);
+    const requests = new Map();
+    for (const { state: g } of rows) for (const p of [g.creator, g.challenger]) {
+      if (!p?.wallet) continue;
+      requests.set(p.wallet, Math.min(requests.get(p.wallet) ?? Infinity, g.createdAt));
+    }
+    return [...requests].map(([address, replayFrom]) => ({ address, replayFrom }));
   }
   async cursor(address) { return (await this.pool.query('SELECT signature FROM "SolScanCursors" WHERE address=$1', [address])).rows[0]?.signature; }
   async setCursor(address, signature) { await this.pool.query('INSERT INTO "SolScanCursors" (address,signature) VALUES ($1,$2) ON CONFLICT (address) DO UPDATE SET signature=EXCLUDED.signature', [address, signature]); }

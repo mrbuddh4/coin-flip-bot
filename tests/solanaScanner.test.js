@@ -107,3 +107,13 @@ test('explicit confirmation replays past a skipped cursor without changing the r
   expect(store.setCursor).not.toHaveBeenCalled();
   await expect(scanner.confirm(id, '2')).rejects.toThrow('Not a player');
 });
+
+test('automatic recovery replays recent requests once per throttle period, without changing incremental cursors', async () => {
+  const { scanner, store, connection } = setup();
+  store.depositRecoveryRequests = jest.fn().mockResolvedValue([{ address: wallet, replayFrom: 100000 }]);
+  store.cursor.mockResolvedValue('already-skipped');
+  await scanner.tick();
+  await scanner.tick();
+  expect(connection.getSignaturesForAddress.mock.calls.filter(([, options]) => !options.until)).toHaveLength(1);
+  expect(connection.getSignaturesForAddress.mock.calls.filter(([, options]) => options.until === 'already-skipped')).toHaveLength(2);
+});

@@ -17,4 +17,23 @@ function noMemoCandidates(games, { sender, mint, amount, at }) {
   }
   return result;
 }
-module.exports = { noMemoCandidates };
+// Recovery never funds a wager. Once every nearby request has closed, a
+// verified, unconsumed direct transfer can only go back to its signing wallet.
+// Include a bounded clock/window margin for wallet sends that land just outside
+// the request. An open competing request blocks recovery, even if already funded.
+function refundCandidates(games, { sender, mint, amount, at }) {
+  if (!Number.isSafeInteger(at) || at < 0) return [];
+  const result = [];
+  for (const game of games) {
+    if (game.token.address !== mint || game.wager !== String(amount)) continue;
+    for (const role of ['creator', 'challenger']) {
+      const p = game[role];
+      const start = role === 'creator' ? game.createdAt : p?.joinedAt;
+      const end = p?.depositExpiresAt ?? game.expiresAt;
+      if (p?.wallet !== sender || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || at < start - 60000 || at >= end + 15 * 60000) continue;
+      result.push({ gameId: game.id, userId: p.userId, status: game.status, expiresAt: game.expiresAt });
+    }
+  }
+  return result;
+}
+module.exports = { noMemoCandidates, refundCandidates };

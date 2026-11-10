@@ -99,6 +99,28 @@ class SolanaService {
       await this.cancelLocked(g, tx);
     });
   }
+  async recoverUnmatchedDeposit({ sender, signature, mint, amount, transaction }) {
+    const input = { sender, mint, amount: String(amount), at: transaction?.blockTime * 1000 };
+    const candidates = await this.store.refundCandidates(input);
+    // Never choose a wager for an ambiguous proof. Recovery can only refund,
+    // and waits until all possibly related requests have closed.
+    if (!candidates.length || candidates.some(c => c.status === 'OPEN' && this.now() < c.expiresAt)) return false;
+    const candidate = [...candidates].sort((a, b) => b.expiresAt - a.expiresAt || a.gameId.localeCompare(b.gameId))[0];
+    const snapshot = await this.store.get(candidate.gameId);
+    if (snapshot.depositAddress !== this.chain.address) throw new Error('Recovery deposit wallet mismatch');
+    const value = await this.chain.verifyDeposit({ signature, sender, mint, transaction, allowNoMemo: true });
+    if (value !== BigInt(amount)) throw new DepositValidationError('Recovery amount mismatch');
+    await this.store.mutate(candidate.gameId, async (g, tx) => {
+      const current = await tx.refundCandidates(input);
+      if (!current.some(c => c.gameId === candidate.gameId && c.userId === candidate.userId) || current.some(c => c.status === 'OPEN' && this.now() < c.expiresAt)) return;
+      const player = this.member(g, candidate.userId);
+      if (player.wallet !== sender) throw new DepositValidationError('Recovery sender mismatch');
+      if (!await tx.consume(signature, player.userId, value.toString())) return;
+      if (g.status === 'OPEN') await this.cancelLocked(g, tx, 'EXPIRED');
+      await this.refund(g, tx, player, { signature, amount: value.toString() }, mint);
+    });
+    return true;
+  }
   async expire() {
     for (const { id } of await this.store.unfinished()) await this.store.mutate(id, async (g, tx) => {
       if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx, 'EXPIRED');

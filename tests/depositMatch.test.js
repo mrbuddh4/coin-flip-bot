@@ -16,3 +16,14 @@ test('a challenger receipt cannot predate joining, and legacy missing join time 
 test('closed and already funded overlaps remain candidates rather than authorizing a different game', () => {
   expect(noMemoCandidates([game, { ...game, id: 'other', status: 'SETTLED', creator: { ...game.creator, deposit: {} } }], request)).toHaveLength(2);
 });
+
+const { refundCandidates } = require('../src/solana/depositMatch');
+test('refund-only matching allows bounded late and clock-margin sends without authorizing funding', () => {
+  const atEnd = { ...request, at: 4000 };
+  expect(noMemoCandidates([game], atEnd)).toHaveLength(0);
+  expect(refundCandidates([game], atEnd)).toEqual([expect.objectContaining({ gameId: 'g', userId: '1' })]);
+  expect(refundCandidates([game], { ...request, at: 4000 + 15 * 60000 })).toHaveLength(0);
+  expect(refundCandidates([game], { ...request, at: NaN })).toHaveLength(0);
+  expect(refundCandidates([game], { ...request, sender: 'mallory' })).toHaveLength(0);
+  expect(refundCandidates([game], { ...request, amount: '99' })).toHaveLength(0);
+});

@@ -130,3 +130,36 @@ The owner's Hannibal Buress “WACK” clip is bundled as `assets/expired.mp4`. 
 ### One-tap deposit checking
 
 After transferring, tap **Check Deposit** once. The same private card immediately shows that checking is active, without another check button. It confirms automatically when a matching finalized deposit is recorded. A creator’s funded challenge is then published automatically, even if the user navigates Home or the bot restarts. Challenger confirmations advance to the existing animation/result flow. Pending checks expire with the game; existing matching, refund and payment safeguards remain in force. No environment changes or database reset are required.
+
+
+## Automatic recovery of skipped deposits
+
+The worker periodically replays recent persisted request windows, including closed
+requests, without requiring another Check Deposit tap. Previously skipped receipts
+are reconsidered even when their transaction is already behind the normal cursor.
+Replays rotate through wallets, run at most twice per tick, and are throttled to
+once per wallet per 30 seconds after success. A deployment restarts this throttle.
+
+Funding still requires one unique exact request inside its original payment
+window. Ambiguous or out-of-window plain transfers never fund a wager. A separate
+refund-only reconciliation can return a verified unconsumed exact-asset/exact-amount
+transfer to its registered signing wallet after every nearby request has closed.
+This recovery margin covers 60 seconds before the request and 15 minutes after its
+payment deadline, for attribution to a refund record only. Receipt uniqueness and
+the signed-before-send outbox prevent duplicate refunds. Missing timestamps,
+unsupported layouts, different sending wallets and transfers outside this bounded
+context still need investigation. A refund is complete only when its transaction
+is finalized, as shown by the compact refund link.
+
+Deploy the latest recovery branch with the existing mainnet database and variables.
+Do not initialize a new database. The worker will recheck the last 24 hours of
+request windows automatically; older records remain watched incrementally.
+
+
+For an unexplained missed payment, privately send `/depositcheck SIGNATURE` to the
+bot. A public Explorer/Solscan transaction link is accepted too. This read-only
+report compares the chain timestamp and sender against your last three same-asset,
+same-amount game requests, including the challenger acceptance time. It shows the
+number of exact historical matches, proof validation and recorded/refund state.
+It does not import deposits, place a wager or send funds. Share that report to
+establish the actual rejection reason instead of inferring it from a pending card.

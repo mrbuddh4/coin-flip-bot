@@ -3,11 +3,24 @@ const { MEMO } = require('./chain');
 const { DepositValidationError } = require('./errors');
 const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } = require('./token');
 class DepositScanner {
-  constructor(service) { this.service = service; this.running = false; this.offset = 0; }
+  constructor(service) { this.service = service; this.running = false; this.offset = 0; this.recoveryOffset = 0; this.replayed = new Map(); }
   async tick() {
     if (this.running) return;
     this.running = true;
     try {
+      // A skipped receipt may already be behind the regular scan cursor. Replay
+      // persisted recent request windows periodically, including expired games,
+      // so repair/restart needs no second button tap. Bound work and rotate.
+      const requests = await this.service.store.depositRecoveryRequests?.() || [];
+      for (let i = 0; i < Math.min(2, requests.length); i++) {
+        const request = requests[this.recoveryOffset++ % requests.length];
+        const now = Date.now();
+        if (now - (this.replayed.get(request.address) || 0) < 30000) continue;
+        try {
+          await this.scan(request.address, { replayFrom: request.replayFrom });
+          this.replayed.set(request.address, now);
+        } catch (_) { console.error('DEPOSIT_RECOVERY_RETRY: historical receipt range retained.'); }
+      }
       const addresses = await this.service.store.watchedAddresses();
       // Round robin keeps one busy address from starving another. A cursor only
       // advances after its whole finalized range is processed successfully.
@@ -93,6 +106,17 @@ class DepositScanner {
     const { store } = this.service;
     const matches = await store.noMemoCandidates({ sender: address, mint, amount: String(amount), at: transaction.blockTime * 1000 });
     if (matches.length !== 1) {
+      // Proof verification still checks recipient, program, signature, sender
+      // and token ownership. No candidate selection can credit a wager here.
+      if (this.service.recoverUnmatchedDeposit) {
+        try {
+          if (await this.service.recoverUnmatchedDeposit({ sender: address, signature, mint, amount: String(amount), transaction })) return;
+        } catch (error) {
+          if (!(error instanceof DepositValidationError)) throw error;
+          if (matches.length) await store.reviewDeposit(signature, matches[0].gameId, error.message);
+          return;
+        }
+      }
       if (matches.length) await store.reviewDeposit(signature, matches[0].gameId, 'Ambiguous plain transfer; no game was credited.');
       return;
     }

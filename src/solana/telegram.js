@@ -1,6 +1,7 @@
 const { resultVisible } = require('./presentation');
 const { fromUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
+const { traceDeposit } = require('./depositTrace');
 function args(ctx) { return ctx.message.text.trim().split(/\s+/).slice(1); }
 function depositInstructions(game, member, address) {
   const mainnet = game.cluster === 'mainnet-beta';
@@ -20,6 +21,10 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
     catch (_) { await ctx.reply('Could not complete that command. Check the arguments, game state, registered wallet, exact mint, amount, memo and finalized signature. No replacement payout was created. Use /solhelp.'); }
   });
   if (includeStart) command('start', ctx => ctx.reply('Solana devnet pilot. Use /solhelp. Real funds are disabled.'));
+  command('depositcheck', async (ctx, [signature]) => {
+    if (ctx.chat.type !== 'private') return ctx.reply('Use /depositcheck privately with the bot.');
+    await ctx.reply(await traceDeposit(service, String(ctx.from.id), signature));
+  });
   command('solhelp', ctx => ctx.reply(
     '/soltoken MINT (save a supported custom token)\n/soltokens (saved tokens)\n' +
     '/solflip SOL_OR_MINT AMOUNT SENDING_WALLET\n/soljoin GAME_ID SENDING_WALLET\n' +
