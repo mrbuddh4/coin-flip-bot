@@ -8,6 +8,7 @@ const { PrivateScreen, ScreenTransportError } = require('./screen');
 const { ChallengeBusyError, ChallengeTakenError } = require('./errors');
 const { fromUnits, toUnits } = require('./amounts');
 const { remaining, progress } = require('./funding');
+const { SolanaPrices, estimate } = require('./prices');
 const { tokensForUser } = require('./featured');
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const button = (text, callback_data) => ({ text, callback_data });
@@ -27,6 +28,7 @@ class SolanaInterface {
     this.store = service.store;
     this.telegram = bot.telegram;
     this.rendering = false;
+    this.prices = new SolanaPrices();
     this.screens = new PrivateScreen(this.store, this.telegram);
   }
   register() {
@@ -401,14 +403,28 @@ class SolanaInterface {
   }
   async leaderboard(ctx, losers = false) {
     const results = (await this.store.allResults()).filter(resultVisible), ranks = new Map();
+    const paid = await this.store.confirmedPrizeGameIds();
     for (const game of results) for (const player of [game.creator, game.challenger]) {
-      const r = ranks.get(player.userId) || { ...player, wins: 0, losses: 0 };
-      if (game.winnerId === player.userId) r.wins++; else r.losses++;
+      const r = ranks.get(player.userId) || { ...player, wins: 0, losses: 0, prizes: new Map() };
+      if (game.winnerId === player.userId) {
+        r.wins++;
+        if (paid.has(game.id)) {
+          const asset = r.prizes.get(game.token.address) || { amount: 0n, decimals: game.token.decimals };
+          asset.amount += BigInt(game.prize);
+          r.prizes.set(game.token.address, asset);
+        }
+      } else r.losses++;
       ranks.set(player.userId, r);
     }
     const order = [...ranks.values()].sort((a, b) => losers ? b.losses - a.losses : b.wins - a.wins).slice(0, 10);
-    return this.reply(ctx, `<b>${losers ? 'Wall of Shame' : 'Leaderboard'}</b>\nRanked by ${losers ? 'losses' : 'wins'}.\n\n` + (order.map((r, i) => `${i + 1}. ${mention(r)}: ${r.wins} wins, ${r.losses} losses`).join('\n') || 'No completed flips yet.'));
+    const mainnet = this.service.chain.env.SOLANA_CLUSTER === 'mainnet-beta';
+    const mints = [...new Set(order.flatMap(r => [...r.prizes.keys()]))];
+    const quotes = mainnet && mints.length ? await this.prices.get(mints) : new Map();
+    const lines = order.map((r, i) => `${i + 1}. ${mention(r)}: ${r.wins} wins, ${r.losses} losses\n${mainnet ? escape(estimate(r.prizes, quotes)) : 'Test coins: no USD value'}`);
+    const note = mainnet ? '\n\nUSD estimates use current token prices, not prices at the time of each win. Gross paid prizes include the returned stake; pending payouts are excluded. Unpriced tokens are excluded from the USD subtotal. Prices: DEX Screener / GeckoTerminal.' : '';
+    return this.reply(ctx, `<b>${losers ? 'Wall of Shame' : 'Leaderboard'}</b>\nRanked by ${losers ? 'losses' : 'wins'}.\n\n` + (lines.join('\n\n') || 'No completed flips yet.') + (order.length ? note : ''));
   }
+
   async refreshPrivateScreens() {
     for (const { userId } of await this.store.gameScreens()) {
       try {

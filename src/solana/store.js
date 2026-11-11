@@ -182,6 +182,10 @@ class SolanaStore {
     return rows.map(r => r.state);
   }
   async groupGames() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state ? \'interfaceVersion\' AND (COALESCE(state->\'ui\'->>\'terminal\',\'false\')<>\'true\' OR COALESCE(state->\'ui\'->>\'compactVersion\',\'0\')<>\'1\') ORDER BY "createdAt"')).rows.map(r => r.state); }
+  async confirmedPrizeGameIds() {
+    const { rows } = await this.pool.query(`SELECT "gameId" FROM "SolOutbox" WHERE status='CONFIRMED' AND payment->>'kind'='prize' AND id='prize:' || "gameId"`);
+    return new Set(rows.map(r => r.gameId));
+  }
   async allResults() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state->>\'status\'=\'SETTLED\'')).rows.map(r => r.state); }
   async watchedAddresses() {
     return (await this.pool.query('SELECT DISTINCT state->\'creator\'->>\'wallet\' AS address FROM "SolGames" UNION SELECT DISTINCT state->\'challenger\'->>\'wallet\' AS address FROM "SolGames" WHERE state->\'challenger\' IS NOT NULL')).rows.map(r => r.address).filter(Boolean);
