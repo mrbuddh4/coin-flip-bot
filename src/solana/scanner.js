@@ -11,31 +11,41 @@ function retryCode(error) {
   return 'LOOKUP_OR_LEDGER_FAILURE';
 }
 class DepositScanner {
-  constructor(service) { this.service = service; this.running = false; this.offset = 0; this.recoveryOffset = 0; this.replayed = new Map(); }
+  constructor(service) { this.service = service; this.running = false; this.offset = 0; this.activeOffset = 0; this.recoveryOffset = 0; this.replayed = new Map(); this.nextScanAt = 0; this.rateFailures = 0; }
   async tick() {
-    if (this.running) return;
+    if (this.running || Date.now() < this.nextScanAt) return;
     this.running = true;
     try {
-      // A skipped receipt may already be behind the regular scan cursor. Replay
-      // persisted recent request windows periodically, including expired games,
-      // so repair/restart needs no second button tap. Bound work and rotate.
-      const requests = await this.service.store.depositRecoveryRequests?.() || [];
-      for (let i = 0; i < Math.min(2, requests.length); i++) {
-        const request = requests[this.recoveryOffset++ % requests.length];
-        const now = Date.now();
-        if (now - (this.replayed.get(request.address) || 0) < 30000) continue;
-        try {
-          await this.scan(request.address, { replayFrom: request.replayFrom });
-          this.replayed.set(request.address, now);
-        } catch (_) { console.error('DEPOSIT_RECOVERY_RETRY: historical receipt range retained.'); }
+      // Check current payment windows before old wallets and historical replay.
+      // Replaying only their live window also recovers a cursor skipped earlier.
+      const active = await this.service.store.activeDepositRequests?.() || [];
+      for (let i = 0; i < Math.min(2, active.length); i++) {
+        const request = active[this.activeOffset++ % active.length];
+        try { await this.scan(request.address, { replayFrom: request.replayFrom }); }
+        catch (_) { console.error('DEPOSIT_ACTIVE_RETRY: current payment window retained.'); }
+        if (Date.now() < this.nextScanAt) return;
       }
-      const addresses = await this.service.store.watchedAddresses();
-      // Round robin keeps one busy address from starving another. A cursor only
-      // advances after its whole finalized range is processed successfully.
-      for (let i = 0; i < Math.min(5, addresses.length); i++) {
+      const activeAddresses = new Set(active.map(r => r.address));
+      const addresses = (await this.service.store.watchedAddresses()).filter(a => !activeAddresses.has(a));
+      // One historical wallet per tick avoids a burst against the RPC provider.
+      if (addresses.length) {
         const address = addresses[this.offset++ % addresses.length];
         try { await this.scan(address); }
         catch (_) { console.error('DEPOSIT_SCAN_RETRY: finalized range retained for another scan.'); }
+        if (Date.now() < this.nextScanAt) return;
+      }
+      const requests = (await this.service.store.depositRecoveryRequests?.() || [])
+        .filter(r => !activeAddresses.has(r.address));
+      // Recent closed requests still recover missed deposits/refunds, but never
+      // replay the same wallet's entire day of history every five seconds.
+      for (let i = 0; i < Math.min(2, requests.length); i++) {
+        const request = requests[this.recoveryOffset++ % requests.length];
+        const now = Date.now();
+        if (now - (this.replayed.get(request.address) || 0) < 60000) continue;
+        this.replayed.set(request.address, now);
+        try { await this.scan(request.address, { replayFrom: request.replayFrom }); }
+        catch (_) { console.error('DEPOSIT_RECOVERY_RETRY: historical receipt range retained.'); }
+        if (Date.now() < this.nextScanAt) return;
       }
     } finally { this.running = false; }
   }
@@ -47,53 +57,67 @@ class DepositScanner {
     // uniqueness still prevents double credit and duplicate refunds.
     await this.scan(player.wallet, { replayFrom: game.createdAt });
   }
-  async scan(address, { replayFrom } = {}) {
+  async scan(address, options = {}) {
+    if (Date.now() < this.nextScanAt) throw new Error('RPC scan cooldown active; receipt retained');
+    try {
+      await this.scanRange(address, options);
+      this.rateFailures = 0;
+    } catch (error) {
+      if (retryCode(error) === 'RPC_RATE_LIMIT') {
+        const delay = Math.min(60000, 5000 * 2 ** Math.min(this.rateFailures++, 4));
+        this.nextScanAt = Math.max(this.nextScanAt, Date.now() + delay);
+        console.error(`DEPOSIT_RPC_BACKOFF: ${delay}ms; no further history requests during cooldown.`);
+      }
+      throw error;
+    }
+  }
+  async scanRange(address, { replayFrom } = {}) {
     const { store, chain } = this.service;
     const replay = Number.isSafeInteger(replayFrom);
     const cursor = replay ? null : await store.cursor(address);
     const firstTime = replay ? replayFrom : await store.firstGameTime(address);
-    const signatures = [];
-    let before, failed;
+    let before, failed, newest;
     for (;;) {
       let page;
       try {
         page = await chain.connection.getSignaturesForAddress(new PublicKey(address), { limit: 100, ...(cursor ? { until: cursor } : {}), ...(before ? { before } : {}) }, 'finalized');
       } catch (error) {
         console.error(`DEPOSIT_RANGE_RETRY: ${retryCode(error)}; cursor retained.`);
-        failed = error;
-        break;
+        throw error;
       }
-      signatures.push(...page.filter(p => !p.err && (p.blockTime == null || p.blockTime * 1000 >= firstTime - 60000)));
+      const signatures = page.filter(p => !p.err && (p.blockTime == null || p.blockTime * 1000 >= firstTime - 60000));
+      newest ||= signatures[0]?.signature;
+      // Process the newest page before asking for older history. A slow or
+      // unavailable second page must not postpone the payment already fetched.
+      for (const entry of signatures) {
+        try {
+          if (await store.hasDeposit?.(entry.signature)) continue;
+          if (await store.scanReview?.(entry.signature)) continue;
+          await this.process(address, entry);
+        } catch (error) {
+          if (retryCode(error) === 'RPC_RATE_LIMIT') {
+            console.error(`DEPOSIT_RECEIPT_RETRY: RPC_RATE_LIMIT; signature=${entry.signature}; cursor retained.`);
+            throw error; // Stop the burst immediately, not after every receipt.
+          }
+          if (retryCode(error) === 'RPC_UNSUPPORTED_VERSION' && store.reviewScan) {
+            try {
+              await store.reviewScan(entry.signature, address, 'Unsupported transaction version; client supports legacy/v0 only. No deposit credited.');
+              console.error(`DEPOSIT_VERSION_REVIEW: signature=${entry.signature}; saved for review, other receipts continue.`);
+            } catch (reviewError) {
+              failed ||= reviewError;
+              console.error(`DEPOSIT_REVIEW_SAVE_RETRY: ${retryCode(reviewError)}; cursor retained.`);
+            }
+            continue;
+          }
+          console.error(`DEPOSIT_RECEIPT_RETRY: ${retryCode(error)}; signature=${entry.signature}; cursor retained.`);
+          failed ||= error;
+        }
+      }
       if (!page.length || page.length < 100 || (!cursor && page.some(p => p.blockTime != null && p.blockTime * 1000 < firstTime - 60000))) break;
       before = page[page.length - 1].signature;
     }
-    // Prioritize current payments and isolate each lookup. One unavailable old
-    // transaction must not starve a newer valid deposit. Keep the old cursor if
-    // any page or receipt failed, so isolation never discards unresolved proof.
-    for (const entry of signatures) {
-      try {
-        // Unsupported versions remain in a durable review queue. The ordinary
-        // cursor may pass them only after that record commits successfully.
-        if (await store.scanReview?.(entry.signature)) continue;
-        await this.process(address, entry);
-      }
-      catch (error) {
-        if (retryCode(error) === 'RPC_UNSUPPORTED_VERSION' && store.reviewScan) {
-          try {
-            await store.reviewScan(entry.signature, address, 'Unsupported transaction version; client supports legacy/v0 only. No deposit credited.');
-            console.error(`DEPOSIT_VERSION_REVIEW: signature=${entry.signature}; saved for review, other receipts continue.`);
-          } catch (reviewError) {
-            failed ||= reviewError;
-            console.error(`DEPOSIT_REVIEW_SAVE_RETRY: ${retryCode(reviewError)}; cursor retained.`);
-          }
-          continue;
-        }
-        console.error(`DEPOSIT_RECEIPT_RETRY: ${retryCode(error)}; signature=${entry.signature}; cursor retained.`);
-        failed ||= error;
-      }
-    }
     if (failed) throw failed;
-    if (!replay && signatures.length) await store.setCursor(address, signatures[0].signature);
+    if (!replay && newest) await store.setCursor(address, newest);
   }
   async process(address, entry) {
     const { store, chain } = this.service;

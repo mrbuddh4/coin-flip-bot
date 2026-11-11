@@ -28,7 +28,7 @@ async function main() {
   const genesis = await startupStep('rpc', () => chain.validate());
   const release = await startupStep('database-lock', () => acquireInstanceLock());
   const store = new SolanaStore();
-  let timer, presentationTimer, feeTimer, fees, server, bot;
+  let timer, scanTimer, presentationTimer, feeTimer, fees, server, bot;
   let stopping = false;
   let pollingStarted = false;
   let cycleRunning = false;
@@ -38,6 +38,7 @@ async function main() {
     if (stopping) return;
     stopping = true;
     clearInterval(timer);
+    clearInterval(scanTimer);
     clearInterval(presentationTimer);
     clearInterval(feeTimer);
     if (bot && pollingStarted) { try { bot.stop('shutdown'); } catch (_) {} }
@@ -84,7 +85,7 @@ async function main() {
     const cycle = async () => {
       if (cycleRunning || stopping) return;
       cycleRunning = true;
-      try { await scanner.tick(); await service.work(); await present(); }
+      try { await service.work(); await present(); }
       finally {
         // Removing obsolete verbose notices must never affect payments or polling.
         try { await noticeCleanup.tick(); }
@@ -94,6 +95,10 @@ async function main() {
     };
     await startupStep('worker', () => cycle());
     timer = setInterval(() => cycle().catch(() => console.error('Solana worker check failed; ledger retained.')), 5000);
+    // A slow/rate-limited history scan must never hold queued refunds or expiry.
+    const scan = () => { if (!stopping) return scanner.tick().catch(() => console.error('DEPOSIT_SCAN_RETRY: history retained.')); };
+    scan();
+    scanTimer = setInterval(scan, 5000);
     presentationTimer = setInterval(() => present().catch(() => console.error('PRESENTATION_RETRY: financial records retained.')), 1000);
     const rewardTick = () => { if (!stopping) fees.tick().catch(() => console.error('Holder fee check failed; allocations retained.')); };
     if (fees.mode === 'paxeer') {

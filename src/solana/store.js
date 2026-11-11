@@ -187,6 +187,20 @@ class SolanaStore {
     return new Set(rows.map(r => r.gameId));
   }
   async allResults() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state->>\'status\'=\'SETTLED\'')).rows.map(r => r.state); }
+  async hasDeposit(signature) {
+    return (await this.pool.query('SELECT 1 FROM "SolDeposits" WHERE signature=$1', [signature])).rowCount > 0;
+  }
+  async activeDepositRequests() {
+    const { rows } = await this.pool.query(`SELECT state FROM "SolGames" WHERE state->>'status'='OPEN' AND (state->>'expiresAt')::bigint > $1 ORDER BY (state->>'createdAt')::bigint DESC`, [Date.now()]);
+    const requests = new Map();
+    for (const { state: g } of rows) for (const [role, p] of [['creator', g.creator], ['challenger', g.challenger]]) {
+      if (!p?.wallet || p.deposit) continue;
+      const start = role === 'challenger' ? p.joinedAt : g.createdAt;
+      if (!Number.isSafeInteger(start)) continue;
+      requests.set(p.wallet, Math.min(requests.get(p.wallet) ?? Infinity, start));
+    }
+    return [...requests].map(([address, replayFrom]) => ({ address, replayFrom }));
+  }
   async watchedAddresses() {
     return (await this.pool.query('SELECT DISTINCT state->\'creator\'->>\'wallet\' AS address FROM "SolGames" UNION SELECT DISTINCT state->\'challenger\'->>\'wallet\' AS address FROM "SolGames" WHERE state->\'challenger\' IS NOT NULL')).rows.map(r => r.address).filter(Boolean);
   }

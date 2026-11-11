@@ -336,4 +336,22 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     expect(service.coin).not.toHaveBeenCalled();
   });
 
+  test('active scans use only unpaid live windows, while committed receipts are skipped safely', async () => {
+    now = Date.now();
+    const game = await service.create({ ...input, interfaceVersion: 2 });
+    expect(await store.activeDepositRequests()).toEqual([{ address: walletA, replayFrom: game.createdAt }]);
+    expect(await store.hasDeposit('creator-receipt')).toBe(false);
+    await service.deposit({ id: game.id, userId: '1', signature: 'creator-receipt' });
+    expect(await store.hasDeposit('creator-receipt')).toBe(true);
+    expect(await store.activeDepositRequests()).toEqual([]);
+    await store.mutate(game.id, g => { g.ui.publishRequested = true; });
+    await service.join({ id: game.id, userId: '2', wallet: walletB, chatId: input.chatId });
+    const joined = await store.get(game.id);
+    expect(await store.activeDepositRequests()).toEqual([{ address: walletB, replayFrom: joined.challenger.joinedAt }]);
+    await service.cancel({ id: game.id, userId: '1', chatId: input.chatId });
+    expect(await store.activeDepositRequests()).toEqual([]);
+    expect(await store.hasDeposit('creator-receipt')).toBe(true);
+    expect((await store.payments(game.id)).filter(p => p.payment.kind === 'refund')).toHaveLength(1);
+  });
+
 });

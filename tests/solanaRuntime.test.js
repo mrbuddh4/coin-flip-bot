@@ -52,12 +52,16 @@ test.each([null, require('@solana/web3.js').Keypair.fromSeed(Buffer.alloc(32, 42
     expect(ui.refreshPrivateScreens).toHaveBeenCalledTimes(1);
     expect(service.work).toHaveBeenCalledTimes(1); expect(scanner.tick).toHaveBeenCalledTimes(1);
     const callbacks = new Map(interval.mock.calls.map(([fn, ms]) => [ms, fn]));
+    const [paymentTick, scanTick] = interval.mock.calls.filter(([, ms]) => ms === 5000).map(([fn]) => fn);
     expect(callbacks.has(1000)).toBe(true); expect(callbacks.has(5000)).toBe(true);
     // A slow RPC scan must not prevent the completed animation's result card.
     let finishScan;
     scanner.tick.mockImplementationOnce(() => new Promise(resolve => { finishScan = resolve; }));
-    const scanning = callbacks.get(5000)();
+    const scanning = scanTick();
     await Promise.resolve();
+    const beforeWork = service.work.mock.calls.length;
+    await paymentTick();
+    expect(service.work).toHaveBeenCalledTimes(beforeWork + 1);
     const beforeRender = ui.render.mock.calls.length;
     await callbacks.get(1000)();
     expect(ui.render).toHaveBeenCalledTimes(beforeRender + 1);

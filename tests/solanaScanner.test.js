@@ -160,3 +160,71 @@ test('failed unsupported-version review persistence retains the cursor while oth
   expect(service.deposit).toHaveBeenCalledWith(expect.objectContaining({ signature: 'valid' }));
   expect(store.setCursor).not.toHaveBeenCalled();
 });
+
+
+test('a provider rate limit stops the burst and exponentially backs off without losing the cursor', async () => {
+  const { scanner, store, connection } = setup();
+  const clock = jest.spyOn(Date, 'now');
+  let now = 1000000;
+  clock.mockImplementation(() => now);
+  connection.getSignaturesForAddress.mockRejectedValue(new Error('429 Too Many Requests'));
+  try {
+    await scanner.tick();
+    expect(connection.getSignaturesForAddress).toHaveBeenCalledTimes(1);
+    expect(scanner.nextScanAt).toBe(now + 5000);
+    await scanner.tick();
+    expect(connection.getSignaturesForAddress).toHaveBeenCalledTimes(1);
+    now += 5000;
+    await scanner.tick();
+    expect(connection.getSignaturesForAddress).toHaveBeenCalledTimes(2);
+    expect(scanner.nextScanAt).toBe(now + 10000);
+    expect(store.setCursor).not.toHaveBeenCalled();
+    now += 10000;
+    connection.getSignaturesForAddress.mockResolvedValue([]);
+    await scanner.tick();
+    expect(scanner.rateFailures).toBe(0);
+  } finally { clock.mockRestore(); }
+});
+
+test('a rate limit looking up one receipt does not hammer the remaining receipts', async () => {
+  const { scanner, store, connection } = setup();
+  connection.getSignaturesForAddress.mockResolvedValue([{ signature: 'first' }, { signature: 'second' }]);
+  connection.getParsedTransaction.mockRejectedValue(new Error('429 Too Many Requests'));
+  await expect(scanner.scan(wallet)).rejects.toThrow('429');
+  expect(connection.getParsedTransaction).toHaveBeenCalledTimes(1);
+  expect(store.setCursor).not.toHaveBeenCalled();
+});
+
+test('current payment windows are processed before historical wallets and historical replays', async () => {
+  const { scanner, store } = setup();
+  store.activeDepositRequests = jest.fn().mockResolvedValue([{ address: wallet, replayFrom: 200000 }]);
+  store.watchedAddresses.mockResolvedValue([wallet, 'historical']);
+  store.depositRecoveryRequests = jest.fn().mockResolvedValue([{ address: wallet, replayFrom: 100000 }, { address: 'historical', replayFrom: 100000 }]);
+  scanner.scan = jest.fn();
+  await scanner.tick();
+  expect(scanner.scan.mock.calls).toEqual([[wallet, { replayFrom: 200000 }], ['historical'], ['historical', { replayFrom: 100000 }]]);
+});
+
+test('a committed receipt is not fetched or reverified during historical replay', async () => {
+  const { scanner, service, store, connection } = setup();
+  store.hasDeposit = jest.fn().mockResolvedValue(true);
+  await scanner.scan(wallet, { replayFrom: 100000 });
+  expect(connection.getParsedTransaction).not.toHaveBeenCalled();
+  expect(service.deposit).not.toHaveBeenCalled();
+  expect(store.setCursor).not.toHaveBeenCalled();
+});
+
+test('the newest deposit is processed before a blocked next history page returns', async () => {
+  const { scanner, service, store, connection } = setup();
+  const page = Array.from({ length: 100 }, (_, i) => ({ signature: `p${i}`, blockTime: 101 }));
+  let release;
+  connection.getSignaturesForAddress.mockResolvedValueOnce(page).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  const scanning = scanner.scan(wallet);
+  // Wait for the scanner to request page two, which remains deliberately stuck.
+  while (!release) await new Promise(resolve => setImmediate(resolve));
+  expect(service.deposit).toHaveBeenCalledWith(expect.objectContaining({ signature: 'p0' }));
+  expect(store.setCursor).not.toHaveBeenCalled();
+  release([]);
+  await scanning;
+  expect(store.setCursor).toHaveBeenCalledWith(wallet, 'p0');
+});
