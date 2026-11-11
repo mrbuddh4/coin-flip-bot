@@ -73,16 +73,23 @@ integration('Solana durable ledger on real PostgreSQL', () => {
     const result = await service.deposit({ id: b.id, userId: '1', signature: 'shared-proof' });
     expect(result.creator.deposit).toBeUndefined();
   });
-  test('underpayment and overpayment refund full amount and never mark funded', async () => {
+  test('partial payments accumulate exactly; overshoot refunds only excess and cancellation returns retained funds once', async () => {
     const g = await service.create(input);
-    for (const [sig, amount] of [['under', 99999999n], ['over', 100000001n]]) {
-      chain.verifyDeposit.mockResolvedValueOnce(amount);
-      const result = await service.deposit({ id: g.id, userId: '1', signature: sig });
-      expect(result.creator.deposit).toBeUndefined();
-    }
-    const rows = (await pool.query('SELECT payment FROM "SolOutbox" ORDER BY id')).rows;
-    expect(rows.map(r => r.payment.amount).sort()).toEqual(['100000001', '99999999']);
-    expect(rows.every(r => r.payment.recipient === walletA)).toBe(true);
+    chain.verifyDeposit.mockResolvedValueOnce(99999999n);
+    const partial = await service.deposit({ id: g.id, userId: '1', signature: 'under' });
+    expect(partial.creator.deposit).toBeUndefined();
+    expect(partial.creator.funding.amount).toBe('99999999');
+    expect(await store.liabilities()).toEqual([{ mint: 'NATIVE', amount: '99999999' }]);
+    chain.verifyDeposit.mockResolvedValueOnce(100000001n);
+    const full = await service.deposit({ id: g.id, userId: '1', signature: 'over' });
+    expect(full.creator.deposit.amount).toBe('100000000');
+    expect((await store.payments(g.id))[0].payment).toMatchObject({ amount: '100000000', recipient: walletA });
+    expect(await store.liabilities()).toEqual([{ mint: 'NATIVE', amount: '200000000' }]);
+    await service.cancel({ id: g.id, userId: '1', chatId: input.chatId });
+    await service.cancel({ id: g.id, userId: '1', chatId: input.chatId });
+    const payments = await store.payments(g.id);
+    expect(payments.map(r => r.payment.amount).sort()).toEqual(['1', '100000000', '99999999']);
+    expect(await store.liabilities()).toEqual([{ mint: 'NATIVE', amount: '200000000' }]);
   });
   test('simultaneous join admits one challenger', async () => {
     const g = await service.create(input);

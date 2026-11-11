@@ -46,3 +46,13 @@ test('Solana-only mainnet has no Paxeer dependency; explicitly enabled Paxeer re
   expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'mainnet-beta', SOLANA_HOLDER_REWARDS: 'paxeer' })).toThrow('MAINNET_HOLDER_RPC');
   expect(() => assertLaunchReady({ SOLANA_CLUSTER: 'devnet' })).not.toThrow();
 });
+
+test('partial-payment page and wallet URI request only the remainder, with the original deadline', async () => {
+  game.creator.funding = { amount: '250000', receipts: [{ signature: 'part', amount: '250000' }] };
+  const response = await fetch(base), html = await response.text();
+  expect(response.status).toBe(200);
+  expect(html).toContain('amount=0.75');
+  expect(html).toContain('Received: 0.25 &lt;SID&gt;');
+  expect(html).toContain('Remaining: 0.75 &lt;SID&gt;');
+  expect(html).toContain('Payment deadline:');
+});

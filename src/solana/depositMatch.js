@@ -1,12 +1,12 @@
 // A plain transfer can fund a game only when its finalized on-chain timestamp,
-// exact asset/amount and signing wallet identify one historical request.
+// exact asset and signing wallet identify one historical request.
 // Include closed/funded requests: ignoring them would let a receipt be stolen
 // by a newer overlapping game. Missing timestamps never authorize a match.
 function noMemoCandidates(games, { sender, mint, amount, at }) {
-  if (!Number.isSafeInteger(at) || at < 0) return [];
+  if (!Number.isSafeInteger(at) || at < 0 || !/^\d+$/.test(String(amount)) || BigInt(amount) <= 0n || BigInt(amount) > 18446744073709551615n) return [];
   const result = [];
   for (const game of games) {
-    if (game.token.address !== mint || game.wager !== String(amount)) continue;
+    if (game.token.address !== mint) continue;
     for (const role of ['creator', 'challenger']) {
       const p = game[role];
       const start = role === 'creator' ? game.createdAt : p?.joinedAt;

@@ -102,7 +102,7 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     const diagnostic = await traceDeposit(service, '1', signature);
     expect(diagnostic).toContain('Sending wallet matches: yes');
     expect(diagnostic).toContain('Proof: valid direct deposit');
-    expect(diagnostic).toContain('Exact plain-transfer matches: 1');
+    expect(diagnostic).toContain('Plain-transfer request matches: 1');
     if (expired) { now = game.expiresAt + 1; await service.expire(); }
     // An older scanner rejected this receipt and advanced the ordinary cursor.
     // Persisted requests replay it without a second tap, including after restart.
@@ -197,7 +197,7 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     const { signature } = nativeScannerReceipt(walletB, 100);
     const result = await traceDeposit(service, '2', 'https://solscan.io/tx/' + signature);
     expect(result).toContain('(challenger)');
-    expect(result).toContain('Exact plain-transfer matches: 0');
+    expect(result).toContain('Plain-transfer request matches: 0');
     expect(result).toContain('Inside window: NO');
     expect(result).toContain('Proof: valid direct deposit');
     expect(result).not.toContain(walletA);
@@ -258,7 +258,7 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     await service.recoverUnmatchedDeposit({ sender: walletA, mint: 'NATIVE', amount: '100000000', ...receipt });
     expect(await store.payments(g.id)).toHaveLength(1);
   });
-  test.each(['15132927039', '15132927041'])('wrong-amount SID plain transfer %s is refunded once after restart without funding a wager', async received => {
+  test.each(['15132927039', '15132927041'])('SID plain transfer %s credits up to the wager and preserves excess and expiry refunds across restart', async received => {
     const { PublicKey } = require('@solana/web3.js');
     const { SolanaChain } = require('../src/solana/chain');
     const { DepositScanner } = require('../src/solana/scanner');
@@ -287,10 +287,14 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     chain.connection.getParsedTransaction = jest.fn().mockResolvedValue(transaction);
     await store.mutate(game.id, g => { g.ui.depositChecks = { '1': true }; });
     await new DepositScanner(service).scan(walletA);
-    expect((await store.get(game.id)).creator.deposit).toBeUndefined();
-    expect(await store.payments(game.id)).toHaveLength(0);
+    const under = BigInt(received) < BigInt(game.wager);
+    const funded = await store.get(game.id);
+    expect(funded.creator.funding.amount).toBe(under ? received : game.wager);
+    if (under) expect(funded.creator.deposit).toBeUndefined();
+    else expect(funded.creator.deposit.amount).toBe(game.wager);
+    expect(await store.payments(game.id)).toHaveLength(under ? 0 : 1);
     const diagnostic = await traceDeposit(service, '1', signature);
-    expect(diagnostic).toContain('Exact plain-transfer matches: 0');
+    expect(diagnostic).toContain('Plain-transfer request matches: 1');
     expect(diagnostic).toContain('Inside window: yes');
     expect(diagnostic).toContain('Expected amount: 15132.92704 SID');
     expect(diagnostic).toContain(`Amount matches: NO (${received.endsWith('39') ? 'short' : 'over'} by 0.000001)`);
@@ -299,16 +303,17 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     // process must replay it from persisted game history without another tap.
     expect(await store.cursor(walletA)).toBe(signature);
     chain.connection.getSignaturesForAddress.mockImplementation(async (key, opts) => key.toBase58() === walletA && !opts.until ? [{ signature, blockTime: at }] : []);
-    now = game.expiresAt + 1;
+    now = funded.expiresAt + 1;
     await service.expire();
     await Promise.all([new DepositScanner(service).tick(), new DepositScanner(service).tick()]);
     const g = await store.get(game.id);
     expect(g.status).toBe('CANCELLED');
-    expect(g.creator.deposit).toBeUndefined();
+    if (under) expect(g.creator.deposit).toBeUndefined();
     expect(service.coin).not.toHaveBeenCalled();
     const refunds = await store.payments(game.id);
-    expect(refunds).toHaveLength(1);
-    expect(refunds[0].payment).toMatchObject({ recipient: walletA, mint, amount: received, kind: 'refund' });
+    expect(refunds).toHaveLength(under ? 1 : 2);
+    expect(refunds.reduce((sum, p) => sum + BigInt(p.payment.amount), 0n)).toBe(BigInt(received));
+    expect(refunds.every(p => p.payment.recipient === walletA && p.payment.mint === mint && p.payment.kind === 'refund')).toBe(true);
     expect((await pool.query('SELECT COUNT(*)::int AS n FROM "SolDeposits" WHERE signature=$1', [signature])).rows[0].n).toBe(1);
     expect((await store.liabilities()).find(x => x.mint === mint).amount).toBe(received);
     expect(chain.broadcast).not.toHaveBeenCalled();

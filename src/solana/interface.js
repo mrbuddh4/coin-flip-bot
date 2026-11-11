@@ -7,6 +7,7 @@ const { compactPayments } = require('./paymentView');
 const { PrivateScreen, ScreenTransportError } = require('./screen');
 const { ChallengeBusyError, ChallengeTakenError } = require('./errors');
 const { fromUnits, toUnits } = require('./amounts');
+const { remaining, progress } = require('./funding');
 const { tokensForUser } = require('./featured');
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const button = (text, callback_data) => ({ text, callback_data });
@@ -14,7 +15,7 @@ const keyboard = rows => ({ parse_mode: 'HTML', link_preview_options: { is_disab
 const mention = player => `<a href="tg://user?id=${escape(player.userId)}">${escape(player.name || player.userId)}</a>`;
 const nonce = () => randomBytes(6).toString('hex');
 function paymentURI(game, player) {
-  const params = new URLSearchParams({ amount: fromUnits(game.wager, game.token.decimals), memo: player.memo, label: 'Coin Flip' });
+  const params = new URLSearchParams({ amount: fromUnits(remaining(game, player), game.token.decimals), memo: player.memo, label: 'Coin Flip' });
   if (game.token.address !== 'NATIVE') params.set('spl-token', game.token.address);
   return `solana:${game.depositAddress}?${params}`;
 }
@@ -164,7 +165,7 @@ class SolanaInterface {
       return this.selectTokens(ctx);
     }
     await this.store.setSession(ctx.from.id, { ...state, token, step: 'amount' });
-    return this.reply(ctx, `<b>Step 2 of 3: Wager Amount</b>\n\nToken: ${escape(token.symbol)}\nMint: <code>${escape(token.address)}</code>\n\nType the amount you want each player to wager here in this chat, for example <code>0.01</code>. Use the full available precision; if your wallet rounds the displayed balance, choose a slightly lower wager. Keep some SOL for network fees. The next screen will show the deposit address and transfer instructions. Winner receives 90% of the pool.`, [[button('‹ Change Token', 's:back')], [button('🏠 Home', 's:home')]]);
+    return this.reply(ctx, `<b>Step 2 of 3: Wager Amount</b>\n\nToken: ${escape(token.symbol)}\nMint: <code>${escape(token.address)}</code>\n\nType the number of token units, not a dollar value, that you want each player to wager here in this chat, for example <code>0.01</code>. Use the full available precision; if your wallet rounds the displayed balance, choose a slightly lower wager. Keep some SOL for network fees. The next screen will show the deposit address and transfer instructions. Winner receives 90% of the pool.`, [[button('‹ Change Token', 's:back')], [button('🏠 Home', 's:home')]]);
   }
   async reviewJoin(ctx, id, walletsReady = false) {
     const game = await this.store.get(id);
@@ -180,7 +181,7 @@ class SolanaInterface {
   }
   async depositMessage(ctx, game) {
     ctx.solGameId = game.id; ctx.solView = 'deposit';
-    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), await this.store.payments(game.id)]);
+    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, game.creator.funding, game.challenger?.funding, resultVisible(game), await this.store.payments(game.id)]);
     const player = this.service.member(game, ctx.from.id);
     if (game.status !== 'OPEN' || player.deposit) return this.status(ctx, game.id);
     const checking = Boolean(game.ui?.depositChecks?.[String(ctx.from.id)]);
@@ -188,19 +189,19 @@ class SolanaInterface {
     const role = player.userId === game.creator.userId ? 'creator' : 'challenger';
     const rows = [];
     rows.push([{ text: '📋 Copy Deposit Address', copy_text: { text: game.depositAddress } }]);
-    rows.push([{ text: '📋 Copy Exact Amount', copy_text: { text: fromUnits(game.wager, game.token.decimals) } }, { text: '📋 Copy Game Memo', copy_text: { text: player.memo } }]);
+    rows.push([{ text: '📋 Copy Exact Amount', copy_text: { text: fromUnits(remaining(game, player), game.token.decimals) } }, { text: '📋 Copy Game Memo', copy_text: { text: player.memo } }]);
     if (/^https:\/\//.test(base) && player.payToken) rows.push([{ text: '💳 Open Deposit', url: `${base.replace(/\/$/, '')}/pay/${game.id}/${role}/${player.payToken}` }]);
     if (!checking) rows.push([button('✅ Check Deposit', `s:check:${game.id}`)]);
     rows.push([button(checking ? '‹ Checking Deposit' : 'Game Status', `s:status:${game.id}`)]);
     if (role === 'creator') rows.push([button('Cancel Challenge', `s:cancel:${game.id}`)]);
-    return this.reply(ctx, `<b>Step 3 of 3: Transfer Your Wager</b>\n${escape(networkName(this.service.chain))}\n\nAmount: <b>${summary(game)}</b>\nFrom: <code>${escape(player.wallet)}</code>\nTo: <code>${escape(game.depositAddress)}</code>\nMint: <code>${escape(game.token.address)}</code>\nGame memo (optional for a unique matching transfer): <code>${escape(player.memo)}</code>\nWinnings go to: <code>${escape(player.receiveWallet || player.wallet)}</code>\n\n1. Copy the deposit address and exact amount above.\n2. Transfer from your registered sending wallet. Including the game memo helps identify the payment if requests overlap.\n3. ${checking ? 'Automatic deposit checking is active. No further tap is needed.' : 'Return here and tap Check Deposit once.'}\n\nThis screen updates automatically. Final results and refunds include short transaction links in the originating group. ${role === 'creator' ? 'Once your deposit is confirmed, the challenge is posted to the group where you started /flip.' : 'Once both deposits are confirmed, the game resolves.'} A plain transfer is matched only when the signing wallet, exact token, exact amount and transaction time identify one request. If requests overlap, include the game memo or use Open Deposit.\n\nPayment URI:\n<code>${escape(paymentURI(game, player))}</code>`, rows);
+    return this.reply(ctx, `<b>Step 3 of 3: Transfer Your Wager</b>\n${escape(networkName(this.service.chain))}\n\nWager: <b>${summary(game)}</b>\n${escape(progress(game, player))}\nFrom: <code>${escape(player.wallet)}</code>\nTo: <code>${escape(game.depositAddress)}</code>\nMint: <code>${escape(game.token.address)}</code>\nGame memo (optional for a unique matching transfer): <code>${escape(player.memo)}</code>\nWinnings go to: <code>${escape(player.receiveWallet || player.wallet)}</code>\n\n1. Copy the deposit address and exact amount above.\n2. Transfer from your registered sending wallet. Including the game memo helps identify the payment if requests overlap.\n3. ${checking ? 'Automatic deposit checking is active. No further tap is needed.' : 'Return here and tap Check Deposit once.'}\n\nThis screen updates automatically. Final results and refunds include short transaction links in the originating group. ${role === 'creator' ? 'Once your deposit is confirmed, the challenge is posted to the group where you started /flip.' : 'Once both deposits are confirmed, the game resolves.'} A plain transfer is matched only when the signing wallet, exact token and transaction time identify one request. If requests overlap, include the game memo or use Open Deposit.\n\nPayment URI:\n<code>${escape(paymentURI(game, player))}</code>`, rows);
   }
   async checkingDeposit(ctx, game) {
     ctx.solGameId = game.id; ctx.solView = 'checking';
-    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), await this.store.payments(game.id)]);
+    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, game.creator.funding, game.challenger?.funding, resultVisible(game), await this.store.payments(game.id)]);
     const rows = [[button('Deposit Details', `s:deposit:${game.id}`)]];
     if (game.creator.userId === String(ctx.from.id)) rows.push([button('Cancel Challenge', `s:cancel:${game.id}`)]);
-    return this.reply(ctx, `<b>⏳ Checking your deposit…</b>\n${summary(game)}\n\nWe’ll confirm here automatically once your transfer is matched and finalized. No need to tap again. You can leave this screen and return through your dashboard.\n\n${game.creator.userId === String(ctx.from.id) ? 'Your funded challenge will be posted to the group automatically.' : 'The flip starts once both deposits are confirmed.'}`, rows);
+    return this.reply(ctx, `<b>⏳ Checking your deposit…</b>\n${summary(game)}\n\n${escape(progress(game, this.service.member(game, ctx.from.id)))}\n\nWe’ll confirm here automatically once your transfers are matched and finalized. Send only the remaining amount; checking stays active. No need to tap again. You can leave this screen and return through your dashboard.\n\n${game.creator.userId === String(ctx.from.id) ? 'Your funded challenge will be posted to the group automatically.' : 'The flip starts once both deposits are confirmed.'}`, rows);
   }
   async confirmDeposit(ctx, id) {
     // Persist intent before scanning: a later finalized receipt or a restart must
@@ -234,7 +235,7 @@ class SolanaInterface {
     const game = await this.store.get(id);
     this.service.member(game, ctx.from.id);
     const payments = await this.store.payments(id);
-    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), payments]);
+    ctx.solGameStateKey = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, game.creator.funding, game.challenger?.funding, resultVisible(game), payments]);
     const revealed = resultVisible(game), flipping = game.status === 'SETTLED' && !revealed;
     const player = this.service.member(game, ctx.from.id);
     if (game.status === 'OPEN' && !player.deposit && game.ui?.depositChecks?.[String(ctx.from.id)]) return this.checkingDeposit(ctx, game);
@@ -415,10 +416,10 @@ class SolanaInterface {
           const screen = (await this.store.profile(userId)).privateScreen;
           if (!screen?.gameId) return;
           const game = await this.store.get(screen.gameId), payments = await this.store.payments(game.id);
-          const key = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, resultVisible(game), payments]);
+          const key = JSON.stringify([game.status, game.ui?.publishRequested, game.challenger?.userId, game.creator.deposit, game.challenger?.deposit, game.creator.funding, game.challenger?.funding, resultVisible(game), payments]);
           if (key === screen.gameStateKey) return;
           const ctx = { from: { id: userId }, chat: { id: userId, type: 'private' }, reply: (text, options) => this.telegram.sendMessage(userId, text, options) };
-          if (screen.view === 'deposit' && game.status === 'OPEN' && !this.service.member(game, userId).deposit) return;
+          if (screen.view === 'deposit' && game.status === 'OPEN' && !this.service.member(game, userId).deposit) { await this.depositMessage(ctx, game); return; }
           await this.status(ctx, game.id);
         });
       } catch (_) { console.error('PRIVATE_PROGRESS_RETRY: financial record retained.'); }

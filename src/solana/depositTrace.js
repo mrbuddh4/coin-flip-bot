@@ -27,7 +27,7 @@ async function traceDeposit(service, userId, input) {
     .sort((a, b) => Number(nearby.has(b.id)) - Number(nearby.has(a.id)) || b.createdAt - a.createdAt).slice(0, 3);
   const matches = Number.isSafeInteger(transaction.blockTime) ? await service.store.noMemoCandidates({ sender, mint, amount, at }) : [];
   const receipt = (await service.store.pool.query('SELECT "gameId","userId" FROM "SolDeposits" WHERE signature=$1', [signature])).rows[0];
-  const lines = ['Deposit diagnostic (read only)', `Chain time: ${time(at)}`, `Exact plain-transfer matches: ${matches.length}`, `Receipt: ${receipt ? 'already recorded' : 'not recorded'}`];
+  const lines = ['Deposit diagnostic (read only)', `Chain time: ${time(at)}`, `Plain-transfer request matches: ${matches.length}`, `Receipt: ${receipt ? 'already recorded' : 'not recorded'}`];
   if (!related.length) lines.push('No saved game for your account matches this asset and amount or nearby payment window.');
   for (const g of related) {
     const p = service.member(g, userId), challenger = p.userId === g.challenger?.userId;
@@ -49,7 +49,7 @@ async function traceDeposit(service, userId, input) {
       `Received amount: ${fromUnits(amount, g.token.decimals)} ${g.token.symbol}`,
       `Amount matches: ${difference === 0n ? 'yes' : `NO (${difference > 0n ? 'short' : 'over'} by ${fromUnits(difference < 0n ? -difference : difference, g.token.decimals)})`}`,
       `Check requested: ${g.ui?.depositChecks?.[String(userId)] ? 'yes' : 'no'}`, `Proof: ${proof}`);
-    const refunds = (await service.store.payments(g.id)).filter(r => r.id === `refund:${signature}`);
+    const refunds = (await service.store.payments(g.id)).filter(r => [ `refund:${signature}`, `refund-excess:${signature}` ].includes(r.id));
     for (const r of refunds) lines.push(`This refund: ${r.status}${r.signature ? '\n' + r.signature : ''}`);
   }
   return lines.join('\n');

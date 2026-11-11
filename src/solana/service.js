@@ -42,13 +42,16 @@ class SolanaService {
     if (!member) throw new Error('You are not a player in this game');
     return member;
   }
-  async refund(g, tx, member, receipt, mint = g.token.address) {
-    await tx.enqueue({ id: `refund:${receipt.signature}`, gameId: g.id, mint, recipient: member.wallet, amount: receipt.amount, kind: 'refund', sourceWallet: g.depositAddress });
+  async refund(g, tx, member, receipt, mint = g.token.address, component = '') {
+    await tx.enqueue({ id: `refund${component}:${receipt.signature}`, gameId: g.id, mint, recipient: member.wallet, amount: receipt.amount, kind: 'refund', sourceWallet: g.depositAddress });
   }
   async cancelLocked(g, tx, reason = 'CANCELLED') {
     g.status = 'CANCELLED';
     g.cancelReason = reason;
-    for (const player of [g.creator, g.challenger]) if (player?.deposit) await this.refund(g, tx, player, player.deposit);
+    for (const player of [g.creator, g.challenger]) {
+      const receipts = player?.funding?.receipts || (player?.deposit ? [player.deposit] : []);
+      for (const receipt of receipts) await this.refund(g, tx, player, receipt);
+    }
   }
   async deposit({ id, userId, signature, detectedMint, transaction, noMemo = false }) {
     const snapshot = await this.store.get(id);
@@ -56,13 +59,12 @@ class SolanaService {
     if (snapshot.depositAddress !== this.chain.address) throw new Error('Game belongs to a different deposit wallet; reconcile before changing keys');
     const mint = detectedMint || snapshot.token.address;
     if (mint !== snapshot.token.address) await this.chain.tokenInfo(mint);
-    const plain = noMemo ? { sender: participant.wallet, mint, amount: snapshot.wager, at: transaction?.blockTime * 1000 } : null;
+    const amount = await this.chain.verifyDeposit({ signature, sender: participant.wallet, mint, memo: participant.memo, transaction, ...(noMemo ? { allowNoMemo: true } : {}) });
+    const plain = noMemo ? { sender: participant.wallet, mint, amount: amount.toString(), at: transaction?.blockTime * 1000 } : null;
     const assertUnique = matches => {
       if (matches.length !== 1 || matches[0].gameId !== id || matches[0].userId !== String(userId)) throw new DepositValidationError('Plain transfer does not uniquely identify this game; reconcile the receipt.');
     };
     if (plain) assertUnique(await this.store.noMemoCandidates(plain));
-    const amount = await this.chain.verifyDeposit({ signature, sender: participant.wallet, mint, memo: participant.memo, transaction, ...(noMemo ? { allowNoMemo: true } : {}) });
-    if (noMemo && amount !== BigInt(snapshot.wager)) throw new DepositValidationError('Plain transfer amount does not match this wager');
     return this.store.mutate(id, async (g, tx) => {
       const player = this.member(g, userId);
       if (plain) assertUnique(await tx.noMemoCandidates(plain));
@@ -70,12 +72,22 @@ class SolanaService {
       const receipt = { signature, amount: amount.toString() };
       if (mint !== g.token.address) { await this.refund(g, tx, player, receipt, mint); return; }
       if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx, 'EXPIRED');
-      // Wrong amounts, second payments and late transfers are recorded and refunded in full.
-      if (g.status !== 'OPEN' || player.deposit || amount !== BigInt(g.wager)) {
+      // Closed requests and second payments after full funding are refunded in full.
+      if (g.status !== 'OPEN' || player.deposit) {
         await this.refund(g, tx, player, receipt);
         return;
       }
-      player.deposit = receipt;
+      // Store only the retained portion as a liability. Excess has its own
+      // durable refund component, so cancellation cannot repay it twice.
+      player.funding ||= { amount: '0', receipts: [] };
+      const remaining = BigInt(g.wager) - BigInt(player.funding.amount);
+      const credited = amount < remaining ? amount : remaining;
+      player.funding.receipts.push({ signature, amount: credited.toString() });
+      player.funding.amount = (BigInt(player.funding.amount) + credited).toString();
+      if (amount > credited) await this.refund(g, tx, player, { signature, amount: (amount - credited).toString() }, mint, '-excess');
+      // Partial top-ups never extend the original allotted payment time.
+      if (BigInt(player.funding.amount) < BigInt(g.wager)) return;
+      player.deposit = { signature, amount: g.wager };
       if (g.interfaceVersion && !g.challenger && player === g.creator) g.expiresAt = this.now() + 4 * 60 * 1000;
       if (g.creator.deposit && g.challenger?.deposit) {
         const result = this.coin();

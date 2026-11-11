@@ -13,10 +13,9 @@ const custody = require('./custody');
 const { noMemoCandidates, refundCandidates } = require('./depositMatch');
 const { SCHEMA: NOTIFICATION_SCHEMA } = require('./notifications');
 async function findNoMemoCandidates(client, input, matcher = noMemoCandidates) {
-  // Only refund lookup may ignore wager size. Funding keeps exact amount SQL
-  // and the strict historical matcher, independently of refund recovery.
-  const refundsOnly = matcher === refundCandidates;
-  const { rows } = await client.query(`SELECT state FROM "SolGames" WHERE state->'token'->>'address'=$1 ${refundsOnly ? '' : "AND state->>'wager'=$3"} AND (state->'creator'->>'wallet'=$2 OR state->'challenger'->>'wallet'=$2)`, refundsOnly ? [input.mint, input.sender] : [input.mint, input.sender, String(input.amount)]);
+  // Funding/top-ups are identified by asset, signer and historical window,
+  // independently of amount. All overlapping requests remain candidates.
+  const { rows } = await client.query(`SELECT state FROM "SolGames" WHERE state->'token'->>'address'=$1 AND (state->'creator'->>'wallet'=$2 OR state->'challenger'->>'wallet'=$2)`, [input.mint, input.sender]);
   return matcher(rows.map(r => r.state), input);
 }
 class SolanaStore {
@@ -97,8 +96,8 @@ class SolanaStore {
     const { rows } = await this.pool.query(`SELECT mint,SUM(amount)::text AS amount FROM (
       SELECT payment->>'mint' AS mint,(payment->>'amount')::numeric AS amount FROM "SolOutbox" WHERE status<>'CONFIRMED'
       UNION ALL SELECT mint,amount FROM "SolFeePools"
-      UNION ALL SELECT state->'token'->>'address',(state->'creator'->'deposit'->>'amount')::numeric FROM "SolGames" WHERE state->>'status'='OPEN' AND state->'creator' ? 'deposit'
-      UNION ALL SELECT state->'token'->>'address',(state->'challenger'->'deposit'->>'amount')::numeric FROM "SolGames" WHERE state->>'status'='OPEN' AND state->'challenger' ? 'deposit'
+      UNION ALL SELECT state->'token'->>'address',COALESCE(state->'creator'->'funding'->>'amount',state->'creator'->'deposit'->>'amount')::numeric FROM "SolGames" WHERE state->>'status'='OPEN' AND (state->'creator' ? 'deposit' OR state->'creator' ? 'funding')
+      UNION ALL SELECT state->'token'->>'address',COALESCE(state->'challenger'->'funding'->>'amount',state->'challenger'->'deposit'->>'amount')::numeric FROM "SolGames" WHERE state->>'status'='OPEN' AND (state->'challenger' ? 'deposit' OR state->'challenger' ? 'funding')
     ) obligations GROUP BY mint ORDER BY mint`);
     return rows;
   }
