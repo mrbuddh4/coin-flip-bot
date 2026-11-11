@@ -245,7 +245,8 @@ class SolanaInterface {
     if (game.status === 'OPEN' && player.userId === game.creator.userId && player.deposit && !game.ui?.publishRequested) next.push([button('Post Funded Challenge', `s:check:${id}`)]);
     const waiting = game.status !== 'OPEN' ? '' : !player.deposit ? 'Next: open Deposit Instructions and transfer your wager.' : !game.ui?.publishRequested ? 'Deposit recorded. Tap Post Funded Challenge to open it to the group.' : !game.challenger ? 'Your deposit is recorded. Waiting for an opponent in the originating group.' : 'Your deposit is recorded. Waiting for the other player’s deposit.';
     const winner = revealed && [game.creator, game.challenger].find(p => p?.userId === game.winnerId);
-    return this.reply(ctx, `<b>Game Status</b>\n${summary(game)}\nState: ${flipping ? 'FLIPPING' : escape(game.status)}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n\n${player.deposit ? '✅ Your deposit is confirmed.\n' : ''}${escape(waiting)}\n` + (winner ? `Winner: ${mention(winner)}\n` : '') + (flipping ? 'Both deposits are recorded. The flip video plays before the result and payment details are revealed.' : compactPayments(game, payments, signature => this.explorer(signature))), [...next, [button('Refresh', `s:status:${id}`)], [button('🏠 Home', 's:home')]]);
+    const loser = winner && [game.creator, game.challenger].find(p => p?.userId !== game.winnerId);
+    return this.reply(ctx, `<b>Game Status</b>\n${summary(game)}\nState: ${flipping ? 'FLIPPING' : escape(game.status)}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n\n${player.deposit ? '✅ Your deposit is confirmed.\n' : ''}${escape(waiting)}\n` + (winner ? `Winner: ${mention(winner)}\nLoser: ${mention(loser)}\n` : '') + (flipping ? 'Both deposits are recorded. The flip video plays before the result and payment details are revealed.' : compactPayments(game, payments, signature => this.explorer(signature))), [...next, [button('Refresh', `s:status:${id}`)], [button('🏠 Home', 's:home')]]);
   }
   explorer(signature) { return `https://explorer.solana.com/tx/${signature}${this.service.chain.env.SOLANA_CLUSTER === 'mainnet-beta' ? '' : '?cluster=devnet'}`; }
   async action(ctx) {
@@ -615,8 +616,9 @@ class SolanaInterface {
           if (!ready) text += '\n🪙 Flipping the coin…';
           else {
             const winner = [game.creator, game.challenger].find(p => p.userId === game.winnerId);
+            const loser = [game.creator, game.challenger].find(p => p.userId !== game.winnerId);
             const payment = payments.find(p => p.id === `prize:${game.id}`);
-            text += `\nWinner: ${mention(winner)}\nPrize: ${escape(fromUnits(game.prize, game.token.decimals))} ${escape(game.token.symbol)}\nPayout: ${escape(payment?.status || 'PENDING')}`;
+            text += `\nWinner: ${mention(winner)}\nLoser: ${mention(loser)}\nPrize: ${escape(fromUnits(game.prize, game.token.decimals))} ${escape(game.token.symbol)}\nPayout: ${escape(payment?.status || 'PENDING')}`;
             const links = compactPayments(game, payments, signature => this.explorer(signature));
             if (links) text += '\n' + links;
           }
