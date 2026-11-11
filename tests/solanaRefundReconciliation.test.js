@@ -5,7 +5,7 @@ const { Keypair, PublicKey } = require('@solana/web3.js');
 const bs58 = require('bs58').default;
 const { SolanaStore } = require('../src/solana/store');
 const { SolanaService } = require('../src/solana/service');
-const { reconcileExternalRefund, verifyReturn } = require('../src/solana/refundReconciliation');
+const { reconcileExternalRefund, verifyReturn, refundFailure } = require('../src/solana/refundReconciliation');
 const spl = require('../src/solana/token');
 const treasury = Keypair.fromSeed(Buffer.alloc(32, 51)).publicKey.toBase58();
 const recipient = Keypair.fromSeed(Buffer.alloc(32, 52)).publicKey.toBase58();
@@ -27,6 +27,13 @@ function transfer(amount = '15215140000') {
   };
 }
 describe('manual token return proof', () => {
+  test('diagnostics expose only a known stage and safe reason, never raw private endpoints', () => {
+    const error = Object.assign(new Error('429 https://rpc.example/private-key'), { reconciliationStage: 'deposit-fetch' });
+    expect(refundFailure(error)).toMatchObject({ stage: 'deposit-fetch', code: 'RPC_RATE_LIMIT' });
+    expect(JSON.stringify(refundFailure(error))).not.toMatch(/rpc\.example|private-key/);
+    error.reconciliationStage = 'https://private-stage';
+    expect(refundFailure(error).stage).toBe('prepare');
+  });
   test('accepts the exact direct self-signed Token-2022 transfer and amount', () => {
     expect(verifyReturn(transfer(), proof, token)).toBe(15215140000n);
   });
@@ -178,5 +185,18 @@ integration('manual refund reconciliation on real PostgreSQL', () => {
       await handlers.solrefundsync(ctx); expect(ctx.reply).toHaveBeenCalledWith('Private administrator command.');
     }
     expect(chain.connection.getParsedTransaction).not.toHaveBeenCalled();
+  });
+  test('admin command identifies the failing public lookup without exposing a private RPC URL or changing records', async () => {
+    chain.connection.getParsedTransaction.mockRejectedValue(new Error('429 https://rpc.example/private-key'));
+    const handlers = {};
+    require('../src/solana/telegram').registerSolanaCommands({ command: (n, h) => { handlers[n] = h; } }, service);
+    const ctx = { from: { id: 1 }, chat: { type: 'private' }, message: { text: `/solrefundsync ${depositSignature} ${returnSignature} CONFIRM` }, reply: jest.fn() };
+    await handlers.solrefundsync(ctx);
+    const text = ctx.reply.mock.calls[0][0];
+    expect(text).toContain('RPC_RATE_LIMIT at deposit-fetch');
+    expect(text).not.toMatch(/rpc\.example|private-key/);
+    expect(await store.liabilities()).toEqual([{ mint: token.address, amount: '15215141456' }]);
+    expect((await pool.query('SELECT * FROM "SolExternalRefunds"')).rowCount).toBe(0);
+    expect(service.workerRunning).toBe(false);
   });
 });

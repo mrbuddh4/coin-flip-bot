@@ -3,7 +3,7 @@ const { fromUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 const { traceDeposit } = require('./depositTrace');
 const { MEMO } = require('./chain');
-const { reconcileExternalRefund, RefundReconciliationError } = require('./refundReconciliation');
+const { reconcileExternalRefund, RefundReconciliationError, refundFailure } = require('./refundReconciliation');
 function args(ctx) { return ctx.message.text.trim().split(/\s+/).slice(1); }
 function depositInstructions(game, member, address) {
   const mainnet = game.cluster === 'mainnet-beta';
@@ -86,7 +86,9 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
       await ctx.reply(`${recorded ? 'Manual refund recorded. No transaction was sent by this command.' : 'Manual refund preview. No records changed.'}\nGame: ${result.gameId}\nReturned: ${fromUnits(result.returnedAmount, result.token.decimals)} ${result.token.symbol}\nRemaining refund: ${fromUnits(result.remainingAmount, result.token.decimals)} ${result.token.symbol}\nReturn: ${returnSignature}\n${recorded ? 'Only the remaining amount stays queued. Run /solaudit and /solstatus to verify current coverage and finality.' : `To record this verified return:\n/solrefundsync ${depositSignature} ${returnSignature} CONFIRM`}`);
     } catch (error) {
       if (error instanceof RefundReconciliationError) return ctx.reply(error.message);
-      await ctx.reply('Could not verify or record the manual return. No replacement transaction was sent. Retry after checking RPC access and the original refund records.');
+      const failure = refundFailure(error);
+      console.error(`MANUAL_REFUND_RETRY: stage=${failure.stage}; reason=${failure.code}; original proof retained.`);
+      await ctx.reply(`Manual return check: ${failure.code} at ${failure.stage}.\n${failure.reason}\nThis command sent no transaction. Repeating the original command cannot count the same return twice.`);
     }
   });
   command('solaudit', async ctx => {

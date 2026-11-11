@@ -1,6 +1,7 @@
 const { PublicKey } = require('@solana/web3.js');
 const bs58 = require('bs58').default;
 const spl = require('./token');
+const { paymentFailure, DepositValidationError } = require('./errors');
 
 const SCHEMA = `CREATE TABLE IF NOT EXISTS "SolExternalRefunds" (
   signature text PRIMARY KEY,
@@ -10,6 +11,14 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS "SolExternalRefunds" (
   "createdAt" timestamptz NOT NULL DEFAULT now()
 );`;
 class RefundReconciliationError extends Error {}
+const STAGES = ['prepare', 'records', 'refund-context', 'network', 'token', 'deposit-fetch', 'deposit-proof', 'return-fetch', 'return-proof', 'database-connect', 'database-begin', 'database-lock', 'refund-recheck', 'signature-reuse-check', 'allocation-write', 'audit-write', 'database-commit'];
+function refundFailure(error) {
+  const stage = STAGES.includes(error?.reconciliationStage) ? error.reconciliationStage : 'prepare';
+  const failure = error instanceof DepositValidationError
+    ? { code: 'DEPOSIT_PROOF_INVALID', reason: 'The original deposit failed wallet, token, instruction or memo verification.' }
+    : paymentFailure(error);
+  return { ...failure, stage };
+}
 const reject = message => { throw new RefundReconciliationError(message); };
 function signature(value) {
   try { if (typeof value === 'string' && bs58.decode(value).length === 64) return; } catch (_) {}
@@ -69,32 +78,45 @@ async function reconcileExternalRefund(service, { depositSignature, returnSignat
   if (service.workerRunning) reject('The payment worker is busy. Retry this command in a few seconds.');
   service.workerRunning = true;
   let client;
+  let stage = 'records';
   try {
     const existing = (await service.store.pool.query('SELECT "depositSignature",evidence FROM "SolExternalRefunds" WHERE signature=$1 OR "depositSignature"=$2', [returnSignature, depositSignature])).rows;
     if (existing.length) {
       if (existing.length !== 1 || existing[0].depositSignature !== depositSignature || existing[0].evidence.returnSignature !== returnSignature) reject('This deposit or return was already reconciled with another proof.');
       return { ...existing[0].evidence, alreadyRecorded: true };
     }
+    stage = 'refund-context';
     const original = await context(service.store.pool, depositSignature);
     const { receipt, member, rows } = original;
     const mint = rows[0].payment.mint;
     if (receipt.state.depositAddress !== service.chain.address || mint === 'NATIVE') reject('This repair supports token refunds from the current treasury only.');
+    stage = 'network';
     await service.chain.validate();
+    stage = 'token';
     const token = await service.chain.tokenInfo(mint);
+    stage = 'deposit-fetch';
     const depositTx = await service.chain.connection.getParsedTransaction(depositSignature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 });
+    stage = 'deposit-proof';
     const originalAmount = await service.chain.verifyDeposit({ signature: depositSignature, sender: member.wallet, mint, memo: member.memo, transaction: depositTx, allowNoMemo: true });
     if (!Number.isSafeInteger(depositTx?.blockTime) || originalAmount !== BigInt(receipt.amount)) reject('The original deposit proof does not match its receipt.');
     const proof = { depositSignature, returnSignature, treasury: service.chain.address, recipient: member.wallet, mint, depositTime: depositTx.blockTime };
+    stage = 'return-fetch';
     const returnTx = await service.chain.connection.getParsedTransaction(returnSignature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 });
+    stage = 'return-proof';
     const returned = verifyReturn(returnTx, proof, token);
     if (returned > originalAmount) reject('The return exceeds this deposit’s pending refunds.');
     const result = { ...proof, gameId: receipt.gameId, originalAmount: originalAmount.toString(), returnedAmount: returned.toString(), remainingAmount: (originalAmount - returned).toString(), token, returnTime: returnTx.blockTime };
     if (!commit) return result;
+    stage = 'database-connect';
     client = await service.store.pool.connect();
+    stage = 'database-begin';
     await client.query('BEGIN');
+    stage = 'database-lock';
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`external-refund:${returnSignature}`]);
+    stage = 'refund-recheck';
     const current = await context(client, depositSignature, true);
     if (JSON.stringify(current.rows.map(r => r.payment)) !== JSON.stringify(rows.map(r => r.payment))) reject('The refund records changed. Preview again before confirming.');
+    stage = 'signature-reuse-check';
     const used = await client.query('SELECT id FROM "SolOutbox" WHERE signed->>\'signature\'=$1', [returnSignature]);
     if (used.rowCount) reject('This signature already belongs to a recorded bot payment.');
     let unallocated = returned;
@@ -107,21 +129,28 @@ async function reconcileExternalRefund(service, { depositSignature, returnSignat
       const payment = { ...row.payment, originalAmount: row.payment.amount, externalRefunds: [{ signature: returnSignature, amount: paid.toString() }], ...(remaining ? { amount: remaining.toString() } : {}) };
       const status = remaining ? 'PENDING' : 'CONFIRMED';
       const signed = remaining ? null : { signature: returnSignature, external: true };
+      stage = 'allocation-write';
       const update = await client.query('UPDATE "SolOutbox" SET payment=$2,status=$3,signed=$4,"lastError"=NULL WHERE id=$1 AND status=\'PENDING\' AND signed IS NULL', [row.id, JSON.stringify(payment), status, signed && JSON.stringify(signed)]);
       if (update.rowCount !== 1) reject('A refund changed while being reconciled. Nothing was applied.');
       allocations.push({ id: row.id, paid: paid.toString(), remaining: remaining.toString(), before: row.payment, after: payment });
     }
     if (unallocated !== 0n) reject('The return cannot be allocated exactly.');
     const evidence = { ...result, allocations, adminId: String(adminId), verifiedAt: new Date().toISOString() };
+    stage = 'audit-write';
     await client.query('INSERT INTO "SolExternalRefunds" (signature,"depositSignature","adminId",evidence) VALUES ($1,$2,$3,$4)', [returnSignature, depositSignature, String(adminId), JSON.stringify(evidence)]);
+    stage = 'database-commit';
     await client.query('COMMIT');
     return { ...evidence, recorded: true };
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
+    error.reconciliationStage = stage;
+    if (client) {
+      try { await client.query('ROLLBACK'); }
+      catch (_) { console.error('MANUAL_REFUND_ROLLBACK_UNVERIFIED: retry the original command to inspect its unique proof record.'); }
+    }
     throw error;
   } finally {
     client?.release();
     service.workerRunning = false;
   }
 }
-module.exports = { SCHEMA, verifyReturn, reconcileExternalRefund, RefundReconciliationError };
+module.exports = { SCHEMA, verifyReturn, reconcileExternalRefund, RefundReconciliationError, refundFailure };
