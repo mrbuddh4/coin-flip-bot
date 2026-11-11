@@ -52,7 +52,7 @@ async function context(client, depositSignature, lock = false) {
   if (!receipt || receipt.state.status !== 'CANCELLED') reject('This repair requires a recorded deposit in a cancelled game.');
   const member = [receipt.state.creator, receipt.state.challenger].find(p => p?.userId === receipt.userId);
   if (!member) reject('The original deposit owner is not recorded.');
-  const rows = (await client.query(`SELECT * FROM "SolOutbox" WHERE "gameId"=$1 AND id=ANY($2::text[]) ORDER BY id${lock ? ' FOR UPDATE' : ''}`,
+  const rows = (await client.query(`SELECT * FROM "SolOutbox" WHERE "gameId"=$1 AND id=ANY($2::text[]) ORDER BY CASE WHEN id LIKE 'refund-excess:%' THEN 0 ELSE 1 END,id${lock ? ' FOR UPDATE' : ''}`,
     [receipt.gameId, [`refund:${depositSignature}`, `refund-excess:${depositSignature}`]])).rows;
   if (!rows.length || rows.some(r => r.status !== 'PENDING' || r.signed || r.payment.kind !== 'refund' ||
       r.payment.recipient !== member.wallet || r.payment.sourceWallet !== receipt.state.depositAddress ||
