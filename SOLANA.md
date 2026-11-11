@@ -78,3 +78,25 @@ The draw uses Node's cryptographic RNG with no player-verifiable commit/reveal p
 `npm ci --ignore-scripts` then `npm test -- --runInBand`. Set `SOLANA_TEST_DATABASE_URL` to a disposable local PostgreSQL server for actual concurrency, restart, profile/network-binding and complete offline button-flow tests. Integration tests refuse remote hosts and isolate/drop their own schema. SID account-layout and Token-2022 instruction fixtures were checked against the official SPL SDK without adding that SDK as a production dependency. Payment-page tests use a real local HTTP server; chain/Telegram traffic remains simulated.
 
 Burn wire formats were compared with the published `@solana/spl-token` SDK definitions; native SOL incinerator semantics come from Solana's SDK source. Fee tests include actual local PostgreSQL settlement/rollback, holder proof replay/uniqueness, daily allocation races, RPC failures, dust carryover, destination changes, retained-fee backfill, liabilities and read-only reconciliation. No production signing keys or blockchain sends are used by these tests.
+
+
+### Recording a manual token refund
+
+A private administrator can preview an already-finalized manual return with
+`/solrefundsync ORIGINAL_DEPOSIT_SIGNATURE MANUAL_RETURN_SIGNATURE`. Review the
+returned amount, original sender and remaining refund, then repeat the command
+with `CONFIRM` appended to record it. The command never sends a transaction.
+It supports a recorded deposit in a cancelled game, with all refund components
+still pending and unsigned, and a plain direct token return from the same
+treasury to the original sender's associated token account. Native SOL, mixed
+instructions, signed/uncertain refunds and returns exceeding the pending
+obligation require separate review.
+
+The repair verifies the original deposit and exact finalized token movement,
+keeps an audit record of every original payment and allocation, and leaves any
+unreturned remainder queued. The same return cannot be counted for another
+deposit. Repeating a successful command is safe even if the remaining refund
+has since been signed. It shares the payment worker's exclusion and commits
+all allocations atomically. Run `/solaudit` afterwards; other unresolved
+obligations remain reserved. A successful accounting repair does not prove
+that remaining refunds have finalized.

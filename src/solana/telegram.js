@@ -3,6 +3,7 @@ const { fromUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 const { traceDeposit } = require('./depositTrace');
 const { MEMO } = require('./chain');
+const { reconcileExternalRefund, RefundReconciliationError } = require('./refundReconciliation');
 function args(ctx) { return ctx.message.text.trim().split(/\s+/).slice(1); }
 function depositInstructions(game, member, address) {
   const mainnet = game.cluster === 'mainnet-beta';
@@ -77,6 +78,17 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
       payments.map(p => `${p.id.split(':')[0]}: ${p.status}${p.lastError && p.status !== 'CONFIRMED' ? `\n${p.lastError.slice(0, 240)}` : ''}${p.signature ? `\nhttps://explorer.solana.com/tx/${p.signature}${game.cluster === 'mainnet-beta' ? '' : '?cluster=devnet'}` : ''}`).join('\n'));
   });
   const isAdmin = ctx => ctx.chat.type === 'private' && (service.chain.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).includes(String(ctx.from.id));
+  command('solrefundsync', async (ctx, [depositSignature, returnSignature, confirmation]) => {
+    if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
+    try {
+      const result = await reconcileExternalRefund(service, { depositSignature, returnSignature, adminId: ctx.from.id, commit: confirmation === 'CONFIRM' });
+      const recorded = result.recorded || result.alreadyRecorded;
+      await ctx.reply(`${recorded ? 'Manual refund recorded. No transaction was sent by this command.' : 'Manual refund preview. No records changed.'}\nGame: ${result.gameId}\nReturned: ${fromUnits(result.returnedAmount, result.token.decimals)} ${result.token.symbol}\nRemaining refund: ${fromUnits(result.remainingAmount, result.token.decimals)} ${result.token.symbol}\nReturn: ${returnSignature}\n${recorded ? 'Only the remaining amount stays queued. Run /solaudit and /solstatus to verify current coverage and finality.' : `To record this verified return:\n/solrefundsync ${depositSignature} ${returnSignature} CONFIRM`}`);
+    } catch (error) {
+      if (error instanceof RefundReconciliationError) return ctx.reply(error.message);
+      await ctx.reply('Could not verify or record the manual return. No replacement transaction was sent. Retry after checking RPC access and the original refund records.');
+    }
+  });
   command('solaudit', async ctx => {
     if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
     const liabilities = await service.store.liabilities();

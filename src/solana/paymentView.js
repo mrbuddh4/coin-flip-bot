@@ -19,7 +19,8 @@ function compactPayments(game, payments, explorer) {
     const amount = p.payment?.amount;
     const value = amount == null ? '' : asset?.decimals != null ? `${fromUnits(amount, asset.decimals)} ${asset.symbol}` : `${amount} atomic units`;
     const label = `Refund${player ? ' to ' + (player.name || player.userId) : ''}${value ? ': ' + value : ''}`;
-    return proof(p, label, explorer);
+    const external = p.payment?.externalRefunds || [];
+    return [proof(p, label, explorer), ...external.filter(v => v.signature !== p.signature).map(v => `<a href="${html(explorer(v.signature))}">Manual return ✓</a>`)].join(' · ');
   });
   return [links.join(' · '), ...refunds].filter(Boolean).join('\n');
 }

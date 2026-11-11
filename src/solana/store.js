@@ -145,6 +145,7 @@ class SolanaStore {
     await this.pool.query('ALTER TABLE "SolDrafts" ADD COLUMN IF NOT EXISTS "messageId" bigint');
     await this.pool.query(FEE_SCHEMA);
     await this.pool.query(NOTIFICATION_SCHEMA);
+    await this.pool.query(require('./refundReconciliation').SCHEMA);
   }
   async media(id) { return (await this.pool.query('SELECT data FROM "SolMediaCache" WHERE id=$1', [id])).rows[0]?.data; }
   async saveMedia(id, data) { await this.pool.query('INSERT INTO "SolMediaCache" (id,data) VALUES ($1,$2) ON CONFLICT (id) DO UPDATE SET data=EXCLUDED.data', [id, JSON.stringify(data)]); }
