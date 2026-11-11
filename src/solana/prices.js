@@ -58,20 +58,32 @@ class SolanaPrices {
     }));
   }
 }
-// Aggregate token units first, then value with integer arithmetic. Only display
-// rounding happens here; raw u64 amounts never pass through a JS Number.
-function estimate(prizes, quotes) {
-  let micros = 0n, missing = 0, priced = 0;
-  for (const [mint, asset] of prizes) {
+// Add signed token balances as exact rational USD values. Stakes, quotes and
+// ordering never pass through floating point or rounded display cents.
+function valueAssets(assets, quotes) {
+  let units = 0n, scale = 1n, missing = 0, priced = 0;
+  for (const [mint, asset] of assets) {
+    if (asset.amount === 0n) continue;
     const quote = quotes.get(mint);
     if (!quote || !Number.isInteger(asset.decimals) || asset.decimals < 0 || asset.decimals > 18) { missing++; continue; }
-    micros += asset.amount * quote.units * 1000000n / (10n ** BigInt(asset.decimals) * quote.scale);
+    const divisor = 10n ** BigInt(asset.decimals) * quote.scale;
+    if (divisor > scale) { units *= divisor / scale; scale = divisor; }
+    units += asset.amount * quote.units * (scale / divisor);
     priced++;
   }
-  if (missing && !priced) return 'Paid prizes: USD unavailable';
-  const cents = (micros + 5000n) / 10000n;
-  const dollars = (cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const value = priced > 0 && cents === 0n && [...prizes].some(([mint, asset]) => quotes.has(mint) && asset.amount > 0n) ? '<$0.01' : `$${dollars}.${(cents % 100n).toString().padStart(2, '0')}`;
-  return `Paid prizes: ≈${value}${missing ? ' + unpriced tokens' : ''}`;
+  return { units, scale, missing, priced };
 }
-module.exports = { SolanaPrices, decimalPrice, estimate, WRAPPED_SOL };
+function compareValues(a, b) {
+  const left = a.units * b.scale, right = b.units * a.scale;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+function formatEstimate(value) {
+  if (value.missing && !value.priced) return 'Net P/L: USD unavailable';
+  const absolute = value.units < 0n ? -value.units : value.units;
+  const cents = (absolute * 100n + value.scale / 2n) / value.scale;
+  const dollars = (cents / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const amount = absolute > 0n && cents === 0n ? '<$0.01' : `$${dollars}.${(cents % 100n).toString().padStart(2, '0')}`;
+  const sign = value.units < 0n ? '-' : value.units > 0n ? '+' : '';
+  return `${value.missing ? 'Known net subtotal' : 'Net P/L'}: ≈${sign}${amount}${value.missing ? ' (unpriced tokens; unranked)' : ''}`;
+}
+module.exports = { SolanaPrices, decimalPrice, valueAssets, compareValues, formatEstimate, WRAPPED_SOL };

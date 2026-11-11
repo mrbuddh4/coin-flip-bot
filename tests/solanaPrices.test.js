@@ -1,4 +1,5 @@
-const { SolanaPrices, decimalPrice, estimate, WRAPPED_SOL } = require('../src/solana/prices');
+const { SolanaPrices, decimalPrice, valueAssets, compareValues, formatEstimate, WRAPPED_SOL } = require('../src/solana/prices');
+const estimate = (assets, quotes) => formatEstimate(valueAssets(assets, quotes));
 const A = '5w3wVdJaESaJKyLmStM6Hv9UyUkmZ1b9DLQquAqqpump';
 const B = '6izojQcvjazUDZ4jckAnFn15i8fDRkNb4J9NnTpTVBkY';
 const reply = data => ({ ok: true, json: async () => data });
@@ -54,14 +55,28 @@ test.each(['0', '-1', 'NaN', 'Infinity', 'bad', '1e999', '9'.repeat(129), null, 
 test('mixed-asset USD subtotal uses token decimals, preserves u64 precision and labels incomplete totals', () => {
   const prizes = new Map([[A, { amount: 18000000000n, decimals: 6 }], ['NATIVE', { amount: 1800000000n, decimals: 9 }]]);
   const quotes = new Map([[A, decimalPrice('0.004768')], ['NATIVE', decimalPrice('83.43')]]);
-  expect(estimate(prizes, quotes)).toBe('Paid prizes: ≈$236.00');
-  quotes.delete(A); expect(estimate(prizes, quotes)).toBe('Paid prizes: ≈$150.17 + unpriced tokens');
-  quotes.clear(); expect(estimate(prizes, quotes)).toBe('Paid prizes: USD unavailable');
-  expect(estimate(new Map(), quotes)).toBe('Paid prizes: ≈$0.00');
-  expect(estimate(new Map([[A, { amount: 18446744073709551615n, decimals: 0 }]]), new Map([[A, decimalPrice('0.01')]]))).toBe('Paid prizes: ≈$184,467,440,737,095,516.15');
-  expect(estimate(new Map([[A, { amount: 1n, decimals: 0 }]]), new Map([[A, decimalPrice('1e-5')]]))).toBe('Paid prizes: ≈<$0.01');
+  expect(estimate(prizes, quotes)).toBe('Net P/L: ≈+$236.00');
+  quotes.delete(A); expect(estimate(prizes, quotes)).toBe('Known net subtotal: ≈+$150.17 (unpriced tokens; unranked)');
+  quotes.clear(); expect(estimate(prizes, quotes)).toBe('Net P/L: USD unavailable');
+  expect(estimate(new Map(), quotes)).toBe('Net P/L: ≈$0.00');
+  expect(estimate(new Map([[A, { amount: 18446744073709551615n, decimals: 0 }]]), new Map([[A, decimalPrice('0.01')]]))).toBe('Net P/L: ≈+$184,467,440,737,095,516.15');
+  expect(estimate(new Map([[A, { amount: 1n, decimals: 0 }]]), new Map([[A, decimalPrice('1e-5')]]))).toBe('Net P/L: ≈+<$0.01');
 });
 
 test('very small positive quotes display below one cent instead of a false zero', () => {
-  expect(estimate(new Map([[A, { amount: 1n, decimals: 18 }]]), new Map([[A, decimalPrice('1e-20')]]))).toBe('Paid prizes: ≈<$0.01');
+  expect(estimate(new Map([[A, { amount: 1n, decimals: 18 }]]), new Map([[A, decimalPrice('1e-20')]]))).toBe('Net P/L: ≈+<$0.01');
+});
+
+test('signed mixed-asset profit rounds losses correctly and compares exact values before display rounding', () => {
+  const quotes = new Map([[A, decimalPrice('0.004768')], ['NATIVE', decimalPrice('83.43')]]);
+  expect(estimate(new Map([[A, { amount: -18000000000n, decimals: 6 }], ['NATIVE', { amount: -1800000000n, decimals: 9 }]]), quotes)).toBe('Net P/L: ≈-$236.00');
+  const small = valueAssets(new Map([[A, { amount: -1n, decimals: 6 }]]), quotes);
+  expect(formatEstimate(small)).toBe('Net P/L: ≈-<$0.01');
+  const high = valueAssets(new Map([[A, { amount: 2n, decimals: 6 }]]), quotes);
+  const low = valueAssets(new Map([[A, { amount: 1n, decimals: 6 }]]), quotes);
+  expect(formatEstimate(high)).toBe(formatEstimate(low));
+  expect(compareValues(high, low)).toBe(1);
+  expect(compareValues(low, high)).toBe(-1);
+  expect(compareValues(low, low)).toBe(0);
+  expect(estimate(new Map([[A, { amount: 0n, decimals: 6 }]]), new Map())).toBe('Net P/L: ≈$0.00');
 });
