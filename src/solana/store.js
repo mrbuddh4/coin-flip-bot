@@ -123,7 +123,7 @@ class SolanaStore {
   async queueHolderReserves(treasury) { await custody.queueRetainedPools(this.pool, treasury); }
   async holderCustody() { return custody.custodyState(this.pool); }
   async payments(gameId) {
-    return (await this.pool.query('SELECT id, status, payment, signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND payment->>\'kind\'<>\'holder\' ORDER BY id', [gameId])).rows;
+    return (await this.pool.query('SELECT id, status, payment, "lastError", signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND payment->>\'kind\'<>\'holder\' ORDER BY id', [gameId])).rows;
   }
   async saveToken(userId, token) {
     await this.pool.query('INSERT INTO "SolTokens" ("userId",mint,metadata) VALUES ($1,$2,$3) ON CONFLICT ("userId",mint) DO UPDATE SET metadata=EXCLUDED.metadata', [userId, token.address, JSON.stringify(token)]);

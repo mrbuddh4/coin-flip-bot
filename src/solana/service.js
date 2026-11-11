@@ -1,11 +1,13 @@
 const { randomUUID, randomInt, randomBytes } = require('node:crypto');
 const { publicKey } = require('./chain');
 const { toUnits, splitPool } = require('./amounts');
-const { DepositValidationError, ChallengeTakenError } = require('./errors');
+const { DepositValidationError, ChallengeTakenError, paymentFailure } = require('./errors');
 class SolanaService {
   constructor({ store, chain, now = () => Date.now(), coin = () => randomInt(2) }) {
     Object.assign(this, { store, chain, now, coin });
     this.workerRunning = false;
+    this.paymentRetryAt = 0;
+    this.paymentRateFailures = 0;
   }
   async create({ userId, chatId, wallet, mint, amount, receiveWallet = wallet, name, gameId, interfaceVersion }) {
     publicKey(wallet);
@@ -158,8 +160,11 @@ class SolanaService {
         // Retained-pool reconciliation must not starve already-signed payouts.
         this.custodyError = 'Retained holder fees need reconciliation; their funds remain reserved in the treasury.';
       }
+      if (this.now() < this.paymentRetryAt) return;
+      let rateLimited = false;
       for (const item of await this.store.pendingPayments()) {
         let signed = item.signed;
+        let stage = 'prepare';
         try {
           if (item.payment.sourceWallet !== this.chain.address) {
             await this.store.paymentState(item.id, 'REVIEW', 'Signing wallet changed; reconcile original wallet before payout');
@@ -168,25 +173,40 @@ class SolanaService {
           if (!signed) {
             // Reserve every recorded liability, including other games and
             // REVIEW transfers. Do not let fees consume player deposits.
+            stage = 'reserve-check';
             await this.chain.assertSolvent(await this.store.liabilities());
+            stage = 'build';
             signed = await this.chain.buildPayment(item.payment);
+            stage = 'save-signed';
             await this.store.saveSigned(item.id, signed); // Commit before any network send.
           }
+          stage = 'signature-status';
           const state = await this.chain.paymentStatus(signed.signature);
           if (state === 'finalized') { await this.store.paymentState(item.id, 'CONFIRMED'); continue; }
           if (state === 'failed') { await this.store.paymentState(item.id, 'REVIEW', 'On-chain transaction failed; manual reconciliation required'); continue; }
+          stage = 'block-height';
           const height = await this.chain.connection.getBlockHeight('finalized');
           if (height > signed.lastValidBlockHeight) {
             // RPC absence is not proof of no payout. Never auto-resign/retry with a new blockhash.
             await this.store.paymentState(item.id, 'REVIEW', 'Blockhash expired without finalized proof; reconcile exact signature before any replacement');
             continue;
           }
+          stage = 'broadcast';
           await this.chain.broadcast(signed);
-        } catch (_) {
+        } catch (error) {
           // Preserve signed payload on ambiguous send or RPC failures. Do not log private endpoint URLs.
-          await this.store.paymentState(item.id, signed ? 'SIGNED' : 'PENDING', 'Payment check failed; original signed transaction retained if present');
+          const failure = paymentFailure(error);
+          const note = `${failure.code} at ${stage}: ${failure.reason}`;
+          await this.store.paymentState(item.id, signed ? 'SIGNED' : 'PENDING', note);
+          console.error(`SOLANA_PAYMENT_RETRY: id=${item.id}; stage=${stage}; reason=${failure.code}; original payment retained.`);
+          if (failure.code === 'RPC_RATE_LIMIT') {
+            rateLimited = true;
+            this.paymentRetryAt = this.now() + Math.min(60000, 5000 * 2 ** Math.min(this.paymentRateFailures++, 4));
+            break; // Do not repeat a throttled RPC call for every queued payment.
+          }
         }
       }
+      if (!rateLimited) this.paymentRateFailures = 0;
     } finally { this.workerRunning = false; }
   }
 }

@@ -74,7 +74,7 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
     const payments = await service.store.payments(id);
     await ctx.reply(`Game ${id}: ${game.status}\nCreator funded: ${Boolean(game.creator.deposit)}\nChallenger funded: ${Boolean(game.challenger?.deposit)}\n` +
       (game.winnerId ? `Winner: ${game.winnerId}\nPrize: ${fromUnits(game.prize, game.token.decimals)}\nFee accounting: ${game.fees.status}; individual burn/payment confirmation below\n` : '') +
-      payments.map(p => `${p.id.split(':')[0]}: ${p.status}${p.signature ? `\nhttps://explorer.solana.com/tx/${p.signature}${game.cluster === 'mainnet-beta' ? '' : '?cluster=devnet'}` : ''}`).join('\n'));
+      payments.map(p => `${p.id.split(':')[0]}: ${p.status}${p.lastError && p.status !== 'CONFIRMED' ? `\n${p.lastError.slice(0, 240)}` : ''}${p.signature ? `\nhttps://explorer.solana.com/tx/${p.signature}${game.cluster === 'mainnet-beta' ? '' : '?cluster=devnet'}` : ''}`).join('\n'));
   });
   const isAdmin = ctx => ctx.chat.type === 'private' && (service.chain.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).includes(String(ctx.from.id));
   command('solaudit', async ctx => {
