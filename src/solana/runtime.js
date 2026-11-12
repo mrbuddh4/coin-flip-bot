@@ -33,7 +33,7 @@ async function main() {
   let pollingStarted = false;
   let cycleRunning = false;
   let presentationRunning = false;
-  let scanner;
+  let scanner, ui;
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
@@ -43,7 +43,7 @@ async function main() {
     clearInterval(feeTimer);
     if (bot && pollingStarted) { try { bot.stop('shutdown'); } catch (_) {} }
     // Keep the DB lock until the worker finishes its current signed transaction operation.
-    while (cycleRunning || presentationRunning || scanner?.running || service?.workerRunning || fees?.running) await new Promise(resolve => setTimeout(resolve, 50));
+    while (cycleRunning || presentationRunning || scanner?.running || ui?.depositCheckJobs?.size || service?.workerRunning || fees?.running) await new Promise(resolve => setTimeout(resolve, 50));
     if (server) await new Promise(resolve => server.close(resolve));
     await store.pool.end();
     await release();
@@ -70,7 +70,7 @@ async function main() {
     if (info.url) throw new Error('Bot has an existing webhook; stop and review before switching to polling');
     bot.botInfo = await startupStep('telegram', () => bot.telegram.getMe());
     registerSolanaCommands(bot, service, { includeStart: false, allowLegacyGames: false });
-    const ui = new SolanaInterface(bot, service, scanner);
+    ui = new SolanaInterface(bot, service, scanner);
     const noticeCleanup = new ObsoleteNoticeCleanup(store, bot.telegram);
     ui.register();
     bot.catch(() => console.error('Solana command failed; check private configuration and ledger.'));

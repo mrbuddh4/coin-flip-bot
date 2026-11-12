@@ -97,6 +97,7 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     const scanner = new DepositScanner(service), ui = new SolanaInterface(bot, service, scanner);
     ui.reply = jest.fn();
     await ui.confirmDeposit({ from: { id: 1 } }, game.id);
+    await Promise.all(ui.depositCheckJobs.values());
     expect((await store.get(game.id)).ui.depositChecks['1']).toBe(true);
     expect((await store.get(game.id)).creator.deposit).toBeUndefined();
     const diagnostic = await traceDeposit(service, '1', signature);

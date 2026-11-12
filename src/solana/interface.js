@@ -28,6 +28,7 @@ class SolanaInterface {
     this.store = service.store;
     this.telegram = bot.telegram;
     this.rendering = false;
+    this.depositCheckJobs = new Map();
     this.prices = new SolanaPrices();
     this.screens = new PrivateScreen(this.store, this.telegram);
   }
@@ -217,19 +218,33 @@ class SolanaInterface {
     });
     const player = this.service.member(game, ctx.from.id);
     if (game.status !== 'OPEN') return this.status(ctx, id);
-    if (!player.deposit) await this.checkingDeposit(ctx, game);
-    try {
-      if (this.scanner.confirm) await this.scanner.confirm(id, ctx.from.id);
-      else await this.scanner.tick();
-    } catch (_) {
-      // The normal worker keeps scanning. Preserve the pending screen and intent
-      // on a transient RPC failure instead of asking for another confirmation.
-      console.error('DEPOSIT_CHECK_RETRY: automatic scan remains active.');
+    if (!player.deposit) {
+      await this.checkingDeposit(ctx, game);
+      const key = `${id}:${ctx.from.id}`;
+      if (!this.depositCheckJobs.has(key)) {
+        // The callback owns the private screen queue. Release it before slow
+        // history scans so polling, navigation and expiry updates can proceed.
+        const userId = String(ctx.from.id);
+        const job = Promise.resolve().then(async () => {
+          try {
+            if (this.scanner.confirm) await this.scanner.confirm(id, userId);
+            else await this.scanner.tick();
+          } catch (_) {
+            console.error('DEPOSIT_CHECK_RETRY: automatic scan remains active.');
+          }
+          await this.service.work();
+          await this.render();
+          // Re-read saved screen ownership; never overwrite a newer navigation.
+          await this.refreshPrivateScreens();
+        }).catch(() => {
+          console.error('DEPOSIT_CHECK_PRESENTATION_RETRY: periodic checks retain payment and screen state.');
+        }).finally(() => { this.depositCheckJobs.delete(key); });
+        this.depositCheckJobs.set(key, job);
+      }
+      return;
     }
     await this.service.work();
     await this.render();
-    const current = await this.store.get(id);
-    if (!this.service.member(current, ctx.from.id).deposit && current.status === 'OPEN') return;
     return this.status(ctx, id);
   }
   async status(ctx, id) {
