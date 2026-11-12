@@ -100,3 +100,9 @@ has since been signed. It shares the payment worker's exclusion and commits
 all allocations atomically. Run `/solaudit` afterwards; other unresolved
 obligations remain reserved. A successful accounting repair does not prove
 that remaining refunds have finalized.
+
+### Expired token burn recovery
+
+Private owner-only `/solburnrecover GAME_ID` checks the exact original signed SPL/Token-2022 burn. A negative signature lookup alone is insufficient. Recovery requires all 151 finalized blocks in the signed blockhash validity window, contiguous parent hashes/heights, the original blockhash, a confirmed same-game anchor, expired-blockhash proof and absent historical receipts. Missing/pruned blocks, RPC errors, an original signature in any block, changed records, insufficient coverage or disabled funds leave the burn unchanged. The history job runs outside Telegram polling and the payment worker, with bounded rate-limit backoff.
+
+After a successful read-only preview, `/solburnrecover GAME_ID CONFIRM` archives original signed bytes and block evidence atomically, then resets only that existing burn to pending for the normal guarded payment worker. It does not resend prizes or holder fees, erase liabilities or mark an unpaid burn confirmed. Repeated confirmation cannot queue a second replacement. The cached evidence is discarded on restart; verification must then run again. One recovery is allowed per burn; another expiry requires separate review. Use `/solstatus GAME_ID` to verify the replacement signature has finalized.

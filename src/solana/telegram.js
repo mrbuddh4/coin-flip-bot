@@ -4,6 +4,7 @@ const { tokensForUser } = require('./featured');
 const { traceDeposit } = require('./depositTrace');
 const { MEMO } = require('./chain');
 const { reconcileExternalRefund, RefundReconciliationError, refundFailure } = require('./refundReconciliation');
+const { recoverExpiredBurn, BurnRecoveryError } = require('./expiredBurn');
 function args(ctx) { return ctx.message.text.trim().split(/\s+/).slice(1); }
 function depositInstructions(game, member, address) {
   const mainnet = game.cluster === 'mainnet-beta';
@@ -112,6 +113,27 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
     if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
     const result = await service.recheckPayment(id);
     await ctx.reply(`${id}: ${result.status}\n${result.signature}\nOnly finalized proof can mark it confirmed. Unknown/failed signatures remain unresolved; no new transaction was created.`);
+  });
+  command('solburnrecover', async (ctx, [gameId, confirmation]) => {
+    if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
+    if (confirmation && confirmation !== 'CONFIRM') return ctx.reply('Use the game ID alone for a read-only preview, or add CONFIRM to authorize the verified burn retry.');
+    if (service.expiredBurnJob) return ctx.reply('A burn history check is already running. Other bot functions remain available.');
+    service.expiredBurnJob = { starting: true };
+    let message;
+    try { message = await ctx.reply('Checking the original burn against every finalized block in its validity window. No transaction has been sent.'); }
+    catch (error) { service.expiredBurnJob = null; throw error; }
+    const update = text => ctx.telegram.editMessageText(ctx.chat.id, message.message_id, undefined, text).catch(() => {});
+    // Do not hold Telegram polling or the payment worker while fetching history.
+    service.expiredBurnJob = recoverExpiredBurn(service, {
+      gameId, adminId: String(ctx.from.id), commit: confirmation === 'CONFIRM',
+      progress: (count, total) => update(`Checking finalized burn history: ${count}/${total} blocks. No transaction has been sent.`),
+    }).then(async result => {
+      if (result.alreadyRecorded) return update('This burn recovery was already recorded. No additional replacement was queued. Use /solstatus ' + gameId);
+      if (result.recorded) return update('The original signed burn and complete history evidence were archived. The same burn obligation is queued for one retry through the normal payment worker. No prize or holder payment was changed.\nUse /solstatus ' + gameId + ' to verify finality.');
+      await update(`Read-only check passed: the original burn is absent from all 151 finalized blocks in its signed validity window. Its blockhash is expired.\nOriginal: ${result.originalSignature}\nBurn: ${fromUnits(result.amount, result.token.decimals)} ${result.token.symbol}\nMint: ${result.token.address}\nNo records changed and no transaction was sent.\nTo queue this burn once:\n/solburnrecover ${gameId} CONFIRM`);
+    }).catch(async error => {
+      await update(error instanceof BurnRecoveryError ? error.message : 'Historical verification could not finish. No replacement was queued. The original burn and its reserved funds remain unchanged; the RPC must provide complete finalized historical blocks.');
+    }).finally(() => { service.expiredBurnJob = null; });
   });
 }
 module.exports = { registerSolanaCommands, depositInstructions };
