@@ -4,7 +4,7 @@ const { tokensForUser } = require('./featured');
 const { traceDeposit } = require('./depositTrace');
 const { MEMO } = require('./chain');
 const { reconcileExternalRefund, RefundReconciliationError, refundFailure } = require('./refundReconciliation');
-const { recoverExpiredBurn, BurnRecoveryError, boundedRead } = require('./expiredBurn');
+const { recoverExpiredBurn, BurnRecoveryError, boundedRead, burnRecoveryFailure } = require('./expiredBurn');
 function args(ctx) { return ctx.message.text.trim().split(/\s+/).slice(1); }
 function depositInstructions(game, member, address) {
   const mainnet = game.cluster === 'mainnet-beta';
@@ -151,7 +151,10 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
       if (result.recorded) return update('The original signed burn and complete history evidence were archived. The same burn obligation is queued for one retry through the normal payment worker. No prize or holder payment was changed.\nUse /solstatus ' + gameId + ' to verify finality.', true);
       await update(`Read-only check passed: the original burn is absent from all 151 finalized blocks in its signed validity window. Its blockhash is expired.\nOriginal: ${result.originalSignature}\nBurn: ${fromUnits(result.amount, result.token.decimals)} ${result.token.symbol}\nMint: ${result.token.address}\nNo records changed and no transaction was sent.\nTo queue this burn once:\n/solburnrecover ${gameId} CONFIRM`, true);
     }).catch(async error => {
-      await update(error instanceof BurnRecoveryError ? error.message : 'Historical verification could not finish. No replacement was queued. The original burn and its reserved funds remain unchanged; the RPC must provide complete finalized historical blocks.', true);
+      const failure = burnRecoveryFailure(error);
+      console.error(`BURN_RECOVERY_STOPPED: stage=${failure.stage}; reason=${failure.code}; queueOutcome=${failure.outcomeUnknown ? 'unverified' : 'not-queued'}.`);
+      const reason = error instanceof BurnRecoveryError ? error.message : failure.reason;
+      await update(`Burn recovery stopped at ${failure.stage}: ${failure.code}.\n${reason}\n${failure.outcomeUnknown ? 'The database confirmation was interrupted; queue outcome is not verified. Use /solstatus ' + gameId + ' before any further action. Do not send a manual burn.' : 'No replacement was queued. The original burn and its reserved funds remain unchanged. A failed confirmation does not erase a verified preview in this running deployment.'}`, true);
     }).finally(() => { service.expiredBurnJob = null; });
   });
 }

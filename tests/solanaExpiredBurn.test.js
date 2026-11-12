@@ -7,7 +7,7 @@ const spl = require('../src/solana/token');
 const { MEMO } = require('../src/solana/chain');
 const { SolanaStore } = require('../src/solana/store');
 const { SolanaService } = require('../src/solana/service');
-const { recoverExpiredBurn, decodeBurn, proveExpiredBurn } = require('../src/solana/expiredBurn');
+const { recoverExpiredBurn, decodeBurn, proveExpiredBurn, burnRecoveryFailure } = require('../src/solana/expiredBurn');
 const signer = Keypair.fromSeed(Buffer.alloc(32, 81));
 const treasury = signer.publicKey.toBase58();
 const mint = Keypair.fromSeed(Buffer.alloc(32, 82)).publicKey;
@@ -193,6 +193,57 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     expect(chain.broadcast).toHaveBeenCalledTimes(1);
     expect(await store.liabilities()).toEqual([]);
     expect((await store.payments(gameId)).find(r => r.id === id)).toMatchObject({ status: 'CONFIRMED', signature: 'replacement-burn' });
+  });
+  test('confirmation reports reserve throttling distinctly and retains the proven preview', async () => {
+    await recoverExpiredBurn(service, input);
+    const calls = service.chain.connection.getBlock.mock.calls.length;
+    service.chain.assertSolvent.mockRejectedValue(new Error('429 https://rpc.example/private-key'));
+    let error;
+    try { await recoverExpiredBurn(service, { ...input, commit: true }); } catch (e) { error = e; }
+    expect(burnRecoveryFailure(error)).toMatchObject({ stage: 'reserve-check', code: 'RPC_RATE_LIMIT', outcomeUnknown: false });
+    expect(JSON.stringify(burnRecoveryFailure(error))).not.toMatch(/rpc.example|private-key/);
+    expect(service.expiredBurnProof).toBeTruthy();
+    expect(service.chain.connection.getBlock.mock.calls.length).toBe(calls);
+    expect(service.workerRunning).toBe(false);
+    expect((await pool.query('SELECT status FROM "SolOutbox" WHERE id=$1', [id])).rows[0].status).toBe('REVIEW');
+    service.chain.assertSolvent.mockResolvedValue();
+    expect((await recoverExpiredBurn(service, { ...input, commit: true })).recorded).toBe(true);
+    expect(service.chain.connection.getBlock.mock.calls.length).toBe(calls);
+  });
+  test('an uncertain commit is reported as unknown and repeat confirmation cannot queue twice', async () => {
+    await recoverExpiredBurn(service, input);
+    const originalPool = store.pool;
+    store.pool = { query: (...args) => originalPool.query(...args), connect: async () => {
+      const client = await originalPool.connect();
+      return { release: () => client.release(), query: async (...args) => {
+        const result = await client.query(...args);
+        if (args[0] === 'COMMIT') throw new Error('connection lost https://private.example/key');
+        return result;
+      } };
+    } };
+    try {
+      let error;
+      try { await recoverExpiredBurn(service, { ...input, commit: true }); } catch (e) { error = e; }
+      expect(burnRecoveryFailure(error)).toMatchObject({ stage: 'database-commit', outcomeUnknown: true });
+      expect((await pool.query('SELECT * FROM "SolExpiredBurnRepairs"')).rowCount).toBe(1);
+      expect((await recoverExpiredBurn(service, { ...input, commit: true })).alreadyRecorded).toBe(true);
+      expect(service.workerRunning).toBe(false);
+    } finally { store.pool = originalPool; }
+  });
+  test('private confirmation reports the exact failed stage without blaming history', async () => {
+    await recoverExpiredBurn(service, input);
+    service.chain.assertSolvent.mockRejectedValue(new Error('429 https://rpc.example/private-key'));
+    const handlers = {}, log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      require('../src/solana/telegram').registerSolanaCommands({ command: (name, h) => { handlers[name] = h; } }, service);
+      const ctx = { from: { id: 1 }, chat: { type: 'private', id: 1 }, message: { text: `/solburnrecover ${gameId} CONFIRM` }, reply: jest.fn(async () => ({ message_id: 7 })), telegram: { editMessageText: jest.fn(async () => {}) } };
+      await handlers.solburnrecover(ctx); await service.expiredBurnJob;
+      const message = service.expiredBurnStatus.text;
+      expect(message).toContain('reserve-check: RPC_RATE_LIMIT');
+      expect(message).not.toMatch(/rpc.example|private-key|must provide complete/);
+      expect(message).toContain('No replacement was queued');
+      expect(service.expiredBurnProof).toBeTruthy();
+    } finally { log.mockRestore(); }
   });
   test('an RPC failure or unknown history never clears the original signed payment', async () => {
     service.chain.connection.getBlock.mockRejectedValue(new Error('historical RPC unavailable'));

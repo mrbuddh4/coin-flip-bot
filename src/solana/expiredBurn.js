@@ -3,6 +3,7 @@ const { Transaction, PublicKey } = require('@solana/web3.js');
 const bs58 = require('bs58').default;
 const spl = require('./token');
 const { MEMO } = require('./chain');
+const { paymentFailure } = require('./errors');
 const { assertLiveFunds } = require('../utils/recoveryMode');
 
 const SCHEMA = `CREATE TABLE IF NOT EXISTS "SolExpiredBurnRepairs" (
@@ -115,52 +116,91 @@ async function proveExpiredBurn(connection, signed, anchorSignature, progress = 
   return { method: 'complete-finalized-validity-window-v1', originalSignature: signed.signature, originalBlockhash: signed.blockhash, firstHeight: startHeight, lastHeight: endHeight, finalizedHeight, anchorSignature, blocks, checkedAt: new Date().toISOString() };
 }
 
+const RECOVERY_STAGES = ['prepare', 'read-audit', 'read-payment', 'read-game', 'decode-original', 'network', 'read-anchor', 'history-proof', 'funds-gate', 'worker-exclusion', 'reserve-check', 'database-connect', 'database-begin', 'database-lock', 'audit-write', 'queue-reset', 'database-commit'];
+function burnRecoveryFailure(error) {
+  const stage = RECOVERY_STAGES.includes(error?.burnRecoveryStage) ? error.burnRecoveryStage : 'prepare';
+  const classified = paymentFailure(error);
+  const reasons = {
+    RPC_RATE_LIMIT: 'The RPC provider throttled this check. Retry after the limit clears.',
+    RPC_TIMEOUT: 'A response timed out before this check could finish.',
+    PAYMENT_CHECK_FAILED: 'This check failed without an allowlisted cause. Inspect private hosting diagnostics.',
+  };
+  return { stage, code: classified.code, reason: reasons[classified.code] || classified.reason,
+    outcomeUnknown: stage === 'database-commit' || error?.burnRollbackUnverified === true };
+}
 async function recoverExpiredBurn(service, { gameId, adminId, commit = false, progress }) {
-  if (!(service.chain.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).includes(String(adminId))) reject('Private administrator command.');
-  if (typeof gameId !== 'string' || !/^[0-9a-f-]{36}$/.test(gameId)) reject('Use the complete game ID.');
-  const id = `burn:${gameId}`, pool = service.store.pool;
-  await boundedRead(() => pool.query(SCHEMA));
-  const old = (await boundedRead(() => pool.query('SELECT * FROM "SolExpiredBurnRepairs" WHERE id=$1', [id]))).rows[0];
-  if (old) return { alreadyRecorded: true, id, amount: old.original.payment.amount };
-  const row = (await boundedRead(() => pool.query('SELECT * FROM "SolOutbox" WHERE id=$1', [id]))).rows[0];
-  const game = await boundedRead(() => service.store.get(gameId));
-  if (!row || game.cluster !== service.chain.env.SOLANA_CLUSTER) reject('The recorded burn or network does not match.');
-  const signed = decodeBurn(row, game, service.chain.address);
-  await boundedRead(() => service.chain.validate());
-  const print = fingerprint(row);
-  let proof = service.expiredBurnProof;
-  if (!proof || proof.id !== id || proof.fingerprint !== print) {
-    const anchors = (await boundedRead(() => pool.query('SELECT signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND status=\'CONFIRMED\' AND signed IS NOT NULL ORDER BY "createdAt" LIMIT 1', [gameId]))).rows;
-    if (!anchors[0]?.signature) reject('No confirmed same-game payment is available to anchor this repair.');
-    const evidence = await proveExpiredBurn(service.chain.connection, signed, anchors[0].signature, progress);
-    proof = { id, fingerprint: print, evidence };
-    service.expiredBurnProof = proof;
-  }
-  if (!commit) return { id, amount: row.payment.amount, token: game.token, originalSignature: signed.signature, preview: true, evidence: proof.evidence };
-  assertLiveFunds(service.chain.env);
-  if (service.workerRunning) reject('The payment worker is busy. No records changed; retry confirmation in a few seconds.');
-  service.workerRunning = true;
-  let client;
+  let stage = 'prepare';
   try {
-    // Expiry and finality are irreversible, but recheck network and reserve
-    // coverage immediately before the narrowly scoped queue mutation.
+    if (!(service.chain.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).includes(String(adminId))) reject('Private administrator command.');
+    if (typeof gameId !== 'string' || !/^[0-9a-f-]{36}$/.test(gameId)) reject('Use the complete game ID.');
+    const id = `burn:${gameId}`, pool = service.store.pool;
+    await boundedRead(() => pool.query(SCHEMA));
+    stage = 'read-audit';
+    const old = (await boundedRead(() => pool.query('SELECT * FROM "SolExpiredBurnRepairs" WHERE id=$1', [id]))).rows[0];
+    if (old) return { alreadyRecorded: true, id, amount: old.original.payment.amount };
+    stage = 'read-payment';
+    const row = (await boundedRead(() => pool.query('SELECT * FROM "SolOutbox" WHERE id=$1', [id]))).rows[0];
+    stage = 'read-game';
+    const game = await boundedRead(() => service.store.get(gameId));
+    if (!row || game.cluster !== service.chain.env.SOLANA_CLUSTER) reject('The recorded burn or network does not match.');
+    stage = 'decode-original';
+    const signed = decodeBurn(row, game, service.chain.address);
+    stage = 'network';
     await boundedRead(() => service.chain.validate());
-    await service.chain.assertSolvent(await service.store.liabilities());
-    client = await pool.connect();
-    await client.query('BEGIN');
-    const current = (await client.query('SELECT * FROM "SolOutbox" WHERE id=$1 FOR UPDATE', [id])).rows[0];
-    if (!current || fingerprint(current) !== print) reject('The original payment changed during verification. No repair was applied.');
-    await client.query('INSERT INTO "SolExpiredBurnRepairs" (id,"adminId",original,evidence) VALUES ($1,$2,$3,$4)', [id, String(adminId), JSON.stringify(row), JSON.stringify(proof.evidence)]);
-    await client.query('UPDATE "SolOutbox" SET status=\'PENDING\',signed=NULL,"lastError"=NULL WHERE id=$1', [id]);
-    await client.query('COMMIT');
-    service.expiredBurnProof = null;
-    return { id, amount: row.payment.amount, recorded: true, originalSignature: signed.signature };
+    const print = fingerprint(row);
+    let proof = service.expiredBurnProof;
+    if (!proof || proof.id !== id || proof.fingerprint !== print) {
+      stage = 'read-anchor';
+      const anchors = (await boundedRead(() => pool.query('SELECT signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND status=\'CONFIRMED\' AND signed IS NOT NULL ORDER BY "createdAt" LIMIT 1', [gameId]))).rows;
+      if (!anchors[0]?.signature) reject('No confirmed same-game payment is available to anchor this repair.');
+      stage = 'history-proof';
+      const evidence = await proveExpiredBurn(service.chain.connection, signed, anchors[0].signature, progress);
+      proof = { id, fingerprint: print, evidence };
+      service.expiredBurnProof = proof;
+    }
+    if (!commit) return { id, amount: row.payment.amount, token: game.token, originalSignature: signed.signature, preview: true, evidence: proof.evidence };
+    stage = 'funds-gate';
+    assertLiveFunds(service.chain.env);
+    stage = 'worker-exclusion';
+    if (service.workerRunning) reject('The payment worker is busy. No records changed; retry confirmation in a few seconds.');
+    service.workerRunning = true;
+    let client;
+    try {
+      // Expiry and finality are irreversible, but recheck network and reserve
+      // coverage immediately before the narrowly scoped queue mutation.
+      stage = 'network';
+      await boundedRead(() => service.chain.validate());
+      stage = 'reserve-check';
+      if (progress) await progress(151, 151, 'History verified; checking treasury coverage before queuing.');
+      await boundedRead(async () => service.chain.assertSolvent(await service.store.liabilities()));
+      stage = 'database-connect';
+      client = await pool.connect();
+      stage = 'database-begin';
+      await client.query('BEGIN');
+      stage = 'database-lock';
+      const current = (await client.query('SELECT * FROM "SolOutbox" WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      if (!current || fingerprint(current) !== print) reject('The original payment changed during verification. No repair was applied.');
+      stage = 'audit-write';
+      await client.query('INSERT INTO "SolExpiredBurnRepairs" (id,"adminId",original,evidence) VALUES ($1,$2,$3,$4)', [id, String(adminId), JSON.stringify(row), JSON.stringify(proof.evidence)]);
+      stage = 'queue-reset';
+      await client.query('UPDATE "SolOutbox" SET status=\'PENDING\',signed=NULL,"lastError"=NULL WHERE id=$1', [id]);
+      stage = 'database-commit';
+      await client.query('COMMIT');
+      service.expiredBurnProof = null;
+      return { id, amount: row.payment.amount, recorded: true, originalSignature: signed.signature };
+    } catch (error) {
+      if (client) {
+        try { await client.query('ROLLBACK'); }
+        catch (_) { error.burnRollbackUnverified = true; }
+      }
+      throw error;
+    } finally {
+      if (client) client.release();
+      service.workerRunning = false;
+    }
   } catch (error) {
-    if (client) await client.query('ROLLBACK');
+    error.burnRecoveryStage = stage;
     throw error;
-  } finally {
-    if (client) client.release();
-    service.workerRunning = false;
   }
 }
-module.exports = { recoverExpiredBurn, proveExpiredBurn, decodeBurn, BurnRecoveryError, boundedRead };
+module.exports = { recoverExpiredBurn, proveExpiredBurn, decodeBurn, BurnRecoveryError, boundedRead, burnRecoveryFailure };
