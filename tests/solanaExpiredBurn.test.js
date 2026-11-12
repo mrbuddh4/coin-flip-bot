@@ -75,6 +75,18 @@ describe('exact expired burn evidence', () => {
     expect(result.blocks).toHaveLength(151);
     expect(result.blocks[150].height).toBe(350);
   });
+  test('a hung historical RPC stops with an explicit timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      const { row, game } = fixture(), connection = rpc();
+      connection.getBlockHeight.mockImplementation(() => new Promise(() => {}));
+      const result = proveExpiredBurn(connection, decodeBurn(row, game, treasury), anchorSignature);
+      const assertion = expect(result).rejects.toThrow('timed out');
+      await jest.advanceTimersByTimeAsync(30001);
+      await assertion;
+      expect(connection.getBlock).not.toHaveBeenCalled();
+    } finally { jest.useRealTimers(); }
+  });
   test('verifies signed Token-2022 bytes and all 151 finalized blocks with skipped slots', async () => {
     const { game, row } = fixture();
     const signed = decodeBurn(row, game, treasury), connection = rpc();
@@ -226,6 +238,44 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     expect(ctx.telegram.editMessageText.mock.calls.at(-1)[3]).toContain('Burn: 42.069 TEST');
     expect((await pool.query('SELECT status FROM "SolOutbox" WHERE id=$1', [id])).rows[0].status).toBe('REVIEW');
     expect(service.expiredBurnJob).toBe(null);
+  });
+  test('a rejected terminal card edit falls back to a new private message and retains status', async () => {
+    const handlers = {};
+    require('../src/solana/telegram').registerSolanaCommands({ command: (name, h) => { handlers[name] = h; } }, service);
+    const ctx = { from: { id: 1 }, chat: { type: 'private', id: 1 }, message: { text: `/solburnrecover ${gameId}` }, reply: jest.fn(async () => ({ message_id: 7 })), telegram: { editMessageText: jest.fn(async () => { throw new Error('message to edit not found'); }) } };
+    await handlers.solburnrecover(ctx); await service.expiredBurnJob;
+    expect(ctx.reply).toHaveBeenCalledTimes(2);
+    expect(ctx.reply.mock.calls[1][0]).toContain('Read-only check passed');
+    expect(service.expiredBurnJob).toBe(null);
+    ctx.message.text = '/solburnstatus';
+    await handlers.solburnstatus(ctx);
+    expect(ctx.reply.mock.calls.at(-1)[0]).toContain('Read-only check passed');
+    expect(ctx.reply.mock.calls.at(-1)[0]).toContain('History check has stopped.');
+    expect((await pool.query('SELECT status FROM "SolOutbox" WHERE id=$1', [id])).rows[0].status).toBe('REVIEW');
+  });
+  test('status survives a failed final notification without leaking transport credentials', async () => {
+    const handlers = {}, log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      require('../src/solana/telegram').registerSolanaCommands({ command: (name, h) => { handlers[name] = h; } }, service);
+      service.chain.connection.getBlock.mockRejectedValue(new Error('https://rpc.example/private-key failed'));
+      const ctx = { from: { id: 1 }, chat: { type: 'private', id: 1 }, message: { text: `/solburnrecover ${gameId}` }, reply: jest.fn().mockResolvedValueOnce({ message_id: 7 }).mockRejectedValue(new Error('private-telegram-token')), telegram: { editMessageText: jest.fn(async () => { throw new Error('private-telegram-token'); }) } };
+      await handlers.solburnrecover(ctx); await service.expiredBurnJob;
+      expect(service.expiredBurnJob).toBe(null);
+      expect(service.expiredBurnStatus.text).toContain('No replacement was queued');
+      expect(service.expiredBurnStatus.text).not.toMatch(/private-key|rpc.example|private-telegram/);
+      expect(log).toHaveBeenCalledWith('BURN_RECOVERY_NOTIFICATION_FAILED: result retained for /solburnstatus.');
+      expect((await pool.query('SELECT status FROM "SolOutbox" WHERE id=$1', [id])).rows[0].status).toBe('REVIEW');
+    } finally { log.mockRestore(); }
+  });
+  test('a restarted deployment reports no known check instead of claiming success', async () => {
+    const handlers = {};
+    require('../src/solana/telegram').registerSolanaCommands({ command: (name, h) => { handlers[name] = h; } }, service);
+    const ctx = { from: { id: 1 }, chat: { type: 'private', id: 1 }, message: { text: '/solburnstatus' }, reply: jest.fn() };
+    await handlers.solburnstatus(ctx);
+    expect(ctx.reply.mock.calls[0][0]).toContain('restart clears in-memory');
+    expect(service.chain.connection.getBlock).not.toHaveBeenCalled();
+    ctx.from.id = 2; await handlers.solburnstatus(ctx);
+    expect(ctx.reply.mock.calls.at(-1)[0]).toBe('Private administrator command.');
   });
   test('background RPC errors retain the original and never expose endpoint credentials', async () => {
     const handlers = {};

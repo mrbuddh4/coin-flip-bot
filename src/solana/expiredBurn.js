@@ -11,6 +11,15 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS "SolExpiredBurnRepairs" (
 );`;
 class BurnRecoveryError extends Error {}
 const reject = message => { throw new BurnRecoveryError(message); };
+// Bound read-only dependencies even when an RPC/transport never settles.
+async function boundedRead(operation, milliseconds = 30000) {
+  let timer;
+  try {
+    return await Promise.race([Promise.resolve().then(operation), new Promise((_, fail) => {
+      timer = setTimeout(() => fail(new BurnRecoveryError('Historical verification timed out waiting for a response. No replacement was queued.')), milliseconds);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fingerprint = row => digest({ payment: row.payment, signed: row.signed, status: row.status, lastError: row.lastError });
 
@@ -47,13 +56,16 @@ function decodeBurn(row, game, address) {
 // leaves the obligation and original signed transaction completely unchanged.
 async function proveExpiredBurn(connection, signed, anchorSignature, progress = async () => {}) {
   const deadline = Date.now() + 10 * 60 * 1000;
+  let checked = 0;
+  await progress(0, 151, 'Locating the original finalized validity window.');
   const request = async (method, ...args) => {
     for (let attempt = 0; ; attempt++) {
       if (Date.now() > deadline) reject('Historical verification timed out. No payment records changed.');
-      try { return await connection[method](...args); }
+      try { return await boundedRead(() => connection[method](...args), Math.min(30000, Math.max(1, deadline - Date.now()))); }
       catch (error) {
         if (attempt >= 4 || !/429|too many requests/i.test(String(error?.message))) throw error;
-        await new Promise(resolve => setTimeout(resolve, 5000 * 2 ** attempt));
+        await progress(checked, 151, `Historical RPC rate limited; retrying in ${5 * 2 ** attempt} seconds.`);
+        await new Promise(resolve => setTimeout(resolve, Math.min(5000 * 2 ** attempt, Math.max(1, deadline - Date.now()))));
       }
     }
   };
@@ -94,7 +106,8 @@ async function proveExpiredBurn(connection, signed, anchorSignature, progress = 
         (previous && (b.parentSlot !== previous.slot || b.previousBlockhash !== previous.blockhash))) reject('The finalized block chain or signature lists are incomplete.');
     if (b.signatures.includes(signed.signature)) reject('The original transaction appears in finalized history. No replacement is allowed; inspect its original receipt.');
     blocks.push({ slot, height: startHeight + index - first, blockhash: b.blockhash, parentSlot: b.parentSlot, previousBlockhash: b.previousBlockhash, signaturesHash: digest(b.signatures), signatureCount: b.signatures.length });
-    if (blocks.length % 25 === 0) await progress(blocks.length, 151);
+    checked = blocks.length;
+    if (checked % 5 === 0 || checked === 151) await progress(checked, 151);
   }
   const status = (await request('getSignatureStatuses', [signed.signature], { searchTransactionHistory: true })).value?.[0];
   const transaction = await request('getParsedTransaction', signed.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 });
@@ -106,18 +119,18 @@ async function recoverExpiredBurn(service, { gameId, adminId, commit = false, pr
   if (!(service.chain.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).includes(String(adminId))) reject('Private administrator command.');
   if (typeof gameId !== 'string' || !/^[0-9a-f-]{36}$/.test(gameId)) reject('Use the complete game ID.');
   const id = `burn:${gameId}`, pool = service.store.pool;
-  await pool.query(SCHEMA);
-  const old = (await pool.query('SELECT * FROM "SolExpiredBurnRepairs" WHERE id=$1', [id])).rows[0];
+  await boundedRead(() => pool.query(SCHEMA));
+  const old = (await boundedRead(() => pool.query('SELECT * FROM "SolExpiredBurnRepairs" WHERE id=$1', [id]))).rows[0];
   if (old) return { alreadyRecorded: true, id, amount: old.original.payment.amount };
-  const row = (await pool.query('SELECT * FROM "SolOutbox" WHERE id=$1', [id])).rows[0];
-  const game = await service.store.get(gameId);
+  const row = (await boundedRead(() => pool.query('SELECT * FROM "SolOutbox" WHERE id=$1', [id]))).rows[0];
+  const game = await boundedRead(() => service.store.get(gameId));
   if (!row || game.cluster !== service.chain.env.SOLANA_CLUSTER) reject('The recorded burn or network does not match.');
   const signed = decodeBurn(row, game, service.chain.address);
-  await service.chain.validate();
+  await boundedRead(() => service.chain.validate());
   const print = fingerprint(row);
   let proof = service.expiredBurnProof;
   if (!proof || proof.id !== id || proof.fingerprint !== print) {
-    const anchors = (await pool.query('SELECT signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND status=\'CONFIRMED\' AND signed IS NOT NULL ORDER BY "createdAt" LIMIT 1', [gameId])).rows;
+    const anchors = (await boundedRead(() => pool.query('SELECT signed->>\'signature\' AS signature FROM "SolOutbox" WHERE "gameId"=$1 AND status=\'CONFIRMED\' AND signed IS NOT NULL ORDER BY "createdAt" LIMIT 1', [gameId]))).rows;
     if (!anchors[0]?.signature) reject('No confirmed same-game payment is available to anchor this repair.');
     const evidence = await proveExpiredBurn(service.chain.connection, signed, anchors[0].signature, progress);
     proof = { id, fingerprint: print, evidence };
@@ -131,7 +144,7 @@ async function recoverExpiredBurn(service, { gameId, adminId, commit = false, pr
   try {
     // Expiry and finality are irreversible, but recheck network and reserve
     // coverage immediately before the narrowly scoped queue mutation.
-    await service.chain.validate();
+    await boundedRead(() => service.chain.validate());
     await service.chain.assertSolvent(await service.store.liabilities());
     client = await pool.connect();
     await client.query('BEGIN');
@@ -150,4 +163,4 @@ async function recoverExpiredBurn(service, { gameId, adminId, commit = false, pr
     service.workerRunning = false;
   }
 }
-module.exports = { recoverExpiredBurn, proveExpiredBurn, decodeBurn, BurnRecoveryError };
+module.exports = { recoverExpiredBurn, proveExpiredBurn, decodeBurn, BurnRecoveryError, boundedRead };
