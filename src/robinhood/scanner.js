@@ -2,9 +2,10 @@ const { ethers } = require('ethers');
 const { ERC20 } = require('./chain');
 const { DepositValidationError } = require('../solana/errors');
 const { paymentFailure } = require('../solana/errors');
+const { readDeposit } = require('./depositTrace');
 const TRANSFER = ERC20.getEvent('Transfer').topicHash;
 class RobinhoodScanner {
-  constructor(service) { this.service = service; this.running = false; this.nextTry = 0; }
+  constructor(service) { this.service = service; this.running = false; this.nextTry = 0; this.nextReview = 0; this.reviewOffset = 0; }
   async confirm() { return this.tick(); }
   async start() {
     const { store, chain } = this.service;
@@ -23,6 +24,10 @@ class RobinhoodScanner {
       await chain.validate();
       await store.assertHealthy();
       await chain.checkHistory?.();
+      // A range can advance past a genuinely ambiguous receipt while a request
+      // is still open. Revisit that durable review after closure for a refund,
+      // never for retroactive wager funding or a result change.
+      await this.recoverReviews();
       stage = 'cursor';
       const cursor = await store.scanState();
       if (!cursor) throw new Error('Robinhood scanner not initialized');
@@ -80,6 +85,21 @@ class RobinhoodScanner {
       this.service.depositScanStatus = { code: failure.code, stage };
       console.error(`ROBINHOOD_SCAN_RETRY: ${failure.code} at ${stage}; confirmation cursor retained; deposits not discarded.`);
     } finally { this.running = false; }
+  }
+  async recoverReviews() {
+    if (!this.service.store.ambiguousReceipts || Date.now() < this.nextReview) return;
+    this.nextReview = Date.now() + 30000;
+    const rows = await this.service.store.ambiguousReceipts(this.reviewOffset);
+    this.reviewOffset = rows.length === 2 ? this.reviewOffset + 2 : 0;
+    for (const row of rows) {
+      try {
+        const deposit = await readDeposit(this.service, row.signature);
+        await this.service.recoverUnmatchedDeposit(deposit);
+      } catch (error) {
+        const failure = paymentFailure(error);
+        console.error(`ROBINHOOD_REVIEW_RECOVERY_RETRY: ${failure.code}; original receipt retained.`);
+      }
+    }
   }
   async process(sender, signature, mint, amount, block) {
     const { service } = this, { store } = service;

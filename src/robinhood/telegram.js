@@ -20,7 +20,7 @@ function registerRobinhoodCommands(bot, service, env = process.env) {
   });
   command('rhstatus', async (ctx, [id]) => {
     const g = await service.store.get(id);
-    if (g.chatId !== String(ctx.chat.id)) service.member(g, ctx.from.id);
+    if (g.chatId !== String(ctx.chat.id) && !isAdmin(ctx)) service.member(g, ctx.from.id);
     const payments = await service.store.payments(id);
     await ctx.reply(`Robinhood game ${id}: ${g.status === 'SETTLED' && !resultVisible(g) ? 'FLIPPING' : g.status}\nCreator funded: ${Boolean(g.creator.deposit)}\nChallenger funded: ${Boolean(g.challenger?.deposit)}\n` + payments.map(p => `${p.id.split(':')[0]}: ${p.status}${p.lastError && p.status !== 'CONFIRMED' ? '\n' + String(p.lastError).slice(0, 240) : ''}${p.signature ? '\n' + service.chain.explorer(p.signature) : ''}`).join('\n'));
   });

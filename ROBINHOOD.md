@@ -87,7 +87,7 @@ retains the challenge context.
 Partial transfers accumulate without extending the deadline. Excess is queued
 for refund. Cancellation/timeout returns retained deposits; late or duplicate
 supported direct transfers are recovered for refund, not assigned to a new game.
-Ambiguous or nonstandard receipts are retained for review. A scanner/database
+A fully funded request records an on-chain payment-window cutoff, including the whole timestamp second. Its unused timeout cannot capture later games; same-second ambiguity remains conservative. Ambiguous receipts are revisited for refund after every nearby matching request closes, even if the forward scanner cursor has moved past the transfer or the bot restarts. Recovery never changes an old result or retroactively funds a wager. Nonstandard receipts remain for review. A scanner/database
 failure retains its cursor so the block is replayed. Native ETH scanning reads
 transaction bodies; ERC-20 scanning uses incoming Transfer logs and independently
 verifies calldata, sender, recipient, receipt, block and amount.

@@ -35,3 +35,13 @@ test('different amounts can top up one request, but overlapping different wagers
   expect(noMemoCandidates([game], { ...request, amount: '99' })).toHaveLength(1);
   expect(noMemoCandidates([game, { ...game, id: 'other', wager: '200' }], request)).toHaveLength(2);
 });
+
+test('a verified funded cutoff closes unused timeout but preserves same-second ambiguity and original refund window',()=>{
+  const completed={...game,creator:{...game.creator,deposit:{signature:'old'},depositWindowClosedAt:3000}};
+  const next={...game,id:'next',createdAt:2500};
+  expect(noMemoCandidates([completed,next],{...request,at:2999})).toHaveLength(2);
+  expect(noMemoCandidates([completed,next],{...request,at:3000})).toEqual([{gameId:'next',userId:'1'}]);
+  expect(refundCandidates([completed,next],{...request,at:3500})).toHaveLength(2);
+  const partial={...game,creator:{...game.creator,funding:{amount:'1',receipts:[]}}};
+  expect(noMemoCandidates([partial,next],{...request,at:3500})).toHaveLength(2);
+});

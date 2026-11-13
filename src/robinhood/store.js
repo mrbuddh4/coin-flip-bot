@@ -42,5 +42,11 @@ class RobinhoodStore extends SolanaStore {
   async invitePeer(id) { return (await this.pool.query('SELECT peer FROM "RhInvites" WHERE id=$1', [id])).rows[0]?.peer; }
   async scanState() { return (await this.pool.query('SELECT block::text,hash FROM "RhScanState" WHERE id=1')).rows[0]; }
   async saveScanState(block, hash) { await this.pool.query('INSERT INTO "RhScanState" (id,block,hash) VALUES (1,$1,$2) ON CONFLICT(id) DO UPDATE SET block=EXCLUDED.block,hash=EXCLUDED.hash', [String(block), hash]); }
+  async ambiguousReceipts(offset = 0) {
+    return (await this.pool.query(`SELECT r.signature FROM "SolDepositReviews" r
+      LEFT JOIN "SolDeposits" d ON d.signature=r.signature WHERE d.signature IS NULL AND r.reason IN
+      ('Ambiguous Robinhood transfer; no game credited', 'Plain transfer does not uniquely identify this game; reconcile the receipt.')
+      ORDER BY r."createdAt",r.signature LIMIT 2 OFFSET $1`, [offset])).rows;
+  }
 }
 module.exports = { RobinhoodStore, createPool, initialize, SCHEMA };

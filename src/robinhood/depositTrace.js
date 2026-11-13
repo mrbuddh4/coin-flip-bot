@@ -40,6 +40,7 @@ async function traceRobinhoodDeposit(service, value) {
       lines.push(`${role}: sender ${p.wallet === d.sender ? 'MATCHES' : 'DIFFERS'}`, `Registered sending wallet: ${p.wallet}`,
         `Window: ${time(start)} to ${time(end)}`, `Inside window: ${d.at >= start && d.at < end ? 'yes' : 'NO'}`,
         `Wager: ${ethers.formatUnits(g.wager, g.token.decimals)} ${g.token.symbol}`, `Received: ${ethers.formatUnits(d.amount, g.token.decimals)} ${g.token.symbol}`);
+      if (Number.isSafeInteger(p.depositWindowClosedAt)) lines.push(`Funded-request cutoff: ${time(Math.min(end, p.depositWindowClosedAt))}`);
     }
     for (const p of (await store.payments(g.id)).filter(p => p.id === `refund:${d.signature}` || p.id === `refund-excess:${d.signature}`)) {
       lines.push(`Refund: ${p.status}${p.signature ? '\n' + service.chain.explorer(p.signature) : ''}`);

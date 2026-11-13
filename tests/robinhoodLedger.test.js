@@ -30,7 +30,7 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     for(const p of pools)await p.query('TRUNCATE "SolGames","SolOutbox","SolDeposits","SolFeePools","SolFeeAccruals","SolTokens","SolProfiles","SolSessions","SolDrafts","SolHolderReserves","SolHolderCustody" CASCADE');
     await pools[1].query('TRUNCATE "RhProofs","RhSafety","RhScanState"');
     now=1000000;
-    chain={address:treasury,key:'robinhood',cluster:'robinhood-mainnet',chainId:4663,label:'Robinhood Chain mainnet (4663)',realFunds:true,maximumAmount:MAXIMUM,depositWindowMs:1800000,normalizeAddress,env:{},
+    chain={closeFundedDepositWindows:true,address:treasury,key:'robinhood',cluster:'robinhood-mainnet',chainId:4663,label:'Robinhood Chain mainnet (4663)',realFunds:true,maximumAmount:MAXIMUM,depositWindowMs:1800000,normalizeAddress,env:{},
       tokenInfo:jest.fn(async mint=>({address:mint==='ETH'?'NATIVE':mint,symbol:mint===SID?'SID':'ETH',decimals:18,chainId:4663,maximumAmount:MAXIMUM.toString()})),
       verifyDeposit:jest.fn(async()=>ethers.parseEther('1000')),validate:jest.fn(async()=> 'eip155:4663'),
       assertSolvent:jest.fn(async()=>{}),paymentStatus:jest.fn(async()=> 'unknown'),paymentExpired:jest.fn(async()=>false),
@@ -97,6 +97,42 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     await scanner.process(a,'0x'+'ab'.repeat(32),SID,ethers.parseEther('1000'),block);await scanner.process(a,'0x'+'ab'.repeat(32),SID,ethers.parseEther('1000'),block);
     expect(chain.verifyDeposit).toHaveBeenCalledTimes(1);expect((await rh.get(g.id)).creator.deposit).toBeDefined();
     await rh.saveScanState(10,'block10');chain.rpc=jest.fn(async()=>{throw new Error('429')});scanner.nextTry=0;await scanner.tick();expect(await rh.scanState()).toEqual({block:'10',hash:'block10'});
+  });
+  async function priorSettledGame({legacy=false}={}) {
+    chain.verifyDeposit.mockResolvedValue(ethers.parseEther('6900'));
+    const old=await service.create({...input,userId:'2',wallet:b,amount:'6900'});
+    await service.deposit({id:old.id,userId:'2',signature:'old-creator',...(legacy?{}:{transaction:{blockTime:1001},noMemo:true})});
+    await rh.mutate(old.id,g=>{g.ui.publishRequested=true});now=1005000;
+    await service.join({id:old.id,userId:'1',wallet:a,chatId:'-100'});
+    await service.deposit({id:old.id,userId:'1',signature:'old-challenger',...(legacy?{}:{transaction:{blockTime:1006},noMemo:true})});
+    await rh.mutate(old.id,g=>{g.ui.resultAnnounced=true;g.ui.terminal=true});now=1010000;
+    return rh.get(old.id);
+  }
+  test('a completed 6900-SID request cannot capture a subsequent 3100-SID deposit',async()=>{
+    const old=await priorSettledGame();expect(old.challenger.depositWindowClosedAt).toBe(1007000);
+    const next=await service.create({...input,amount:'3100'}),signature='0x'+'ae'.repeat(32);chain.verifyDeposit.mockResolvedValue(ethers.parseEther('3100'));
+    const matches=await rh.noMemoCandidates({sender:a,mint:SID,amount:ethers.parseEther('3100').toString(),at:1011000});
+    expect(matches).toEqual([{gameId:next.id,userId:'1'}]);
+    const scanner=new RobinhoodScanner(service);await scanner.process(a,signature,SID,ethers.parseEther('3100'),{number:'0xb',hash:'block11',timestamp:'0x3f3'});
+    expect((await rh.get(next.id)).creator.deposit.amount).toBe(ethers.parseEther('3100').toString());
+    expect((await rh.get(old.id)).prize).toBe(old.prize);
+  });
+  test('legacy overlapping windows recover a reviewed deposit after cancellation, beyond the forward cursor and after restart',async()=>{
+    const old=await priorSettledGame({legacy:true}),next=await service.create({...input,amount:'3100'}),signature='0x'+'af'.repeat(32);
+    chain.verifyDeposit.mockResolvedValue(ethers.parseEther('3100'));
+    const scanner=new RobinhoodScanner(service),block={number:'0xb',hash:'block11',timestamp:'0x3f3'};
+    await scanner.process(a,signature,SID,ethers.parseEther('3100'),block);
+    expect(await rh.hasDeposit(signature)).toBe(false);expect((await rh.ambiguousReceipts()).map(r=>r.signature)).toContain(signature);
+    await rh.saveScanState(1000,'block1000');chain.receiptProof=jest.fn(async()=>({tx:{from:a,to:SID},blockTime:1011,block}));
+    await scanner.recoverReviews();expect(await rh.hasDeposit(signature)).toBe(false);
+    now=next.expiresAt+1000;await service.expire();
+    const restarted=new SolanaService({store:new RobinhoodStore(pools[1]),chain,now:()=>now});
+    const {recoverRobinhoodDeposit}=require('../src/robinhood/depositTrace');
+    await Promise.all([new RobinhoodScanner(restarted).recoverReviews(),recoverRobinhoodDeposit(restarted,signature)]);
+    const payments=await rh.payments(next.id);expect(payments).toHaveLength(1);expect(payments[0].payment).toMatchObject({kind:'refund',recipient:a,amount:ethers.parseEther('3100').toString()});
+    expect((await rh.get(next.id)).creator.deposit).toBeUndefined();expect((await rh.get(old.id)).prize).toBe(old.prize);
+    expect(await rh.scanState()).toEqual({block:'1000',hash:'block1000'});
+    await new RobinhoodScanner(restarted).recoverReviews();expect(await rh.payments(next.id)).toHaveLength(1);
   });
   test('hash-only owner diagnostic is read-only and closed-request refund queues actual 3100 SID once',async()=>{
     const {traceRobinhoodDeposit,recoverRobinhoodDeposit}=require('../src/robinhood/depositTrace');

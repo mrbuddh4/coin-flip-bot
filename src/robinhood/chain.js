@@ -32,6 +32,7 @@ class RobinhoodChain {
     this.address = normalizeAddress(this.signer.address);
     this.nextNonce = nextNonce;
     this.chainId = CHAIN_ID; this.cluster = 'robinhood-mainnet'; this.maximumAmount = MAXIMUM;
+    this.closeFundedDepositWindows = true;
     this.label = 'Robinhood Chain mainnet (4663)'; this.nativeSymbol = 'ETH'; this.key = 'robinhood';
     this.expiredPaymentReason = 'Nonce consumed without finalized proof of the original hash; reconcile before any replacement';
     this.confirmationMode = env.ROBINHOOD_CONFIRMATION_MODE || 'finalized';

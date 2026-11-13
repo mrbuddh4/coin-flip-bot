@@ -90,6 +90,13 @@ class SolanaService {
       // Partial top-ups never extend the original allotted payment time.
       if (BigInt(player.funding.amount) < BigInt(g.wager)) return;
       player.deposit = { signature, amount: g.wager };
+      // A fully funded EVM request is complete. Persist its on-chain cutoff so
+      // its unused timeout cannot capture a later game's direct transfer.
+      // Include the whole timestamp second: ordering within that second remains
+      // deliberately ambiguous and must never be guessed from transfer amount.
+      if (this.chain.closeFundedDepositWindows && Number.isSafeInteger(transaction?.blockTime) && transaction.blockTime >= 0 && Number.isSafeInteger(transaction.blockTime * 1000 + 1000)) {
+        player.depositWindowClosedAt = transaction.blockTime * 1000 + 1000;
+      }
       if (g.interfaceVersion && !g.challenger && player === g.creator) g.expiresAt = this.now() + 4 * 60 * 1000;
       if (g.creator.deposit && g.challenger?.deposit) {
         const result = this.coin();

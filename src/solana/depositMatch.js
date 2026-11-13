@@ -10,7 +10,8 @@ function noMemoCandidates(games, { sender, mint, amount, at, maximum = 184467440
     for (const role of ['creator', 'challenger']) {
       const p = game[role];
       const start = role === 'creator' ? game.createdAt : p?.joinedAt;
-      const end = p?.depositExpiresAt ?? game.expiresAt;
+      const originalEnd = p?.depositExpiresAt ?? game.expiresAt;
+      const end = Number.isSafeInteger(p?.depositWindowClosedAt) ? Math.min(originalEnd, p.depositWindowClosedAt) : originalEnd;
       if (p?.wallet !== sender || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || at < start || at >= end) continue;
       result.push({ gameId: game.id, userId: p.userId });
     }

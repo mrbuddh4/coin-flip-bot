@@ -20,3 +20,11 @@ test('diagnostic rejects missing hashes and never reflects raw provider credenti
   f.ctx.message.text='/rhdepositcheck '+hash;await f.handlers.rhdepositcheck(f.ctx);expect(f.ctx.reply).toHaveBeenLastCalledWith(expect.stringContaining('No replacement transaction was created.'));
   expect(JSON.stringify(f.ctx.reply.mock.calls)).not.toContain('secret');
 });
+test('private owner can inspect another player refund status; unrelated users cannot',async()=>{
+  for(const id of [1,2]){
+    const f=fixture({id,text:'/rhstatus game'});f.service.store={get:jest.fn(async()=>({chatId:'-100',status:'CANCELLED',creator:{},challenger:null})),payments:jest.fn(async()=>[{id:'refund:hash',status:'PENDING',lastError:'TREASURY_ETH_SHORTFALL'}])};
+    f.service.member=jest.fn(()=>{throw Error('Not a participant')});await f.handlers.rhstatus(f.ctx);
+    if(id===1){expect(f.service.member).not.toHaveBeenCalled();expect(f.ctx.reply).toHaveBeenCalledWith(expect.stringContaining('TREASURY_ETH_SHORTFALL'));}
+    else{expect(f.service.store.payments).not.toHaveBeenCalled();expect(f.ctx.reply).toHaveBeenCalledWith(expect.stringContaining('could not finish'));}
+  }
+});
