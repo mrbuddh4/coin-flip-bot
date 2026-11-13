@@ -2,8 +2,8 @@
 // exact asset and signing wallet identify one historical request.
 // Include closed/funded requests: ignoring them would let a receipt be stolen
 // by a newer overlapping game. Missing timestamps never authorize a match.
-function noMemoCandidates(games, { sender, mint, amount, at }) {
-  if (!Number.isSafeInteger(at) || at < 0 || !/^\d+$/.test(String(amount)) || BigInt(amount) <= 0n || BigInt(amount) > 18446744073709551615n) return [];
+function noMemoCandidates(games, { sender, mint, amount, at, maximum = 18446744073709551615n }) {
+  if (!Number.isSafeInteger(at) || at < 0 || !/^\d+$/.test(String(amount)) || BigInt(amount) <= 0n || BigInt(amount) > BigInt(maximum)) return [];
   const result = [];
   for (const game of games) {
     if (game.token.address !== mint) continue;
@@ -23,8 +23,8 @@ function noMemoCandidates(games, { sender, mint, amount, at }) {
 // relaxed amount lookup must never be used to credit or resize a wager.
 // Include a bounded clock/window margin for wallet sends that land just outside
 // the request. An open competing request blocks recovery, even if already funded.
-function refundCandidates(games, { sender, mint, amount, at }) {
-  if (!Number.isSafeInteger(at) || at < 0 || !/^\d+$/.test(String(amount)) || BigInt(amount) <= 0n || BigInt(amount) > 18446744073709551615n) return [];
+function refundCandidates(games, { sender, mint, amount, at, maximum = 18446744073709551615n }) {
+  if (!Number.isSafeInteger(at) || at < 0 || !/^\d+$/.test(String(amount)) || BigInt(amount) <= 0n || BigInt(amount) > BigInt(maximum)) return [];
   const result = [];
   for (const game of games) {
     if (game.token.address !== mint) continue;

@@ -34,7 +34,7 @@ async function bindHolderWallet(pool, wallet) {
 
 async function enqueueReserve(client, { id, gameId, token, amount, sourceWallet, recipient }) {
   if (recipient === sourceWallet) throw new Error('Holder wallet must differ from treasury');
-  if (BigInt(amount) <= 0n || BigInt(amount) > 18446744073709551615n) throw new Error('Invalid holder reserve transfer amount');
+  if (BigInt(amount) <= 0n || BigInt(amount) > BigInt(token.maximumAmount || 18446744073709551615n)) throw new Error('Invalid holder reserve transfer amount');
   await client.query('INSERT INTO "SolOutbox" (id,"gameId",payment) VALUES ($1,$2,$3)', [id, gameId, JSON.stringify({ id, gameId, kind: 'holder-reserve', mint: token.address, token, amount: amount.toString(), sourceWallet, recipient })]);
 }
 
@@ -51,7 +51,7 @@ async function queueRetainedPools(pool, treasury) {
       const pools = (await client.query('SELECT * FROM "SolFeePools" WHERE amount>0 ORDER BY mint LIMIT 10 FOR UPDATE')).rows;
       for (const p of pools) {
         if (p.sourceWallet !== treasury) throw new Error('Retained holder pool belongs to another treasury');
-        const maximum = 18446744073709551615n;
+        const maximum = BigInt(p.token.maximumAmount || 18446744073709551615n);
         const amount = BigInt(p.amount) > maximum ? maximum : BigInt(p.amount);
         await enqueueReserve(client, { id: `holder-reserve:retained:${randomUUID()}`, gameId: p.anchorGameId, token: p.token, amount, sourceWallet: treasury, recipient: custody.wallet });
         await client.query('UPDATE "SolFeePools" SET amount=amount-$2 WHERE mint=$1', [p.mint, amount.toString()]);

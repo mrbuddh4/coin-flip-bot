@@ -10,23 +10,23 @@ class SolanaService {
     this.paymentRateFailures = 0;
   }
   async create({ userId, chatId, wallet, mint, amount, receiveWallet = wallet, name, gameId, interfaceVersion }) {
-    publicKey(wallet);
-    publicKey(receiveWallet);
+    wallet = this.chain.normalizeAddress ? this.chain.normalizeAddress(wallet) : (publicKey(wallet), wallet);
+    receiveWallet = this.chain.normalizeAddress ? this.chain.normalizeAddress(receiveWallet) : (publicKey(receiveWallet), receiveWallet);
     if ([wallet, receiveWallet].includes(this.chain.address)) throw new Error('Use a player wallet distinct from the shared bot wallet');
     const token = await this.chain.tokenInfo(mint);
-    const wager = toUnits(amount, token.decimals).toString();
-    if (BigInt(wager) * 2n > 18446744073709551615n) throw new Error('Pool exceeds token amount range');
+    const wager = toUnits(amount, token.decimals, this.chain.maximumAmount).toString();
+    if (BigInt(wager) * 2n > (this.chain.maximumAmount || 18446744073709551615n)) throw new Error('Pool exceeds token amount range');
     // Native SOL JSON RPC amounts are numbers; reject unsafe large transfers rather than rounding.
-    if (token.address === 'NATIVE' && BigInt(wager) * 2n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('SOL wager too large');
+    if (!this.chain.maximumAmount && token.address === 'NATIVE' && BigInt(wager) * 2n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('SOL wager too large');
     const id = gameId || randomUUID();
     return this.store.create({ id, chatId: String(chatId), token, wager, status: 'OPEN',
-      depositAddress: this.chain.address, cluster: this.chain.env?.SOLANA_CLUSTER || 'devnet', createdAt: this.now(), expiresAt: this.now() + (interfaceVersion ? 3 : 15) * 60 * 1000,
+      depositAddress: this.chain.address, cluster: this.chain.cluster || this.chain.env?.SOLANA_CLUSTER || 'devnet', ...(this.chain.chainId ? { chainId: this.chain.chainId } : {}), createdAt: this.now(), expiresAt: this.now() + (this.chain.depositWindowMs || (interfaceVersion ? 3 : 15) * 60 * 1000),
       ...(interfaceVersion ? { interfaceVersion, ui: {} } : {}),
-      creator: { userId: String(userId), wallet, receiveWallet, name, depositExpiresAt: this.now() + (interfaceVersion ? 3 : 15) * 60 * 1000, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:creator` }, challenger: null });
+      creator: { userId: String(userId), wallet, receiveWallet, name, depositExpiresAt: this.now() + (this.chain.depositWindowMs || (interfaceVersion ? 3 : 15) * 60 * 1000), payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:creator` }, challenger: null });
   }
   async join({ id, userId, wallet, chatId, receiveWallet = wallet, name }) {
-    publicKey(wallet);
-    publicKey(receiveWallet);
+    wallet = this.chain.normalizeAddress ? this.chain.normalizeAddress(wallet) : (publicKey(wallet), wallet);
+    receiveWallet = this.chain.normalizeAddress ? this.chain.normalizeAddress(receiveWallet) : (publicKey(receiveWallet), receiveWallet);
     if ([wallet, receiveWallet].includes(this.chain.address)) throw new Error('Use a player wallet distinct from the shared bot wallet');
     return this.store.mutate(id, async g => {
       if (g.chatId !== String(chatId)) throw new Error('Use the original game chat');
@@ -35,8 +35,8 @@ class SolanaService {
       if (g.challenger) throw new ChallengeTakenError();
       if (g.interfaceVersion && !g.creator.deposit) throw new Error('Creator has not funded this challenge');
       if (g.interfaceVersion >= 2 && !g.ui?.publishRequested) throw new Error('Creator has not confirmed this challenge for publication');
-      g.challenger = { userId: String(userId), wallet, receiveWallet, name, joinedAt: this.now(), depositExpiresAt: this.now() + (g.interfaceVersion ? 3 : 15) * 60 * 1000, payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:challenger` };
-      if (g.interfaceVersion) g.expiresAt = this.now() + 3 * 60 * 1000;
+      g.challenger = { userId: String(userId), wallet, receiveWallet, name, joinedAt: this.now(), depositExpiresAt: this.now() + (this.chain.depositWindowMs || (g.interfaceVersion ? 3 : 15) * 60 * 1000), payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:challenger` };
+      if (g.interfaceVersion) g.expiresAt = this.now() + (this.chain.depositWindowMs || 3 * 60 * 1000);
     });
   }
   member(game, userId) {
@@ -185,10 +185,10 @@ class SolanaService {
           if (state === 'finalized') { await this.store.paymentState(item.id, 'CONFIRMED'); continue; }
           if (state === 'failed') { await this.store.paymentState(item.id, 'REVIEW', 'On-chain transaction failed; manual reconciliation required'); continue; }
           stage = 'block-height';
-          const height = await this.chain.connection.getBlockHeight('finalized');
-          if (height > signed.lastValidBlockHeight) {
+          const expired = this.chain.paymentExpired ? await this.chain.paymentExpired(signed) : await this.chain.connection.getBlockHeight('finalized') > signed.lastValidBlockHeight;
+          if (expired) {
             // RPC absence is not proof of no payout. Never auto-resign/retry with a new blockhash.
-            await this.store.paymentState(item.id, 'REVIEW', 'Blockhash expired without finalized proof; reconcile exact signature before any replacement');
+            await this.store.paymentState(item.id, 'REVIEW', this.chain.expiredPaymentReason || 'Blockhash expired without finalized proof; reconcile exact signature before any replacement');
             continue;
           }
           stage = 'broadcast';

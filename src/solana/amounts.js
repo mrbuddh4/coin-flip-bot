@@ -1,12 +1,12 @@
 // All monetary arithmetic is integer based; JSON/SQL boundaries use decimal strings.
-function toUnits(text, decimals) {
+function toUnits(text, decimals, maximum = 18446744073709551615n) {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) throw new Error('Unsupported decimals');
   if (typeof text === 'string' && /^\.\d+$/.test(text)) text = '0' + text;
   if (typeof text !== 'string' || !/^\d+(\.\d+)?$/.test(text)) throw new Error('Use a positive decimal amount, without exponent notation');
   const [whole, fraction = ''] = text.split('.');
   if (fraction.length > decimals) throw new Error('Too many decimal places');
   const value = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0');
-  if (value <= 0n || value > 18446744073709551615n) throw new Error('Amount outside token range');
+  if (value <= 0n || value > BigInt(maximum)) throw new Error('Amount outside token range');
   return value;
 }
 function fromUnits(value, decimals) {

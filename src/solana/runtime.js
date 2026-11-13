@@ -33,7 +33,7 @@ async function main() {
   let pollingStarted = false;
   let cycleRunning = false;
   let presentationRunning = false;
-  let scanner, ui;
+  let scanner, ui, rh;
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
@@ -43,8 +43,9 @@ async function main() {
     clearInterval(feeTimer);
     if (bot && pollingStarted) { try { bot.stop('shutdown'); } catch (_) {} }
     // Keep the DB lock until the worker finishes its current signed transaction operation.
-    while (cycleRunning || presentationRunning || scanner?.running || ui?.depositCheckJobs?.size || service?.workerRunning || fees?.running) await new Promise(resolve => setTimeout(resolve, 50));
+    while (rh?.service.workerRunning || rh?.scanner.running || rh?.ui?.depositCheckJobs?.size || cycleRunning || presentationRunning || scanner?.running || ui?.depositCheckJobs?.size || service?.workerRunning || fees?.running) await new Promise(resolve => setTimeout(resolve, 50));
     if (server) await new Promise(resolve => server.close(resolve));
+    if (rh) { await rh.store.pool.end(); rh.chain.provider.destroy?.(); }
     await store.pool.end();
     await release();
   };
@@ -65,27 +66,35 @@ async function main() {
     await startupStep('fee-backfill', () => fees.backfill());
     service.feeService = fees;
     scanner = new DepositScanner(service);
+    if (process.env.BOT_CHAIN === 'multi') rh = await startupStep('robinhood', () => require('../robinhood/runtime').setupRobinhood(store));
     bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
     const info = await startupStep('telegram', () => bot.telegram.getWebhookInfo());
     if (info.url) throw new Error('Bot has an existing webhook; stop and review before switching to polling');
     bot.botInfo = await startupStep('telegram', () => bot.telegram.getMe());
     registerSolanaCommands(bot, service, { includeStart: false, allowLegacyGames: false });
-    ui = new SolanaInterface(bot, service, scanner);
+    if (rh) {
+      const { RobinhoodPrices } = require('../robinhood/prices');
+      require('../robinhood/telegram').registerRobinhoodCommands(bot, rh.service);
+      const router = require('../robinhood/router').createRouter(bot, {
+        solana: { service, scanner }, robinhood: { service: rh.service, scanner: rh.scanner, prices: new RobinhoodPrices() },
+      });
+      ui = router.uis.solana; rh.ui = router.uis.robinhood;
+    } else ui = new SolanaInterface(bot, service, scanner);
     const noticeCleanup = new ObsoleteNoticeCleanup(store, bot.telegram);
-    ui.register();
+    if (!rh) ui.register();
     bot.catch(() => console.error('Solana command failed; check private configuration and ledger.'));
     // Rendering waits only for Telegram and the persisted game state, never for
     // an unrelated RPC scan or pending payout to finish before revealing a flip.
     const present = async () => {
       if (presentationRunning || stopping) return;
       presentationRunning = true;
-      try { await ui.render(); await ui.refreshPrivateScreens(); }
+      try { await ui.render(); await ui.refreshPrivateScreens(); if (rh) { await rh.ui.render(); await rh.ui.refreshPrivateScreens(); } }
       finally { presentationRunning = false; }
     };
     const cycle = async () => {
       if (cycleRunning || stopping) return;
       cycleRunning = true;
-      try { await service.work(); await present(); }
+      try { await Promise.all([service.work(), ...(rh ? [rh.service.work()] : [])]); await present(); }
       finally {
         // Removing obsolete verbose notices must never affect payments or polling.
         try { await noticeCleanup.tick(); }
@@ -96,7 +105,7 @@ async function main() {
     await startupStep('worker', () => cycle());
     timer = setInterval(() => cycle().catch(() => console.error('Solana worker check failed; ledger retained.')), 5000);
     // A slow/rate-limited history scan must never hold queued refunds or expiry.
-    const scan = () => { if (!stopping) return scanner.tick().catch(() => console.error('DEPOSIT_SCAN_RETRY: history retained.')); };
+    const scan = () => { if (!stopping) return Promise.all([scanner.tick(), ...(rh ? [rh.scanner.tick()] : [])]).catch(() => console.error('DEPOSIT_SCAN_RETRY: history retained.')); };
     scan();
     scanTimer = setInterval(scan, 5000);
     presentationTimer = setInterval(() => present().catch(() => console.error('PRESENTATION_RETRY: financial records retained.')), 1000);
@@ -112,10 +121,10 @@ async function main() {
     });
     const pay = paymentHandler(service), holder = holderHandler(fees);
     server = await startupStep('health', () => startHealthServer({
-      status: () => ({ ready: pollingStarted && !stopping, mode: `solana-${process.env.SOLANA_CLUSTER}`, realFundsEnabled: network().realFunds, holderRewards: fees.mode }),
+      status: () => ({ ready: pollingStarted && !stopping, mode: rh ? 'solana-and-robinhood' : `solana-${process.env.SOLANA_CLUSTER}`, realFundsEnabled: network().realFunds, holderRewards: fees.mode }),
       handle: async (req, res) => await pay(req, res) || (fees.mode === 'paxeer' && await holder(req, res)),
     }));
-    console.log('Solana startup checks passed; Telegram polling requested.');
+    console.log(rh ? 'Solana and Robinhood startup checks passed; Telegram polling requested.' : 'Solana startup checks passed; Telegram polling requested.');
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);
   } catch (error) { await shutdown().catch(() => {}); throw error; }

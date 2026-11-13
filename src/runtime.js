@@ -6,12 +6,12 @@ const { startupStep, formatStartupFailure } = require('./utils/startupDiagnostic
 async function main() {
   if (getMode() === 'live') {
     assertLiveFunds();
-    if (process.env.BOT_CHAIN === 'solana') {
+    if (['solana', 'multi'].includes(process.env.BOT_CHAIN)) {
       const runtime = await startupStep('dependencies', () => require('./solana/runtime'));
       await runtime.main();
     }
     else if (!process.env.BOT_CHAIN || process.env.BOT_CHAIN === 'evm') await require('./index').main();
-    else throw new Error('BOT_CHAIN must be evm or solana');
+    else throw new Error('BOT_CHAIN must be evm, solana or multi');
     return;
   }
   // No imports of the game, wallet, database models or Telegram poller here.

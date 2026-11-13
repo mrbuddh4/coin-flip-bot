@@ -16,7 +16,7 @@ async function findNoMemoCandidates(client, input, matcher = noMemoCandidates) {
   // Funding/top-ups are identified by asset, signer and historical window,
   // independently of amount. All overlapping requests remain candidates.
   const { rows } = await client.query(`SELECT state FROM "SolGames" WHERE state->'token'->>'address'=$1 AND (state->'creator'->>'wallet'=$2 OR state->'challenger'->>'wallet'=$2)`, [input.mint, input.sender]);
-  return matcher(rows.map(r => r.state), input);
+  return matcher(rows.map(r => r.state), { ...input, ...(client.coinflipMaximum ? { maximum: client.coinflipMaximum } : {}) });
 }
 class SolanaStore {
   constructor(pool = new Pool(connectionOptions(config.database))) { this.pool = pool; }
@@ -34,7 +34,7 @@ class SolanaStore {
       if (game.interfaceVersion) {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`sol-group:${game.chatId}`]);
         const existing = await client.query(`SELECT id FROM "SolGames" WHERE ${ACTIVE_GROUP} AND id<>$2`, [game.chatId, game.id]);
-        if (existing.rowCount) throw new ChallengeBusyError();
+        if (existing.rowCount || (this.peerSchema && (await client.query(`SELECT id FROM ${this.peerSchema}."SolGames" WHERE ${ACTIVE_GROUP}`, [game.chatId])).rowCount)) throw new ChallengeBusyError();
       }
       await client.query('INSERT INTO "SolGames" (id, state) VALUES ($1, $2) ON CONFLICT DO NOTHING', [game.id, JSON.stringify(game)]);
       const result = await client.query('SELECT state FROM "SolGames" WHERE id=$1', [game.id]);
@@ -46,7 +46,9 @@ class SolanaStore {
   }
   async activeGroup(chatId) {
     const { rows } = await this.pool.query(`SELECT state FROM "SolGames" WHERE ${ACTIVE_GROUP} ORDER BY "createdAt" LIMIT 1`, [String(chatId)]);
-    return rows[0]?.state || null;
+    if (rows[0]?.state) return rows[0].state;
+    if (this.peerSchema) return (await this.pool.query(`SELECT state FROM ${this.peerSchema}."SolGames" WHERE ${ACTIVE_GROUP} ORDER BY "createdAt" LIMIT 1`, [String(chatId)])).rows[0]?.state || null;
+    return null;
   }
   async noMemoCandidates(input) { return findNoMemoCandidates(this.pool, input); }
   async refundCandidates(input) { return findNoMemoCandidates(this.pool, input, refundCandidates); }

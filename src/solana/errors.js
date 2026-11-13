@@ -15,6 +15,7 @@ function paymentFailure(error) {
   if (Number(error?.code) === 429 || /429|too many requests|rate.?limit/i.test(text)) return { code: 'RPC_RATE_LIMIT', reason: 'RPC provider throttled requests; automatic retry is delayed.' };
   if (/timeout|timed out|abort/i.test(text)) return { code: 'RPC_TIMEOUT', reason: 'RPC request timed out; payment remains queued.' };
   if (/Treasury does not cover all liabilities plus the SOL reserve/.test(text)) return { code: 'TREASURY_SOL_SHORTFALL', reason: 'Treasury SOL is below recorded obligations plus the 0.01 SOL reserve.' };
+  if (/TREASURY_ETH_SHORTFALL/.test(text)) return { code: 'TREASURY_ETH_SHORTFALL', reason: 'Treasury ETH cannot cover recorded obligations, signed transaction fees and the gas reserve.' };
   if (/Token treasury does not cover all recorded liabilities/.test(text)) return { code: 'TREASURY_TOKEN_SHORTFALL', reason: 'A treasury token balance is below its recorded obligations.' };
   if (/Fund the bot fee reserve/.test(text)) return { code: 'FEE_RESERVE_SHORTFALL', reason: 'Treasury SOL cannot cover this payment, fees and the reserve.' };
   if (/Funds disabled/.test(text)) return { code: 'FUNDS_DISABLED', reason: 'Live fund transfers are disabled in hosting configuration.' };

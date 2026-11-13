@@ -57,7 +57,7 @@ class PrivateScreen {
       try { messageId = (await ctx.reply(text, options)).message_id; }
       catch (_) { throw new ScreenTransportError('Screen send needs retry'); }
     }
-    await this.store.updateProfile(ctx.from.id, { privateScreen: { messageId, revision, text, rows: buttons, gameId: ctx.solGameId || null, view: ctx.solView || null, gameStateKey: ctx.solGameStateKey || null } });
+    await this.store.updateProfile(ctx.from.id, { privateScreen: { messageId, revision, text, ...(ctx.solChainKey ? { chainKey: ctx.solChainKey } : {}), rows: buttons, gameId: ctx.solGameId || null, view: ctx.solView || null, gameStateKey: ctx.solGameStateKey || null } });
     // Retire the prior navigation card only after Telegram acknowledged the
     // new card and its pointer is persisted. Never delete it on a send timeout.
     if (reenter && old?.messageId && String(old.messageId) !== String(messageId)) {
