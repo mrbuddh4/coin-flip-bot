@@ -1,6 +1,7 @@
 const { ethers } = require('ethers');
 const { ERC20 } = require('./chain');
 const { DepositValidationError } = require('../solana/errors');
+const { paymentFailure } = require('../solana/errors');
 const TRANSFER = ERC20.getEvent('Transfer').topicHash;
 class RobinhoodScanner {
   constructor(service) { this.service = service; this.running = false; this.nextTry = 0; }
@@ -16,11 +17,13 @@ class RobinhoodScanner {
   async tick() {
     if (this.running || Date.now() < this.nextTry) return;
     this.running = true;
+    let stage = 'validation';
     try {
       const { chain, store } = this.service;
       await chain.validate();
       await store.assertHealthy();
       await chain.checkHistory?.();
+      stage = 'cursor';
       const cursor = await store.scanState();
       if (!cursor) throw new Error('Robinhood scanner not initialized');
       const old = await chain.rpc('eth_getBlockByNumber', [ethers.toQuantity(BigInt(cursor.block)), false]);
@@ -34,6 +37,7 @@ class RobinhoodScanner {
       if (!watched.size) { await store.saveScanState(end, confirmedHead.hash); return; }
       const native = (await store.pool.query(`SELECT 1 FROM "SolGames" WHERE state->'token'->>'address'='NATIVE' LIMIT 1`)).rowCount > 0;
       const upper = from + (native ? 79n : 999n) < end ? from + (native ? 79n : 999n) : end;
+      stage = 'transfer-logs';
       const logs = await chain.rpc('eth_getLogs', [{ fromBlock: ethers.toQuantity(from), toBlock: ethers.toQuantity(upper), topics: [TRANSFER, null, ethers.zeroPadValue(chain.address, 32)] }]);
       const byBlock = new Map();
       for (const log of logs) {
@@ -46,6 +50,7 @@ class RobinhoodScanner {
       for (let height = from; height <= upper; height++) {
         if (Date.now() >= deadline) break;
         let block;
+        stage = 'block-history';
         if (native || byBlock.has(height.toString()) || height === upper) block = await chain.rpc('eth_getBlockByNumber', [ethers.toQuantity(height), native]);
         if (block && BigInt(block.number) !== height) throw new Error('Block range mismatch');
         for (const log of byBlock.get(height.toString()) || []) {
@@ -53,23 +58,27 @@ class RobinhoodScanner {
           let event; try { event = ERC20.parseLog(log); } catch (_) { continue; }
           const sender = event.args[0].toLowerCase();
           if (!watched.has(sender)) continue;
+          stage = 'erc20-receipt-ledger';
           await this.process(sender, log.transactionHash.toLowerCase(), log.address.toLowerCase(), event.args[2], block);
         }
         if (native) {
           if (!block || !Array.isArray(block.transactions)) throw new Error('Full native block unavailable');
           for (const tx of block.transactions) {
             if (typeof tx !== 'object') throw new Error('Native block omitted transaction bodies');
-            if (tx.to?.toLowerCase() === chain.address && watched.has(tx.from?.toLowerCase()) && BigInt(tx.value) > 0n) await this.process(tx.from.toLowerCase(), tx.hash.toLowerCase(), 'NATIVE', BigInt(tx.value), block);
+            if (tx.to?.toLowerCase() === chain.address && watched.has(tx.from?.toLowerCase()) && BigInt(tx.value) > 0n) { stage = 'native-receipt-ledger'; await this.process(tx.from.toLowerCase(), tx.hash.toLowerCase(), 'NATIVE', BigInt(tx.value), block); }
           }
         }
         // Persist only after EVERY relevant receipt in this range was handled.
         // Sparse ERC-20 ranges can skip empty blocks after the complete log query.
-        if (block) await store.saveScanState(height, block.hash);
+        if (block) { stage = 'save-cursor'; await store.saveScanState(height, block.hash); }
       }
       this.nextTry = 0;
-    } catch (_) {
+      this.service.depositScanStatus = null;
+    } catch (error) {
       this.nextTry = Date.now() + 15000;
-      console.error('ROBINHOOD_SCAN_RETRY: finalized cursor retained; deposits not discarded.');
+      const failure = paymentFailure(error);
+      this.service.depositScanStatus = { code: failure.code, stage };
+      console.error(`ROBINHOOD_SCAN_RETRY: ${failure.code} at ${stage}; confirmation cursor retained; deposits not discarded.`);
     } finally { this.running = false; }
   }
   async process(sender, signature, mint, amount, block) {

@@ -106,3 +106,12 @@ test('RPC-history failure never falls back from finalized to latest and never au
   await expect(f.chain.tokenInfo(SID)).rejects.toThrow();await expect(f.chain.paymentStatus(hash)).rejects.toThrow();
   expect(f.rpc.mock.calls.some(([m])=>m==='eth_sendRawTransaction')).toBe(false);
 });
+
+test('read-only deposit verification never persists receipt proof evidence', async()=>{
+  const f=fixture();f.chain.recordProof=jest.fn();tokenTransfer(f);
+  await f.chain.verifyDeposit({signature:hash,sender,mint:SID,recordProof:false});
+  expect(f.chain.recordProof).not.toHaveBeenCalled();
+  await f.chain.verifyDeposit({signature:hash,sender,mint:SID});expect(f.chain.recordProof).toHaveBeenCalledTimes(1);
+  f.chain.recordProof.mockClear();f.tx.to=f.chain.address;f.tx.input='0x';f.tx.value='0x64';f.receipt.logs=[];
+  await f.chain.verifyDeposit({signature:hash,sender,mint:'NATIVE',recordProof:false});expect(f.chain.recordProof).not.toHaveBeenCalled();
+});

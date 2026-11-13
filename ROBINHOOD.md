@@ -116,6 +116,8 @@ A stuck low-fee transaction can hold later nonce-ordered payments until reviewed
 
 Private commands:
 
+- `/rhdepositcheck TX_HASH`: private owner-only, read-only receipt, request-window, registered-wallet and scanner-cursor diagnostic. No game ID is needed.
+- `/rhrefund TX_HASH`: same read-only preview. Adding `CONFIRM` queues a full return of a verified, previously unrecorded direct deposit only after nearby matching requests have closed. It uses the existing unique-receipt ledger and ordinary payment worker; repeated commands cannot queue a second refund. Mismatched senders or missing historical requests require review.
 - `/rhstatus GAME_ID`: saved state and payment links; players/original group only.
 - `/rhdeposit GAME_ID TX_HASH`: submit an exact historical direct-deposit proof.
 - `/rhaudit`: owner-only treasury liabilities and gas/reserve coverage check.

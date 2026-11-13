@@ -98,14 +98,14 @@ class RobinhoodChain {
     if (BigInt(receipt.status) !== 1n) throw new DepositValidationError('Transaction failed');
     return { tx, receipt, block, blockTime: Number(BigInt(block.timestamp)) };
   }
-  async verifyDeposit({ signature, sender, mint, transaction }) {
+  async verifyDeposit({ signature, sender, mint, transaction, recordProof = true }) {
     // Re-read canonical finality even when the scanner supplied a decoded hint.
     const proof = await this.receiptProof(signature), { tx, receipt } = proof;
     if (normalizeAddress(tx.from) !== normalizeAddress(sender) || BigInt(tx.chainId) !== BigInt(CHAIN_ID)) throw new DepositValidationError('Wrong sending wallet or chain');
     if (transaction && (transaction.blockTime !== proof.blockTime || transaction.hash?.toLowerCase() !== signature.toLowerCase())) throw new Error('Scanner proof changed; retry');
     if (mint === 'NATIVE') {
       if (tx.to?.toLowerCase() !== this.address || (tx.input || '0x') !== '0x' || receipt.logs?.length || BigInt(tx.value) <= 0n) throw new DepositValidationError('Use a direct native ETH transfer on Robinhood');
-      await this.recordProof?.(signature.toLowerCase(), proof.block);
+      if (recordProof) await this.recordProof?.(signature.toLowerCase(), proof.block);
       return BigInt(tx.value);
     }
     mint = normalizeAddress(mint);
@@ -118,7 +118,7 @@ class RobinhoodChain {
     let event;
     try { if (logs.length === 1 && logs[0].address.toLowerCase() === mint) event = ERC20.parseLog(logs[0]); } catch (_) {}
     if (event?.name !== 'Transfer' || event.args[0].toLowerCase() !== sender.toLowerCase() || event.args[1].toLowerCase() !== this.address || event.args[2] !== transfer.args[1]) throw new DepositValidationError('Unsupported fee-on-transfer or nonstandard receipt; manual review required');
-    await this.recordProof?.(signature.toLowerCase(), proof.block);
+    if (recordProof) await this.recordProof?.(signature.toLowerCase(), proof.block);
     return event.args[2];
   }
   async balance(mint, address = this.address) {

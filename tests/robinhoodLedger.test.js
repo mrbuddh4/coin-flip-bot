@@ -98,6 +98,32 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     expect(chain.verifyDeposit).toHaveBeenCalledTimes(1);expect((await rh.get(g.id)).creator.deposit).toBeDefined();
     await rh.saveScanState(10,'block10');chain.rpc=jest.fn(async()=>{throw new Error('429')});scanner.nextTry=0;await scanner.tick();expect(await rh.scanState()).toEqual({block:'10',hash:'block10'});
   });
+  test('hash-only owner diagnostic is read-only and closed-request refund queues actual 3100 SID once',async()=>{
+    const {traceRobinhoodDeposit,recoverRobinhoodDeposit}=require('../src/robinhood/depositTrace');
+    const g=await service.create({...input,amount:'3100'}),signature='0x'+'ab'.repeat(32);
+    now=g.expiresAt+1000;await service.expire();
+    const amount=ethers.parseEther('3100');chain.verifyDeposit.mockResolvedValue(amount);
+    chain.receiptProof=jest.fn(async()=>({tx:{from:a,to:SID},blockTime:1001,block:{number:'0xb'}}));
+    chain.normalizeAddress=normalizeAddress;await rh.saveScanState(10,'block10');
+    const text=await traceRobinhoodDeposit(service,signature);
+    expect(text).toContain('Receipt: NOT RECORDED');expect(text).toContain('sender MATCHES');expect(text).toContain(g.id);
+    expect(chain.verifyDeposit).toHaveBeenCalledWith(expect.objectContaining({recordProof:false}));
+    expect(await rh.hasDeposit(signature)).toBe(false);expect(await rh.payments(g.id)).toEqual([]);expect(chain.buildPayment).not.toHaveBeenCalled();
+    expect(await recoverRobinhoodDeposit(service,signature)).toContain('recorded for full refund');
+    expect(await recoverRobinhoodDeposit(service,signature)).toContain('already recorded');
+    const payments=await rh.payments(g.id);expect(payments).toHaveLength(1);expect(payments[0].payment).toMatchObject({recipient:a,amount:amount.toString(),kind:'refund'});
+    expect(chain.buildPayment).not.toHaveBeenCalled();
+  });
+  test('hash-only recovery refuses open games, wrong registered wallets and unavailable receipt proof',async()=>{
+    const {recoverRobinhoodDeposit}=require('../src/robinhood/depositTrace');
+    const g=await service.create({...input,amount:'3100'}),signature='0x'+'ab'.repeat(32);chain.verifyDeposit.mockResolvedValue(ethers.parseEther('3100'));
+    chain.receiptProof=jest.fn(async()=>({tx:{from:a,to:SID},blockTime:1001,block:{number:'0xb'}}));
+    expect(await recoverRobinhoodDeposit(service,signature)).toContain('remains open');
+    now=g.expiresAt+1000;await service.expire();chain.receiptProof.mockResolvedValue({tx:{from:b,to:SID},blockTime:1001,block:{number:'0xb'}});
+    expect(await recoverRobinhoodDeposit(service,signature)).toContain('No nearby saved request');
+    chain.receiptProof.mockRejectedValue(new Error('history unavailable'));await expect(recoverRobinhoodDeposit(service,signature)).rejects.toThrow('history unavailable');
+    expect(await rh.hasDeposit(signature)).toBe(false);expect(await rh.payments(g.id)).toEqual([]);
+  });
   test('accepted receipt evidence persists; block changes freeze financial actions until reconciliation',async()=>{
     const sig='0x'+'77'.repeat(32), block={number:'0x64',hash:'0x'+'88'.repeat(32)};
     await rh.recordProof(sig,block);await rh.recordProof(sig,block);expect((await pools[1].query('SELECT * FROM "RhProofs" WHERE signature=$1',[sig])).rowCount).toBe(1);
