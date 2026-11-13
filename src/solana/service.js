@@ -1,0 +1,220 @@
+const { randomUUID, randomInt, randomBytes } = require('node:crypto');
+const { publicKey } = require('./chain');
+const { toUnits, splitPool } = require('./amounts');
+const { DepositValidationError, ChallengeTakenError, paymentFailure } = require('./errors');
+class SolanaService {
+  constructor({ store, chain, now = () => Date.now(), coin = () => randomInt(2) }) {
+    Object.assign(this, { store, chain, now, coin });
+    this.workerRunning = false;
+    this.paymentRetryAt = 0;
+    this.paymentRateFailures = 0;
+  }
+  async create({ userId, chatId, wallet, mint, amount, receiveWallet = wallet, name, gameId, interfaceVersion }) {
+    wallet = this.chain.normalizeAddress ? this.chain.normalizeAddress(wallet) : (publicKey(wallet), wallet);
+    receiveWallet = this.chain.normalizeAddress ? this.chain.normalizeAddress(receiveWallet) : (publicKey(receiveWallet), receiveWallet);
+    if ([wallet, receiveWallet].includes(this.chain.address)) throw new Error('Use a player wallet distinct from the shared bot wallet');
+    const token = await this.chain.tokenInfo(mint);
+    const wager = toUnits(amount, token.decimals, this.chain.maximumAmount).toString();
+    if (BigInt(wager) * 2n > (this.chain.maximumAmount || 18446744073709551615n)) throw new Error('Pool exceeds token amount range');
+    // Native SOL JSON RPC amounts are numbers; reject unsafe large transfers rather than rounding.
+    if (!this.chain.maximumAmount && token.address === 'NATIVE' && BigInt(wager) * 2n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('SOL wager too large');
+    const id = gameId || randomUUID();
+    return this.store.create({ id, chatId: String(chatId), token, wager, status: 'OPEN',
+      depositAddress: this.chain.address, cluster: this.chain.cluster || this.chain.env?.SOLANA_CLUSTER || 'devnet', ...(this.chain.chainId ? { chainId: this.chain.chainId } : {}), createdAt: this.now(), expiresAt: this.now() + (this.chain.depositWindowMs || (interfaceVersion ? 3 : 15) * 60 * 1000),
+      ...(interfaceVersion ? { interfaceVersion, ui: {} } : {}),
+      creator: { userId: String(userId), wallet, receiveWallet, name, depositExpiresAt: this.now() + (this.chain.depositWindowMs || (interfaceVersion ? 3 : 15) * 60 * 1000), payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:creator` }, challenger: null });
+  }
+  async join({ id, userId, wallet, chatId, receiveWallet = wallet, name }) {
+    wallet = this.chain.normalizeAddress ? this.chain.normalizeAddress(wallet) : (publicKey(wallet), wallet);
+    receiveWallet = this.chain.normalizeAddress ? this.chain.normalizeAddress(receiveWallet) : (publicKey(receiveWallet), receiveWallet);
+    if ([wallet, receiveWallet].includes(this.chain.address)) throw new Error('Use a player wallet distinct from the shared bot wallet');
+    return this.store.mutate(id, async g => {
+      if (g.chatId !== String(chatId)) throw new Error('Use the original game chat');
+      if (g.status !== 'OPEN' || this.now() >= g.expiresAt) throw new Error('Game closed or expired');
+      if (g.creator.userId === String(userId) || g.creator.wallet === wallet) throw new Error('A different player and sending wallet must join');
+      if (g.challenger) throw new ChallengeTakenError();
+      if (g.interfaceVersion && !g.creator.deposit) throw new Error('Creator has not funded this challenge');
+      if (g.interfaceVersion >= 2 && !g.ui?.publishRequested) throw new Error('Creator has not confirmed this challenge for publication');
+      g.challenger = { userId: String(userId), wallet, receiveWallet, name, joinedAt: this.now(), depositExpiresAt: this.now() + (this.chain.depositWindowMs || (g.interfaceVersion ? 3 : 15) * 60 * 1000), payToken: randomBytes(16).toString('hex'), memo: `coinflip:${id}:challenger` };
+      if (g.interfaceVersion) g.expiresAt = this.now() + (this.chain.depositWindowMs || 3 * 60 * 1000);
+    });
+  }
+  member(game, userId) {
+    const member = [game.creator, game.challenger].find(p => p?.userId === String(userId));
+    if (!member) throw new Error('You are not a player in this game');
+    return member;
+  }
+  async refund(g, tx, member, receipt, mint = g.token.address, component = '') {
+    await tx.enqueue({ id: `refund${component}:${receipt.signature}`, gameId: g.id, mint, recipient: member.wallet, amount: receipt.amount, kind: 'refund', sourceWallet: g.depositAddress });
+  }
+  async cancelLocked(g, tx, reason = 'CANCELLED') {
+    g.status = 'CANCELLED';
+    g.cancelReason = reason;
+    for (const player of [g.creator, g.challenger]) {
+      const receipts = player?.funding?.receipts || (player?.deposit ? [player.deposit] : []);
+      for (const receipt of receipts) await this.refund(g, tx, player, receipt);
+    }
+  }
+  async deposit({ id, userId, signature, detectedMint, transaction, noMemo = false }) {
+    const snapshot = await this.store.get(id);
+    const participant = this.member(snapshot, userId);
+    if (snapshot.depositAddress !== this.chain.address) throw new Error('Game belongs to a different deposit wallet; reconcile before changing keys');
+    const mint = detectedMint || snapshot.token.address;
+    if (mint !== snapshot.token.address) await this.chain.tokenInfo(mint);
+    const amount = await this.chain.verifyDeposit({ signature, sender: participant.wallet, mint, memo: participant.memo, transaction, ...(noMemo ? { allowNoMemo: true } : {}) });
+    const plain = noMemo ? { sender: participant.wallet, mint, amount: amount.toString(), at: transaction?.blockTime * 1000 } : null;
+    const assertUnique = matches => {
+      if (matches.length !== 1 || matches[0].gameId !== id || matches[0].userId !== String(userId)) throw new DepositValidationError('Plain transfer does not uniquely identify this game; reconcile the receipt.');
+    };
+    if (plain) assertUnique(await this.store.noMemoCandidates(plain));
+    return this.store.mutate(id, async (g, tx) => {
+      const player = this.member(g, userId);
+      if (plain) assertUnique(await tx.noMemoCandidates(plain));
+      if (!await tx.consume(signature, String(userId), amount.toString())) return;
+      const receipt = { signature, amount: amount.toString() };
+      if (mint !== g.token.address) { await this.refund(g, tx, player, receipt, mint); return; }
+      if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx, 'EXPIRED');
+      // Closed requests and second payments after full funding are refunded in full.
+      if (g.status !== 'OPEN' || player.deposit) {
+        await this.refund(g, tx, player, receipt);
+        return;
+      }
+      // Store only the retained portion as a liability. Excess has its own
+      // durable refund component, so cancellation cannot repay it twice.
+      player.funding ||= { amount: '0', receipts: [] };
+      const remaining = BigInt(g.wager) - BigInt(player.funding.amount);
+      const credited = amount < remaining ? amount : remaining;
+      player.funding.receipts.push({ signature, amount: credited.toString() });
+      player.funding.amount = (BigInt(player.funding.amount) + credited).toString();
+      if (amount > credited) await this.refund(g, tx, player, { signature, amount: (amount - credited).toString() }, mint, '-excess');
+      // Partial top-ups never extend the original allotted payment time.
+      if (BigInt(player.funding.amount) < BigInt(g.wager)) return;
+      player.deposit = { signature, amount: g.wager };
+      // A fully funded EVM request is complete. Persist its on-chain cutoff so
+      // its unused timeout cannot capture a later game's direct transfer.
+      // Include the whole timestamp second: ordering within that second remains
+      // deliberately ambiguous and must never be guessed from transfer amount.
+      if (this.chain.closeFundedDepositWindows && Number.isSafeInteger(transaction?.blockTime) && transaction.blockTime >= 0 && Number.isSafeInteger(transaction.blockTime * 1000 + 1000)) {
+        player.depositWindowClosedAt = transaction.blockTime * 1000 + 1000;
+      }
+      if (g.interfaceVersion && !g.challenger && player === g.creator) g.expiresAt = this.now() + 4 * 60 * 1000;
+      if (g.creator.deposit && g.challenger?.deposit) {
+        const result = this.coin();
+        if (result !== 0 && result !== 1) throw new Error('Invalid random result');
+        const winner = result === 0 ? g.creator : g.challenger;
+        const split = splitPool(g.wager);
+        g.status = 'SETTLED'; // Economic result committed atomically with durable payout; chain state is separate.
+        g.winnerId = winner.userId;
+        g.fees = { holder: split.holderFee.toString(), burn: split.burnFee.toString(), status: 'ACCRUED' };
+        g.prize = split.prize.toString();
+        await tx.enqueue({ id: `prize:${id}`, gameId: id, mint: g.token.address, recipient: winner.receiveWallet || winner.wallet, amount: g.prize, kind: 'prize', sourceWallet: g.depositAddress });
+        await tx.accrueFees(g, split);
+      }
+    });
+  }
+  async cancel({ id, userId, chatId }) {
+    return this.store.mutate(id, async (g, tx) => {
+      if (g.creator.userId !== String(userId) || g.chatId !== String(chatId)) throw new Error('Only the creator can cancel in the original chat');
+      if (g.status === 'CANCELLED') return;
+      if (g.status !== 'OPEN') throw new Error('Result already committed; cancellation is closed');
+      await this.cancelLocked(g, tx);
+    });
+  }
+  async recoverUnmatchedDeposit({ sender, signature, mint, amount, transaction }) {
+    const input = { sender, mint, amount: String(amount), at: transaction?.blockTime * 1000 };
+    const candidates = await this.store.refundCandidates(input);
+    // Never choose a wager for an ambiguous proof. Recovery can only refund,
+    // and waits until all possibly related requests have closed.
+    if (!candidates.length || candidates.some(c => c.status === 'OPEN' && this.now() < c.expiresAt)) return false;
+    const candidate = [...candidates].sort((a, b) => b.expiresAt - a.expiresAt || a.gameId.localeCompare(b.gameId))[0];
+    const snapshot = await this.store.get(candidate.gameId);
+    if (snapshot.depositAddress !== this.chain.address) throw new Error('Recovery deposit wallet mismatch');
+    const value = await this.chain.verifyDeposit({ signature, sender, mint, transaction, allowNoMemo: true });
+    if (value !== BigInt(amount)) throw new DepositValidationError('Recovery amount mismatch');
+    await this.store.mutate(candidate.gameId, async (g, tx) => {
+      const current = await tx.refundCandidates(input);
+      if (!current.some(c => c.gameId === candidate.gameId && c.userId === candidate.userId) || current.some(c => c.status === 'OPEN' && this.now() < c.expiresAt)) return;
+      const player = this.member(g, candidate.userId);
+      if (player.wallet !== sender) throw new DepositValidationError('Recovery sender mismatch');
+      if (!await tx.consume(signature, player.userId, value.toString())) return;
+      if (g.status === 'OPEN') await this.cancelLocked(g, tx, 'EXPIRED');
+      await this.refund(g, tx, player, { signature, amount: value.toString() }, mint);
+    });
+    return true;
+  }
+  async expire() {
+    for (const { id } of await this.store.unfinished()) await this.store.mutate(id, async (g, tx) => {
+      if (g.status === 'OPEN' && this.now() >= g.expiresAt) await this.cancelLocked(g, tx, 'EXPIRED');
+    });
+  }
+  async recheckPayment(id) {
+    const row = (await this.store.pool.query('SELECT payment,signed,status FROM "SolOutbox" WHERE id=$1', [id])).rows[0];
+    if (!row?.signed || row.payment.sourceWallet !== this.chain.address) throw new Error('No matching signed payment to recheck');
+    await this.chain.validate();
+    if (await this.chain.paymentStatus(row.signed.signature) === 'finalized') await this.store.paymentState(id, 'CONFIRMED');
+    // Unknown, failed and expired signatures never authorize a replacement.
+    return (await this.store.pool.query('SELECT status,signed->>\'signature\' AS signature FROM "SolOutbox" WHERE id=$1', [id])).rows[0];
+  }
+  async work() {
+    if (this.workerRunning) return;
+    this.workerRunning = true;
+    try {
+      await this.expire();
+      try {
+        await this.store.queueHolderReserves?.(this.chain.address);
+        this.custodyError = null;
+      } catch (_) {
+        // Retained-pool reconciliation must not starve already-signed payouts.
+        this.custodyError = 'Retained holder fees need reconciliation; their funds remain reserved in the treasury.';
+      }
+      if (this.now() < this.paymentRetryAt) return;
+      let rateLimited = false;
+      for (const item of await this.store.pendingPayments()) {
+        let signed = item.signed;
+        let stage = 'prepare';
+        try {
+          if (item.payment.sourceWallet !== this.chain.address) {
+            await this.store.paymentState(item.id, 'REVIEW', 'Signing wallet changed; reconcile original wallet before payout');
+            continue;
+          }
+          if (!signed) {
+            // Reserve every recorded liability, including other games and
+            // REVIEW transfers. Do not let fees consume player deposits.
+            stage = 'reserve-check';
+            await this.chain.assertSolvent(await this.store.liabilities());
+            stage = 'build';
+            signed = await this.chain.buildPayment(item.payment);
+            stage = 'save-signed';
+            await this.store.saveSigned(item.id, signed); // Commit before any network send.
+          }
+          stage = 'signature-status';
+          const state = await this.chain.paymentStatus(signed.signature);
+          if (state === 'finalized') { await this.store.paymentState(item.id, 'CONFIRMED'); continue; }
+          if (state === 'failed') { await this.store.paymentState(item.id, 'REVIEW', 'On-chain transaction failed; manual reconciliation required'); continue; }
+          stage = 'block-height';
+          const expired = this.chain.paymentExpired ? await this.chain.paymentExpired(signed) : await this.chain.connection.getBlockHeight('finalized') > signed.lastValidBlockHeight;
+          if (expired) {
+            // RPC absence is not proof of no payout. Never auto-resign/retry with a new blockhash.
+            await this.store.paymentState(item.id, 'REVIEW', this.chain.expiredPaymentReason || 'Blockhash expired without finalized proof; reconcile exact signature before any replacement');
+            continue;
+          }
+          stage = 'broadcast';
+          await this.chain.broadcast(signed);
+        } catch (error) {
+          // Preserve signed payload on ambiguous send or RPC failures. Do not log private endpoint URLs.
+          const failure = paymentFailure(error);
+          const note = `${failure.code} at ${stage}: ${failure.reason}`;
+          await this.store.paymentState(item.id, signed ? 'SIGNED' : 'PENDING', note);
+          console.error(`SOLANA_PAYMENT_RETRY: id=${item.id}; stage=${stage}; reason=${failure.code}; original payment retained.`);
+          if (failure.code === 'RPC_RATE_LIMIT') {
+            rateLimited = true;
+            this.paymentRetryAt = this.now() + Math.min(60000, 5000 * 2 ** Math.min(this.paymentRateFailures++, 4));
+            break; // Do not repeat a throttled RPC call for every queued payment.
+          }
+        }
+      }
+      if (!rateLimited) this.paymentRateFailures = 0;
+    } finally { this.workerRunning = false; }
+  }
+}
+module.exports = { SolanaService };

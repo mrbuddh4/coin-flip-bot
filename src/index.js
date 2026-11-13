@@ -16,6 +16,10 @@ const logger = require('./utils/logger');
 const { validateConfig, formatNetworkName, getVideoDuration } = require('./utils/helpers');
 const { setDepositTimeout, clearDepositTimeout, depositTimeouts } = require('./utils/depositTimeout');
 const botState = require('./utils/botState');
+const { assertLiveFunds } = require('./utils/recoveryMode');
+const { validateChain } = require('./utils/validateChain');
+const { acquireInstanceLock } = require('./utils/instanceLock');
+const { startHealthServer } = require('./utils/healthServer');
 
 /**
  * Get token symbol from EVM token address, looking up config.supportedTokens
@@ -565,6 +569,7 @@ function startRefundWorker() {
 }
 
 async function initBot() {
+  assertLiveFunds();
   try {
     console.log('[INIT_BOT] Starting bot initialization...');
     // Skip re-initialization if bot already initialized (prevents duplicate from retry)
@@ -588,6 +593,7 @@ async function initBot() {
     // Validate blockchain wallets are properly derived
     console.log('Validating blockchain wallets...');
     const blockchainManager = getBlockchainManager();
+    await validateChain(blockchainManager.getHandler('EVM').provider, config.evm, process.env.EVM_CHAIN_ID);
     const evmWallet = blockchainManager.getBotWalletAddress('EVM');
     
     if (!evmWallet || evmWallet === '0x' || evmWallet === 'undefined') {
@@ -599,6 +605,8 @@ async function initBot() {
 
     // Initialize database
     console.log('Initializing database...');
+    // Acquire before any schema writes, workers, catchup or Telegram commands.
+    await acquireInstanceLock();
     await initDB();
 
     // Restore sleep state persisted before the last restart
@@ -4876,47 +4884,28 @@ async function handleCustomCAInput(ctx, session) {
 }
 
 /**
- * Acquire a PostgreSQL session-level advisory lock so only one bot instance
- * runs at a time. The lock is automatically released when the process exits
- * and its DB connection closes — no manual release needed.
- *
- * If another instance already holds the lock this will wait (pg_try_advisory_lock
- * returns false immediately; pg_advisory_lock blocks). We use the try variant
- * so Railway doesn't stall the health-check: if we can't get the lock within
- * the retry window we exit, letting Railway restart us once the old instance dies.
- */
-async function acquireSingleInstanceLock() {
-  const { sequelize } = getDB();
-  const LOCK_ID = 42424242; // arbitrary stable integer for this bot
-  const MAX_WAIT_MS = 30_000;
-  const RETRY_MS = 1_000;
-  const start = Date.now();
-
-  while (true) {
-    const [[{ acquired }]] = await sequelize.query(
-      `SELECT pg_try_advisory_lock(${LOCK_ID}) AS acquired`
-    );
-    if (acquired) {
-      logger.info('[lock] Acquired single-instance advisory lock');
-      return;
-    }
-    const elapsed = Date.now() - start;
-    if (elapsed + RETRY_MS > MAX_WAIT_MS) {
-      logger.error('[lock] Could not acquire single-instance lock within timeout — another instance is still running');
-      process.exit(1);
-    }
-    logger.info(`[lock] Lock held by another instance, retrying in ${RETRY_MS}ms…`);
-    await new Promise(r => setTimeout(r, RETRY_MS));
-  }
-}
-
-/**
  * Main entry point
  */
 async function main() {
   try {
     await initBot();
-    await acquireSingleInstanceLock();
+
+
+    let polling = false;
+    let stopping = false;
+    const health = await startHealthServer({
+      status: () => ({ ready: polling && !stopping, mode: 'live' }),
+    });
+    const shutdown = async (signal) => {
+      if (stopping) return;
+      stopping = true;
+      try { bot.stop(signal); } catch (_) { /* not polling yet */ }
+      // Do not release ownership before workers and in-flight sends stop with the process.
+      health.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 5000).unref();
+    };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
 
     // Retry bot.launch() if 409 — the old instance's Telegram long-poll may
     // still be active even after its DB connection (advisory lock) was released.
@@ -4925,9 +4914,13 @@ async function main() {
     const LAUNCH_RETRY_MS = 5_000;
     for (let attempt = 1; attempt <= MAX_LAUNCH_ATTEMPTS; attempt++) {
       try {
-        await bot.launch({ dropPendingUpdates: true });
+        await bot.launch({ dropPendingUpdates: false }, () => {
+          polling = true;
+          console.log('Telegram polling starting');
+        });
         break; // success
       } catch (launchErr) {
+        polling = false;
         if (launchErr.response?.error_code === 409 && attempt < MAX_LAUNCH_ATTEMPTS) {
           logger.warn(`[launch] 409 conflict on attempt ${attempt}/${MAX_LAUNCH_ATTEMPTS} — old instance still polling, retrying in ${LAUNCH_RETRY_MS}ms…`);
           await new Promise(r => setTimeout(r, LAUNCH_RETRY_MS));
@@ -4937,12 +4930,9 @@ async function main() {
       }
     }
 
-    console.log('🚀 Bot launched successfully');
+    polling = false;
+    if (!stopping) await shutdown('Polling ended');
 
-    // Graceful shutdown — await bot.stop() so the long-poll is cleanly
-    // cancelled before the process exits, preventing 409 conflicts on redeploy.
-    process.once('SIGINT', async () => { await bot.stop('SIGINT'); process.exit(0); });
-    process.once('SIGTERM', async () => { await bot.stop('SIGTERM'); process.exit(0); });
   } catch (error) {
     // Handle Telegram conflict error (409) - fail immediately
     if (error.response?.error_code === 409) {
@@ -4959,7 +4949,7 @@ async function main() {
   }
 }
 
-module.exports = { initBot, bot };
+module.exports = { initBot, main, bot };
 
 // Prevent unhandled promise rejections from crashing the process (e.g. in-flight
 // sendWinnings calls that were started by old code before a rolling deploy).
