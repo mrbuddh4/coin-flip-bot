@@ -84,6 +84,8 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
   function ctx(id=1,type='private',text=''){return{from:{id,first_name:'Player'},chat:{id:type==='private'?id:-100,type},message:{text},reply:jest.fn(async()=>({message_id:101})),answerCbQuery:jest.fn(async()=>{})}}
   test('network picker, RH group deep link, new-user wallet onboarding and editable shared screen',async()=>{
     const bot=fakeBot(),solChain={env:{SOLANA_CLUSTER:'mainnet-beta'}};const solService={store:sol,chain:solChain};const router=createRouter(bot,{solana:{service:solService,scanner:{}},robinhood:{service,scanner:{}}});
+    expect(router.uis.solana.reportingSources).toEqual([router.uis.solana, router.uis.robinhood]);
+    expect(router.uis.robinhood.reportingSources).toBe(router.uis.solana.reportingSources);
     const group=ctx(1,'supergroup','/flip');await bot.handlers.flip(group);const rows=group.reply.mock.calls[0][1].reply_markup.inline_keyboard;
     expect(rows).toHaveLength(2);const payload=rows[1][0].url.split('?start=')[1];const start=ctx(1,'private','/start '+payload);await bot.handlers.start(start);
     expect((await rh.session('1')).resume.kind).toBe('create');expect(start.reply).toHaveBeenCalledWith(expect.stringContaining('Robinhood Chain'),expect.anything());

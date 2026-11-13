@@ -34,6 +34,10 @@ function createRouter(bot, entries) {
     if (entry.prices) ui.prices = entry.prices;
     handlers[key] = registered; uis[key] = ui;
   }
+  // Shared read-only reporting. Wallets, receipts and payment workers remain
+  // isolated. Keep UI references so each chain uses its own quote provider.
+  const reportingSources = Object.values(uis);
+  for (const ui of reportingSources) ui.reportingSources = reportingSources;
   const selected = async ctx => (await root.profile(ctx.from.id)).privateScreen?.chainKey || 'solana';
   const dispatch = async (ctx, name, force) => {
     const key = force || await selected(ctx);

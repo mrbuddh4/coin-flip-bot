@@ -8,7 +8,8 @@ const { PrivateScreen, ScreenTransportError } = require('./screen');
 const { ChallengeBusyError, ChallengeTakenError } = require('./errors');
 const { fromUnits, toUnits } = require('./amounts');
 const { remaining, progress } = require('./funding');
-const { SolanaPrices, valueAssets, compareValues, formatEstimate } = require('./prices');
+const { SolanaPrices, compareValues, formatEstimate } = require('./prices');
+const { playerReport } = require('./reporting');
 const { tokensForUser } = require('./featured');
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const button = (text, callback_data) => ({ text, callback_data });
@@ -440,41 +441,13 @@ class SolanaInterface {
     return this.reply(ctx, `Send the public Paxeer EVM address holding your FLIP (0x…). You will sign a message proving ownership and authorizing rewards to <code>${escape(profile.receiveWallet)}</code>. Never send a private key or seed phrase.`);
   }
   async stats(ctx) {
-    const games = (await this.store.allResults()).filter(g => resultVisible(g) && [g.creator.userId, g.challenger?.userId].includes(String(ctx.from.id)));
-    const wins = games.filter(g => g.winnerId === String(ctx.from.id)).length;
-    const assets = new Map();
-    for (const g of games) {
-      const a = assets.get(g.token.address) || { token: g.token, wagered: 0n, allocated: 0n };
-      a.wagered += BigInt(g.wager);
-      if (g.winnerId === String(ctx.from.id)) a.allocated += BigInt(g.prize);
-      assets.set(g.token.address, a);
-    }
-    return this.reply(ctx, `<b>Your Game Statistics</b>\n\nFlips: ${games.length}\nWins: ${wins}\nLosses: ${games.length - wins}\n\n` + [...assets.values()].slice(0, 20).map(a => `${escape(a.token.symbol)} (<code>${escape(a.token.address)}</code>)\nWagered: ${fromUnits(a.wagered, a.token.decimals)}\nPrizes allocated: ${fromUnits(a.allocated, a.token.decimals)}`).join('\n\n') + '\n\nAllocated prizes may still be pending payment. Different tokens are never added together.', [[button('🏠 Home', 's:home')]]);
+    const report = await playerReport(this, String(ctx.from.id));
+    const r = report.users[0] || { wins: 0, losses: 0, assets: new Map(), value: { units: 0n, scale: 1n, missing: 0, priced: 0 } };
+    const valuation = report.mainnet ? escape(formatEstimate(r.value)) + (r.pending ? ' · prize pending' : '') : 'Test coins: no USD value';
+    return this.reply(ctx, `<b>Your Game Statistics</b>${report.combined ? '\nSolana + Robinhood combined' : ''}\n\nFlips: ${r.wins + r.losses}\nWins: ${r.wins}\nLosses: ${r.losses}\n${valuation}\n\n` + [...r.assets.values()].slice(0, 20).map(a => `${escape(a.label)}: ${escape(a.token.symbol)} (<code>${escape(a.token.address)}</code>)\nWagered: ${fromUnits(a.wagered, a.token.decimals)}\nPrizes allocated: ${fromUnits(a.allocated, a.token.decimals)}`).join('\n\n') + '\n\nNet P/L uses paid prizes minus all completed stakes at current prices. Pending prizes and network fees are excluded.', [[button('🏠 Home', 's:home')]]);
   }
   async leaderboard(ctx, losers = false) {
-    const results = (await this.store.allResults()).filter(g => g.status === 'SETTLED' && resultVisible(g)), ranks = new Map();
-    const paid = await this.store.confirmedPrizeGameIds();
-    for (const game of results) for (const player of [game.creator, game.challenger]) {
-      const r = ranks.get(player.userId) || { ...player, wins: 0, losses: 0, net: new Map(), pending: false };
-      const asset = r.net.get(game.token.address) || { amount: 0n, decimals: game.token.decimals };
-      // Both players spend their wager. A winner's returned stake is part of
-      // the prize, so subtract it too rather than counting it as profit.
-      asset.amount -= BigInt(game.wager);
-      if (game.winnerId === player.userId) {
-        r.wins++;
-        if (paid.has(game.id)) asset.amount += BigInt(game.prize);
-        else r.pending = true;
-      } else r.losses++;
-      r.net.set(game.token.address, asset);
-      ranks.set(player.userId, r);
-    }
-    const mainnet = this.service.chain.realFunds || this.service.chain.env.SOLANA_CLUSTER === 'mainnet-beta';
-    const users = [...ranks.values()];
-    // Price everybody before selecting the top ten; high-value winners with
-    // fewer wins must not disappear behind the old win-count shortlist.
-    const mints = [...new Set(users.flatMap(r => [...r.net].filter(([, a]) => a.amount !== 0n).map(([mint]) => mint)))];
-    const quotes = mainnet && mints.length ? await this.prices.get(mints) : new Map();
-    for (const r of users) r.value = valueAssets(r.net, quotes);
+    const { users, mainnet, combined } = await playerReport(this);
     const order = users.sort((a, b) => {
       if (mainnet) {
         if (Boolean(a.value.missing) !== Boolean(b.value.missing)) return a.value.missing ? 1 : -1;
@@ -485,9 +458,9 @@ class SolanaInterface {
       }
       return (losers ? b.losses - a.losses : b.wins - a.wins) || a.userId.localeCompare(b.userId);
     }).slice(0, 10);
-    const lines = order.map((r, i) => `${mainnet && r.value.missing ? 'Unranked' : i + 1 + '.'} ${mention(r)}: ${r.wins} wins, ${r.losses} losses\n${mainnet ? escape(formatEstimate(r.value)) + (r.pending ? ' · prize pending' : '') : 'Test coins: no USD value'}`);
+    const lines = order.map((r, i) => `${mainnet && r.value.missing ? 'Unranked' : i + 1 + '.'} ${mention(r)}: ${r.wins} wins, ${r.losses} losses\nFlips: ${r.wins + r.losses}\n${mainnet ? escape(formatEstimate(r.value)) + (r.pending ? ' · prize pending' : '') : 'Test coins: no USD value'}`);
     const note = mainnet ? '\n\nNet P/L = paid prizes minus all stakes in completed flips, including winning stakes. Pending prizes are excluded until paid; open/cancelled flips and network fees are excluded. Values use current token prices. Users with unpriced tokens are not USD ranked. Prices: DEX Screener / GeckoTerminal.' : '';
-    return this.reply(ctx, `<b>${losers ? 'Wall of Shame' : 'Leaderboard'}</b>\nRanked by ${mainnet ? 'estimated net USD profit (' + (losers ? 'lowest' : 'highest') + ' first)' : losers ? 'losses' : 'wins'}.\n\n` + (lines.join('\n\n') || 'No completed flips yet.') + (order.length ? note : ''));
+    return this.reply(ctx, `<b>${losers ? 'Wall of Shame' : 'Leaderboard'}</b>${combined ? '\nSolana + Robinhood combined' : ''}\nRanked by ${mainnet ? 'estimated net USD profit (' + (losers ? 'lowest' : 'highest') + ' first)' : losers ? 'losses' : 'wins'}.\n\n` + (lines.join('\n\n') || 'No completed flips yet.') + (order.length ? note : ''));
   }
 
   async refreshPrivateScreens() {

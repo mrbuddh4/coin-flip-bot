@@ -14,8 +14,8 @@ function setup(results, ids, cluster = 'mainnet-beta') {
 test('net P/L subtracts every completed stake, excludes pending prizes and hides unrevealed results', async () => {
   const ui = setup([game('a', '1'), game('b', '2', 'NATIVE', '900000000', 9), game('c', '1', A, '999000000'), game('hidden', '2', A, '500000000000', 6, { interfaceVersion: 2, ui: {} })], ['a', 'b', 'hidden']);
   await ui.leaderboard({}); const text = ui.reply.mock.calls[0][1];
-  expect(text).toContain('1. <a href="tg://user?id=1">&lt;Alice&gt;</a>: 2 wins, 1 losses\nNet P/L: ≈-$70.00 · prize pending');
-  expect(text).toContain('2. <a href="tg://user?id=2">Bob</a>: 1 wins, 2 losses\nNet P/L: ≈-$160.00');
+  expect(text).toContain('1. <a href="tg://user?id=1">&lt;Alice&gt;</a>: 2 wins, 1 losses\nFlips: 3\nNet P/L: ≈-$70.00 · prize pending');
+  expect(text).toContain('2. <a href="tg://user?id=2">Bob</a>: 1 wins, 2 losses\nFlips: 3\nNet P/L: ≈-$160.00');
   expect(text).toContain('paid prizes minus all stakes in completed flips, including winning stakes');
   expect(text).toContain('Ranked by estimated net USD profit (highest first)');
   expect(text).toContain('Pending prizes are excluded until paid');
@@ -46,8 +46,8 @@ test('one win at a larger value outranks more small wins; losses can make net to
   const rich = { userId: '3', name: 'Rich' }, other = { userId: '4', name: 'Other' };
   const ui = setup([game('a', '1', A, '1800000', 6, { wager: '1000000' }), game('b', '1', A, '1800000', 6, { wager: '1000000' }), game('big', '3', A, '90000000', 6, { wager: '50000000', creator: rich, challenger: other })], ['a','b','big']);
   await ui.leaderboard({}); const text = ui.reply.mock.calls[0][1];
-  expect(text).toContain('1. <a href="tg://user?id=3">Rich</a>: 1 wins, 0 losses\nNet P/L: ≈+$40.00');
-  expect(text).toContain('2. <a href="tg://user?id=1">&lt;Alice&gt;</a>: 2 wins, 0 losses\nNet P/L: ≈+$1.60');
+  expect(text).toContain('1. <a href="tg://user?id=3">Rich</a>: 1 wins, 0 losses\nFlips: 1\nNet P/L: ≈+$40.00');
+  expect(text).toContain('2. <a href="tg://user?id=1">&lt;Alice&gt;</a>: 2 wins, 0 losses\nFlips: 2\nNet P/L: ≈+$1.60');
   expect(text).toContain('Net P/L: ≈-$2.00');
 });
 test('USD ranking evaluates all players before the top-ten cutoff', async () => {
@@ -71,7 +71,7 @@ test('an exact break-even user remains ranked when the token price is unavailabl
   const ui = setup([game('win', '1', A, '200000000'), game('loss', '2')], ['win', 'loss']);
   ui.prices.get.mockResolvedValue(new Map());
   await ui.leaderboard({}); const text = ui.reply.mock.calls[0][1];
-  expect(text).toContain('1. <a href="tg://user?id=1">&lt;Alice&gt;</a>: 1 wins, 1 losses\nNet P/L: ≈$0.00');
+  expect(text).toContain('1. <a href="tg://user?id=1">&lt;Alice&gt;</a>: 1 wins, 1 losses\nFlips: 2\nNet P/L: ≈$0.00');
 });
 
 const integration = process.env.SOLANA_TEST_DATABASE_URL ? describe : describe.skip;
