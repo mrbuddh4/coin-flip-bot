@@ -205,7 +205,8 @@ class SolanaService {
           const failure = paymentFailure(error);
           const note = `${failure.code} at ${stage}: ${failure.reason}`;
           await this.store.paymentState(item.id, signed ? 'SIGNED' : 'PENDING', note);
-          console.error(`SOLANA_PAYMENT_RETRY: id=${item.id}; stage=${stage}; reason=${failure.code}; original payment retained.`);
+          const network = this.chain.key === 'robinhood' ? 'ROBINHOOD' : 'SOLANA';
+          console.error(`${network}_PAYMENT_RETRY: id=${item.id}; stage=${stage}; reason=${failure.code}; original payment retained.`);
           if (failure.code === 'RPC_RATE_LIMIT') {
             rateLimited = true;
             this.paymentRetryAt = this.now() + Math.min(60000, 5000 * 2 ** Math.min(this.paymentRateFailures++, 4));

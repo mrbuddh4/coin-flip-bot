@@ -191,19 +191,10 @@ class RobinhoodChain {
     assertLiveFunds(this.env); await this.validate();
     const tx = ethers.Transaction.from(signed.raw);
     if (tx.hash !== signed.signature || tx.from?.toLowerCase() !== this.address || tx.chainId !== BigInt(CHAIN_ID) || tx.nonce !== signed.nonce) throw new Error('Saved payment signature mismatch');
-    // Sending the exact same signed bytes is idempotent. Retry only provider
-    // throttling, with a short cap, so a transient 429 does not strand the
-    // payout for the next worker tick. No new nonce or replacement is made.
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const hash = await this.rpc('eth_sendRawTransaction', [signed.raw]);
-        if (hash.toLowerCase() !== signed.signature.toLowerCase()) throw new Error('Unexpected payment hash');
-        return;
-      } catch (error) {
-        if (!/429|rate.?limit|too many requests/i.test(String(error?.message || '')) || attempt === 2) throw error;
-        await new Promise(resolve => setTimeout(resolve, 750 * 2 ** attempt));
-      }
-    }
+    // rpc() already rotates through each endpoint once. Sending the exact
+    // same signed bytes repeatedly in one tick only worsens provider limits.
+    const hash = await this.rpc('eth_sendRawTransaction', [signed.raw]);
+    if (hash.toLowerCase() !== signed.signature.toLowerCase()) throw new Error('Unexpected payment hash');
   }
   async assertHolderReserveCoverage(wallet, reserves) {
     await this.validate(); wallet = normalizeAddress(wallet);
