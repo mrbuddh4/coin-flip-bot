@@ -21,6 +21,11 @@ class RobinhoodScanner {
     let stage = 'validation';
     try {
       const { chain, store } = this.service;
+      // Payouts have priority over historical deposit scanning. Both use the
+      // same public RPC quota; scanning while a signed payout is queued can
+      // starve its broadcast and produce a misleading rate-limit failure.
+      const pendingPayments = await store.pendingPayments?.();
+      if (pendingPayments?.length) { this.nextTry = Date.now() + 30000; return; }
       await chain.validate();
       await store.assertHealthy();
       await chain.checkHistory?.();
