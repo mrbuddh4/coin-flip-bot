@@ -25,9 +25,13 @@ function holderWallet(env) {
 class RobinhoodChain {
   constructor({ env = process.env, provider, signer, nextNonce } = {}) {
     this.env = env;
-    const request = new ethers.FetchRequest(env.ROBINHOOD_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com');
-    request.timeout = 15000;
-    this.provider = provider || new ethers.JsonRpcProvider(request, undefined, { batchMaxCount: 1 });
+    const primaryUrl = env.ROBINHOOD_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com';
+    const fallbackUrls = (env.ROBINHOOD_RPC_FALLBACK_URLS || 'https://robinhood-rpc.publicnode.com,https://robinhood.drpc.org,https://robinhood-mainnet-rpc.blockreq.com/v1/rpc/public')
+      .split(',').map(value => value.trim()).filter(Boolean).filter(value => value !== primaryUrl);
+    const makeProvider = url => { const request = new ethers.FetchRequest(url); request.timeout = 15000; return new ethers.JsonRpcProvider(request, undefined, { batchMaxCount: 1 }); };
+    this.providers = provider ? [provider] : [primaryUrl, ...fallbackUrls].map(makeProvider);
+    this.provider = this.providers[0];
+    this.rpcIndex = 0;
     this.signer = signer || new ethers.Wallet(env.ROBINHOOD_PRIVATE_KEY || '');
     this.address = normalizeAddress(this.signer.address);
     this.nextNonce = nextNonce;
@@ -45,7 +49,18 @@ class RobinhoodChain {
   normalizeAddress(value) { return normalizeAddress(value); }
   async rpc(method, params) {
     // Never print raw provider errors: private RPC URLs can contain API keys.
-    return this.provider.send(method, params);
+    for (let attempt = 0; attempt < Math.max(3, this.providers.length); attempt++) {
+      const index = (this.rpcIndex + attempt) % this.providers.length;
+      try {
+        const result = await this.providers[index].send(method, params);
+        this.rpcIndex = index; this.provider = this.providers[index];
+        return result;
+      }
+      catch (error) {
+        if (!/429|rate.?limit|too many requests/i.test(String(error?.message || '')) || attempt === Math.max(3, this.providers.length) - 1) throw error;
+        await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt));
+      }
+    }
   }
   async validate() {
     await this.assertHealthy?.();
