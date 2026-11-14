@@ -495,7 +495,7 @@ class SolanaInterface {
         try {
           if (!fs.existsSync(video)) throw new Error('Animation file missing');
           const me = await this.me();
-          const mediaId = `coinflip-fast-v1-video:${me.id || me.username}`;
+          const mediaId = `coinflip-fast-v2-video:${me.id || me.username}`;
           const cached = await this.store.media(mediaId);
           // The clock starts AFTER Telegram acknowledges the uploaded/cached
           // video, never when an upload merely begins.

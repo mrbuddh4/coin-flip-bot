@@ -63,11 +63,12 @@ integration('Fast Solana flip presentation on real PostgreSQL', () => {
     await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId });
     await service.deposit({ id: g.id, userId: '2', signature: 'fast-challenger' });
     await store.saveMedia('coinflip-video:TestCoinFlipBot', { fileId: 'old-long-clip', durationMs: 11000 });
+    await store.saveMedia('coinflip-fast-v1-video:TestCoinFlipBot', { fileId: 'previous-fast-clip', durationMs: 3000 });
     const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
     await ui.render();
     expect(bot.telegram.sendVideo).toHaveBeenCalledWith('-100', { source: path.join(__dirname, '../assets/coinflip-fast.mp4') }, expect.anything());
     expect((await store.get(g.id)).ui.revealAt).toBe(now + 3250);
-    expect(await store.media('coinflip-fast-v1-video:TestCoinFlipBot')).toMatchObject({ durationMs: 3000 });
+    expect(await store.media('coinflip-fast-v2-video:TestCoinFlipBot')).toMatchObject({ durationMs: 3000 });
     expect(bot.telegram.sendPhoto).not.toHaveBeenCalled();
     now += 3249; await ui.render(); expect(bot.telegram.sendPhoto).not.toHaveBeenCalled();
     now += 1; await ui.render();
