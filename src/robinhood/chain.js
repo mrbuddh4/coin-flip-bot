@@ -158,13 +158,14 @@ class RobinhoodChain {
     return { raw, signature: ethers.keccak256(raw), nonce, gasCost: cost.toString(), chainId: CHAIN_ID };
   }
   async paymentStatus(hash) {
+    // A missing receipt is the common pending case. Check it first so a
+    // throttled provider does not make several block-history calls before the
+    // worker reaches the signed broadcast. A receipt still goes through the
+    // full canonical/finality proof below.
+    const receipt = await this.rpc('eth_getTransactionReceipt', [hash]);
+    if (!receipt) return 'unknown';
     try { const proof = await this.receiptProof(hash); await this.recordProof?.(hash.toLowerCase(), proof.block); return 'finalized'; }
-    catch (error) { if (error instanceof DepositValidationError && error.message === 'Transaction failed') return 'failed';
-      // Missing history and RPC failures propagate; absence is never replacement authority.
-      const receipt = await this.rpc('eth_getTransactionReceipt', [hash]);
-      if (receipt) throw error;
-      await this.validate(); return 'unknown';
-    }
+    catch (error) { if (error instanceof DepositValidationError && error.message === 'Transaction failed') return 'failed'; throw error; }
   }
   async paymentExpired(signed) {
     // EVM transactions do not expire like Solana blockhashes. A consumed nonce
@@ -175,8 +176,19 @@ class RobinhoodChain {
     assertLiveFunds(this.env); await this.validate();
     const tx = ethers.Transaction.from(signed.raw);
     if (tx.hash !== signed.signature || tx.from?.toLowerCase() !== this.address || tx.chainId !== BigInt(CHAIN_ID) || tx.nonce !== signed.nonce) throw new Error('Saved payment signature mismatch');
-    const hash = await this.rpc('eth_sendRawTransaction', [signed.raw]);
-    if (hash.toLowerCase() !== signed.signature.toLowerCase()) throw new Error('Unexpected payment hash');
+    // Sending the exact same signed bytes is idempotent. Retry only provider
+    // throttling, with a short cap, so a transient 429 does not strand the
+    // payout for the next worker tick. No new nonce or replacement is made.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const hash = await this.rpc('eth_sendRawTransaction', [signed.raw]);
+        if (hash.toLowerCase() !== signed.signature.toLowerCase()) throw new Error('Unexpected payment hash');
+        return;
+      } catch (error) {
+        if (!/429|rate.?limit|too many requests/i.test(String(error?.message || '')) || attempt === 2) throw error;
+        await new Promise(resolve => setTimeout(resolve, 750 * 2 ** attempt));
+      }
+    }
   }
   async assertHolderReserveCoverage(wallet, reserves) {
     await this.validate(); wallet = normalizeAddress(wallet);
