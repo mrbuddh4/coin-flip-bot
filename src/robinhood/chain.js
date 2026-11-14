@@ -198,20 +198,17 @@ class RobinhoodChain {
     if (tx.hash !== signed.signature || tx.from?.toLowerCase() !== this.address || tx.chainId !== BigInt(CHAIN_ID) || tx.nonce !== signed.nonce) throw new Error('Saved payment signature mismatch');
     // Use the payout-only endpoint pool. Sending the exact same signed bytes
     // repeatedly in one tick only worsens provider limits.
+    // Try one endpoint per worker attempt. Cycling through every public
+    // endpoint in one tick looks like a burst and can trigger all providers'
+    // rate limits at once. The next worker tick rotates after a throttled send.
+    const index = this.paymentRpcIndex % this.paymentProviders.length;
     let hash;
-    let lastError;
-    for (let attempt = 0; attempt < this.paymentProviders.length; attempt++) {
-      const index = (this.paymentRpcIndex + attempt) % this.paymentProviders.length;
-      try {
-        hash = await this.paymentProviders[index].send('eth_sendRawTransaction', [signed.raw]);
-        this.paymentRpcIndex = index;
-        break;
-      } catch (error) {
-        lastError = error;
-        if (!/429|rate.?limit|too many requests/i.test(String(error?.message || ''))) throw error;
-      }
+    try { hash = await this.paymentProviders[index].send('eth_sendRawTransaction', [signed.raw]); }
+    catch (error) {
+      if (/429|rate.?limit|too many requests/i.test(String(error?.message || ''))) this.paymentRpcIndex = (index + 1) % this.paymentProviders.length;
+      throw error;
     }
-    if (!hash) throw lastError || new Error('Payout RPC unavailable');
+    this.paymentRpcIndex = index;
     if (hash.toLowerCase() !== signed.signature.toLowerCase()) throw new Error('Unexpected payment hash');
   }
   async assertHolderReserveCoverage(wallet, reserves) {
