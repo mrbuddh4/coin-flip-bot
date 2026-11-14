@@ -26,7 +26,7 @@ class RobinhoodChain {
   constructor({ env = process.env, provider, signer, nextNonce } = {}) {
     this.env = env;
     const primaryUrl = env.ROBINHOOD_RPC_URL || 'https://rpc.mainnet.chain.robinhood.com';
-    const fallbackUrls = (env.ROBINHOOD_RPC_FALLBACK_URLS || 'https://robinhood-rpc.publicnode.com,https://robinhood.drpc.org,https://robinhood-mainnet-rpc.blockreq.com/v1/rpc/public')
+    const fallbackUrls = (env.ROBINHOOD_RPC_FALLBACK_URLS || 'https://robinhood-rpc.publicnode.com,https://robinhood.drpc.org,https://robinhood-mainnet-rpc.blockreq.com/v1/rpc/public,https://api.blockvectra.com/v1/robinhood_mainnet/public,https://robinhood.daybreak-rpc.network')
       .split(',').map(value => value.trim()).filter(Boolean).filter(value => value !== primaryUrl);
     const makeProvider = url => { const request = new ethers.FetchRequest(url); request.timeout = 15000; return new ethers.JsonRpcProvider(request, undefined, { batchMaxCount: 1 }); };
     this.providers = provider ? [provider] : [primaryUrl, ...fallbackUrls].map(makeProvider);
