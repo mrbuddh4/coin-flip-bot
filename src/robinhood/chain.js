@@ -32,6 +32,11 @@ class RobinhoodChain {
     this.providers = provider ? [provider] : [primaryUrl, ...fallbackUrls].map(makeProvider);
     this.provider = this.providers[0];
     this.rpcIndex = 0;
+    // Broadcasts use their own endpoint pool. Historical deposit scans and
+    // receipt reads must never consume the send quota for signed payouts.
+    this.paymentProviders = provider ? [provider] : fallbackUrls.map(makeProvider);
+    if (!this.paymentProviders.length) this.paymentProviders = [this.providers[0]];
+    this.paymentRpcIndex = 0;
     this.signer = signer || new ethers.Wallet(env.ROBINHOOD_PRIVATE_KEY || '');
     this.address = normalizeAddress(this.signer.address);
     this.nextNonce = nextNonce;
@@ -191,9 +196,22 @@ class RobinhoodChain {
     assertLiveFunds(this.env); await this.validate();
     const tx = ethers.Transaction.from(signed.raw);
     if (tx.hash !== signed.signature || tx.from?.toLowerCase() !== this.address || tx.chainId !== BigInt(CHAIN_ID) || tx.nonce !== signed.nonce) throw new Error('Saved payment signature mismatch');
-    // rpc() already rotates through each endpoint once. Sending the exact
-    // same signed bytes repeatedly in one tick only worsens provider limits.
-    const hash = await this.rpc('eth_sendRawTransaction', [signed.raw]);
+    // Use the payout-only endpoint pool. Sending the exact same signed bytes
+    // repeatedly in one tick only worsens provider limits.
+    let hash;
+    let lastError;
+    for (let attempt = 0; attempt < this.paymentProviders.length; attempt++) {
+      const index = (this.paymentRpcIndex + attempt) % this.paymentProviders.length;
+      try {
+        hash = await this.paymentProviders[index].send('eth_sendRawTransaction', [signed.raw]);
+        this.paymentRpcIndex = index;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (!/429|rate.?limit|too many requests/i.test(String(error?.message || ''))) throw error;
+      }
+    }
+    if (!hash) throw lastError || new Error('Payout RPC unavailable');
     if (hash.toLowerCase() !== signed.signature.toLowerCase()) throw new Error('Unexpected payment hash');
   }
   async assertHolderReserveCoverage(wallet, reserves) {
