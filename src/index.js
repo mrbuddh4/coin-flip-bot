@@ -1140,7 +1140,7 @@ async function initBot() {
 
         // Bot was added to a group
         if (status === 'member' && chat.type !== 'private') {
-          const botInfo = await ctx.telegram.getMe();
+          const botInfo = ctx.botInfo || await ctx.telegram.getMe();
           
           await ctx.reply(
             `🤖 <b>Welcome to Coin Flip Bot!</b>\n\n` +
@@ -2744,14 +2744,9 @@ async function initBot() {
           return;
         }
 
-        // Delete old flip messages from the group before posting the new challenge
-        logger.info('[creator_deposit_confirmed] 🧹 About to clean up old messages', { 
-          flipId: flip.id,
-          groupChatId: flip.groupChatId
-        });
-        await deleteOldFlipMessagesInGroup(ctx.telegram, flip.groupChatId, flip.id);
-
-        // Delete the old "Start a Coin Flip!" message from the group before posting the challenge
+        // Load the obsolete message ID now, but defer cleanup until after the
+        // funded challenge is visible. Telegram deletions are sequential and
+        // can make a confirmed deposit appear stuck while the group card waits.
         const session = await models.BotSession.findOne({
           where: {
             userId,
@@ -2759,17 +2754,11 @@ async function initBot() {
             coinFlipId: flip.id,
           },
         });
-        
-        if (session?.data?.initialGroupMessageId) {
-          try {
-            await ctx.telegram.deleteMessage(flip.groupChatId, session.data.initialGroupMessageId);
-            logger.info('[creator_deposit_confirmed] Deleted initial group message', { flipId, messageId: session.data.initialGroupMessageId });
-          } catch (err) {
-            logger.warn('[creator_deposit_confirmed] Failed to delete initial message', err.message);
-          }
-        }
+        const initialGroupMessageId = session?.data?.initialGroupMessageId || null;
 
-        // Now post the challenge message to the group with image
+        // Post the funded challenge first. Cleanup runs immediately afterward
+        // and retains the existing stale-message behavior without delaying the
+        // user-visible challenge.
         const fs = require('fs');
         const path = require('path');
         const imagePath = path.join(process.cwd(), 'assets/coinflip.jpg');
@@ -2859,6 +2848,27 @@ async function initBot() {
         }
 
         logger.info('[creator_deposit_confirmed] Challenge posted to group', { flipId, groupMessageId: groupMessage.message_id });
+
+        // Do not hold the confirmation handler on Telegram delete calls. The
+        // challenge is already persisted and visible; cleanup is best-effort
+        // and retries through the existing logging path if Telegram is slow.
+        setImmediate(() => {
+          (async () => {
+            try {
+              await deleteOldFlipMessagesInGroup(ctx.telegram, flip.groupChatId, flip.id);
+              if (initialGroupMessageId) {
+                try {
+                  await ctx.telegram.deleteMessage(flip.groupChatId, initialGroupMessageId);
+                  logger.info('[creator_deposit_confirmed] Deleted initial group message', { flipId, messageId: initialGroupMessageId });
+                } catch (err) {
+                  logger.warn('[creator_deposit_confirmed] Failed to delete initial message', err.message);
+                }
+              }
+            } catch (cleanupErr) {
+              logger.warn('[creator_deposit_confirmed] Deferred group cleanup failed', { flipId, error: cleanupErr.message });
+            }
+          })();
+        });
       } catch (error) {
         logger.error('Error confirming creator deposit', {
           message: error.message,
