@@ -1,3 +1,5 @@
+> Recovery branch: start with [RECOVERY.md](RECOVERY.md). Restored native SOL and custom standard SPL token support is an isolated **devnet pilot**, documented in [SOLANA.md](SOLANA.md). Historical deployment instructions below are not a production readiness assessment.
+
 # Coin Flip Bot 🪙
 
 A Telegram bot for peer-to-peer coin flip games supporting EVM and Solana tokens. Players wager tokens, the bot randomly determines a winner, and automatically distributes winnings.

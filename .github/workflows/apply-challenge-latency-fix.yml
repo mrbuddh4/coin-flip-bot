@@ -1,0 +1,27 @@
+name: apply challenge latency fix
+
+on:
+  push:
+    branches:
+      - challenge-post-latency-m518
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[latency-fix-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+      - name: Apply focused patch
+        run: |
+          git apply --index latency-fix.patch
+          rm latency-fix.patch .github/workflows/apply-challenge-latency-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Fix challenge post latency [latency-fix-applied]"
+          git push origin HEAD:${GITHUB_REF_NAME}
