@@ -3,6 +3,7 @@ const { fromUnits } = require('./amounts');
 const { tokensForUser } = require('./featured');
 const { traceDeposit } = require('./depositTrace');
 const { MEMO } = require('./chain');
+const { recoverSidRefund, RefundBlocked, recipient: sidRefundRecipient } = require('./sidRefund');
 const { reconcileExternalRefund, RefundReconciliationError, refundFailure } = require('./refundReconciliation');
 const { recoverExpiredBurn, BurnRecoveryError, boundedRead, burnRecoveryFailure } = require('./expiredBurn');
 function args(ctx) { return ctx.message.text.trim().split(/\s+/).slice(1); }
@@ -79,6 +80,21 @@ function registerSolanaCommands(bot, service, { includeStart = true, allowLegacy
       payments.map(p => `${p.id.split(':')[0]}: ${p.status}${p.lastError && p.status !== 'CONFIRMED' ? `\n${p.lastError.slice(0, 240)}` : ''}${p.signature ? `\nhttps://explorer.solana.com/tx/${p.signature}${game.cluster === 'mainnet-beta' ? '' : '?cluster=devnet'}` : ''}`).join('\n'));
   });
   const isAdmin = ctx => ctx.chat.type === 'private' && (service.chain.env.ADMIN_IDS || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s)).includes(String(ctx.from.id));
+  command('solsidrefund', async (ctx, [action, extra]) => {
+    if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
+    if (extra || (action && action !== 'CONFIRM')) return ctx.reply('Use /solsidrefund to preview or check status.');
+    try {
+      const result = await recoverSidRefund(service, ctx.from.id, action === 'CONFIRM');
+      if (result.preview) return ctx.reply('Verified two unassigned Solana deposits: 10,000 SID and 25,000 SID.\nReturn both to the original sender: ' + sidRefundRecipient + '\nNo funds queued. If you have not sent any manual return, use /solsidrefund CONFIRM to queue both refunds.');
+      return ctx.reply('Solana SID refund status\n' + result.rows.map(r =>
+        fromUnits(r.credited, 6) + ' SID: ' + r.status +
+        (r.lastError ? '\n' + r.lastError.slice(0, 240) : '') +
+        (r.signature ? '\nhttps://explorer.solana.com/tx/' + r.signature : '')).join('\n'));
+    } catch (error) {
+      if (error instanceof RefundBlocked) return ctx.reply(error.message);
+      return ctx.reply('Refund status could not be verified. Run /solsidrefund again before taking any manual action.');
+    }
+  });
   command('solrefundsync', async (ctx, [depositSignature, returnSignature, confirmation]) => {
     if (!isAdmin(ctx)) return ctx.reply('Private administrator command.');
     try {
