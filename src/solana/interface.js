@@ -554,6 +554,10 @@ class SolanaInterface {
     const video = path.join(__dirname, '../../assets/expired.mp4');
     return fs.existsSync(video) ? { source: video } : null;
   }
+  depositTimeoutAnimation() {
+    const video = path.join(__dirname, '../../assets/deposit-timeout.mp4');
+    return fs.existsSync(video) ? { source: video } : null;
+  }
   async cleanupRetiredCards(game) {
     const pending = [];
     for (const id of game.ui?.retiredMessageIds || []) {
@@ -574,18 +578,20 @@ class SolanaInterface {
     return game.status === 'OPEN' && Boolean(game.creator.deposit) && !game.challenger &&
       (game.interfaceVersion < 2 || Boolean(game.ui?.publishRequested)) && this.service.now() < game.expiresAt;
   }
-  async replaceGroupCard(game, text, rows, { video, expiry = false } = {}) {
+  async replaceGroupCard(game, text, rows, { video, animation, expiry = false } = {}) {
     // Acknowledge and persist the new card before retiring the old one. A failed
     // send must not remove the only visible challenge or extend its deadline.
-    const sent = video
+    const sent = animation
+      ? await this.telegram.sendAnimation(game.chatId, animation, { caption: text, ...keyboard(rows) })
+      : video
       ? await this.telegram.sendVideo(game.chatId, video, { caption: text, supports_streaming: true, ...keyboard(rows) })
       : await this.telegram.sendMessage(game.chatId, text, keyboard(rows));
     const updated = await this.store.mutate(game.id, g => {
       g.ui ||= {};
       const oldId = g.ui.messageId;
-      Object.assign(g.ui, { messageId: sent.message_id, messageIsVideo: Boolean(video), resultIsPhoto: false,
+      Object.assign(g.ui, { messageId: sent.message_id, messageIsVideo: Boolean(video || animation), resultIsPhoto: false,
         groupPostedAt: this.service.now(), renderKey: null, terminal: false });
-      if (expiry) Object.assign(g.ui, { expiryAnnounced: true, expiryVideoApplied: Boolean(video) });
+      if (expiry) Object.assign(g.ui, { expiryAnnounced: true, expiryVideoApplied: Boolean(video || animation) });
       if (oldId && oldId !== sent.message_id) g.ui.retiredMessageIds = [...new Set([...(g.ui.retiredMessageIds || []), oldId])];
     });
     await this.cleanupRetiredCards(updated);
@@ -615,7 +621,9 @@ class SolanaInterface {
         // challenge is published only after creator funding; v2 also requires
         // the creator's persisted one-tap Check Deposit request.
         const payments = await this.store.payments(game.id);
-        if (!game.ui?.messageId && ((game.status === 'OPEN' && (!game.creator.deposit || (game.interfaceVersion >= 2 && !game.ui?.publishRequested))) || (game.status === 'CANCELLED' && !payments.length))) {
+        const expired = game.status === 'CANCELLED' && game.cancelReason === 'EXPIRED';
+        const timeoutRole = expired && game.depositTimeoutRole;
+        if (!game.ui?.messageId && ((game.status === 'OPEN' && (!game.creator.deposit || (game.interfaceVersion >= 2 && !game.ui?.publishRequested))) || (game.status === 'CANCELLED' && !payments.length && !timeoutRole))) {
           if (game.status === 'CANCELLED') await this.store.mutate(game.id, g => { g.ui ||= {}; g.ui.terminal = true; g.ui.compactVersion = 1; });
           continue;
         }
@@ -629,7 +637,10 @@ class SolanaInterface {
             rows.push([{ text: 'Accept Challenge', url: `https://t.me/${me.username}?start=${this.service.chain.key === 'robinhood' ? 'rhjoin_' : 'soljoin_'}${game.id}` }]);
           } else text += `\nChallenger: ${mention(game.challenger)}\nWaiting for challenger deposit.`;
         } else if (game.status === 'CANCELLED') {
-          const reason = game.cancelReason === 'EXPIRED' ? 'Challenge expired.' : game.cancelReason === 'CANCELLED' ? 'Challenge cancelled.' : 'Challenge cancelled or expired.';
+          const reason = timeoutRole
+            ? `Deposit timed out. The ${timeoutRole} didn’t complete their deposit in time.`
+            : expired ? 'Challenge expired.' : game.cancelReason === 'CANCELLED' ? 'Challenge cancelled.' : 'Challenge cancelled or expired.';
+          if (timeoutRole === 'challenger') text += `Challenger: ${mention(game.challenger)}\n`;
           text += '\n' + reason + '\n' + (payments.length ? payments.every(p => p.status === 'CONFIRMED') ? 'Refunds confirmed.' : 'Refunds processing.' : 'No deposits recorded.');
           const refunds = compactPayments(game, payments, signature => this.explorer(signature));
           if (refunds) text += '\n' + refunds;
@@ -645,8 +656,6 @@ class SolanaInterface {
             if (links) text += '\n' + links;
           }
         }
-        const expired = game.status === 'CANCELLED' && game.cancelReason === 'EXPIRED';
-        const expiryVideo = expired && this.expiryVideo();
         // Legacy expiry cards were already announced in place; do not replay
         // completed notices solely because the deployment adds this feature.
         const needsExpiryAnnouncement = expired && !game.ui?.expiryAnnounced && !game.ui?.expiryVideoApplied;
@@ -670,7 +679,9 @@ class SolanaInterface {
             const current = await this.store.get(game.id);
             if (repostDue && !this.awaitingChallenger(current)) continue;
             game = await this.replaceGroupCard(game, text, rows, {
-              video: needsExpiryAnnouncement ? expiryVideo : this.challengeVideo(), expiry: needsExpiryAnnouncement,
+              video: needsExpiryAnnouncement ? !timeoutRole && this.expiryVideo() : this.challengeVideo(),
+              animation: needsExpiryAnnouncement && timeoutRole && this.depositTimeoutAnimation(),
+              expiry: needsExpiryAnnouncement,
             });
             // Preserve the null key on concurrent state changes: the next worker
             // pass renders the accepted/closed state rather than stale content.

@@ -50,6 +50,11 @@ class SolanaService {
   async cancelLocked(g, tx, reason = 'CANCELLED') {
     g.status = 'CANCELLED';
     g.cancelReason = reason;
+    // Record this only at expiry, so old cancellations are not announced again.
+    if (reason === 'EXPIRED' && g.interfaceVersion) {
+      if (!g.creator.deposit) g.depositTimeoutRole = 'creator';
+      else if (g.challenger && !g.challenger.deposit) g.depositTimeoutRole = 'challenger';
+    }
     for (const player of [g.creator, g.challenger]) {
       const receipts = player?.funding?.receipts || (player?.deposit ? [player.deposit] : []);
       for (const receipt of receipts) await this.refund(g, tx, player, receipt);
