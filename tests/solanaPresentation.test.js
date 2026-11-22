@@ -62,6 +62,7 @@ integration('Solana presentation on real PostgreSQL', () => {
     const bot = { handlers, start: fn => { handlers.start = fn; }, command: (name, fn) => { handlers[name] = fn; },
       action: (_, fn) => { handlers.action = fn; }, on: (_, fn) => { handlers.text = fn; },
       telegram: { getMe: jest.fn().mockResolvedValue({ username: 'TestCoinFlipBot' }),
+        sendAnimation: jest.fn(async () => ({ message_id: ++messageId })),
         sendMessage: jest.fn(async () => ({ message_id: ++messageId })), editMessageText: jest.fn().mockResolvedValue({}), editMessageReplyMarkup: jest.fn().mockResolvedValue({}), editMessageCaption: jest.fn().mockResolvedValue({}), deleteMessage: jest.fn().mockResolvedValue({}), sendPhoto: jest.fn(async () => ({ message_id: ++messageId, photo: [{ file_id: 'cached-photo' }] })), sendVideo: jest.fn(async () => ({ message_id: ++messageId, video: { file_id: 'cached-video' } })) } };
     return bot;
   }
@@ -448,17 +449,18 @@ integration('Solana presentation on real PostgreSQL', () => {
     expect(bot.telegram.deleteMessage).toHaveBeenCalledWith('-100', cardId);
     expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(3);
   });
-  test('a late expiry deposit produces a single expiry card and full refund while unfunded drafts stay quiet', async () => {
+  test('a late deposit updates the existing timeout card and queues a full refund', async () => {
     const { SolanaInterface } = require('../src/solana/interface');
     const g = await service.create({ ...input, interfaceVersion: 2 });
     const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
     now = (await store.get(g.id)).expiresAt + 1; await service.expire(); await ui.render();
-    expect(bot.telegram.sendVideo).not.toHaveBeenCalled();
+    expect(bot.telegram.sendAnimation).toHaveBeenCalledTimes(1);
+    const { messageId } = (await store.get(g.id)).ui;
     await service.deposit({ id: g.id, userId: '1', signature: 'late-expiry-video' });
     await ui.render(); await ui.render();
-    expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
-    expect(bot.telegram.sendVideo.mock.calls[0][2].caption).toContain('Challenge expired.');
-    expect(bot.telegram.sendVideo.mock.calls[0][2].caption).toContain('Refund to 1: 0.1 SOL pending');
+    expect(bot.telegram.sendAnimation).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.editMessageCaption).toHaveBeenCalledWith('-100', messageId, undefined,
+      expect.stringContaining('Refund to 1: 0.1 SOL pending'), expect.anything());
     expect((await store.payments(g.id))[0].payment).toMatchObject({ kind: 'refund', amount: '100000000' });
   });
 

@@ -51,6 +51,7 @@ integration('Solana group reposts on real PostgreSQL', () => {
     const bot = { handlers, start: fn => { handlers.start = fn; }, command: (name, fn) => { handlers[name] = fn; },
       action: (_, fn) => { handlers.action = fn; }, on: (_, fn) => { handlers.text = fn; },
       telegram: { getMe: jest.fn().mockResolvedValue({ username: 'TestCoinFlipBot' }),
+        sendAnimation: jest.fn(async () => ({ message_id: ++messageId })),
         sendMessage: jest.fn(async () => ({ message_id: ++messageId })), editMessageText: jest.fn().mockResolvedValue({}), editMessageReplyMarkup: jest.fn().mockResolvedValue({}), editMessageCaption: jest.fn().mockResolvedValue({}), deleteMessage: jest.fn().mockResolvedValue({}), sendPhoto: jest.fn(async () => ({ message_id: ++messageId, photo: [{ file_id: 'cached-photo' }] })), sendVideo: jest.fn(async () => ({ message_id: ++messageId, video: { file_id: 'cached-video' } })) } };
     return bot;
   }
@@ -85,6 +86,7 @@ integration('Solana group reposts on real PostgreSQL', () => {
     await service.expire(); await restarted.render();
     expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(4);
     expect(bot.telegram.sendVideo.mock.calls[3][2].caption).toContain('Challenge expired.');
+    expect(bot.telegram.sendAnimation).not.toHaveBeenCalled();
     expect((await store.get(g.id)).status).toBe('CANCELLED');
     expect((await store.payments(g.id))[0].payment.amount).toBe('100000000');
   });
@@ -95,6 +97,53 @@ integration('Solana group reposts on real PostgreSQL', () => {
     expect(bot.telegram.sendVideo).toHaveBeenCalledTimes(1);
     expect(bot.telegram.editMessageCaption).toHaveBeenLastCalledWith('-100', g.ui.messageId, undefined,
       expect.stringContaining('Waiting for challenger deposit'), expect.objectContaining({ reply_markup: { inline_keyboard: [] } }));
+  });
+  test('creator deposit timeout posts one animation even without a prior group card', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
+    const g = await service.create({ ...input, interfaceVersion: 2 });
+    await ui.render();
+    expect(bot.telegram.sendAnimation).not.toHaveBeenCalled();
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
+    now = g.expiresAt;
+    await service.expire();
+    await ui.render();
+    await new SolanaInterface(bot, service, {}).render();
+    expect(bot.telegram.sendAnimation).toHaveBeenCalledTimes(1);
+    expect(bot.telegram.sendAnimation).toHaveBeenCalledWith(input.chatId,
+      { source: expect.stringMatching(/assets\/deposit-timeout\.mp4$/) },
+      expect.objectContaining({ caption: expect.stringContaining('creator didn’t complete'), reply_markup: { inline_keyboard: [] } }));
+    expect(bot.telegram.deleteMessage).not.toHaveBeenCalled();
+  });
+  test('challenger deposit timeout replaces the group card and edits the animation as refund status changes', async () => {
+    const { g, bot, ui } = await openGroupCard();
+    await service.join({ id: g.id, userId: '2', wallet: walletB, chatId: input.chatId });
+    now = (await store.get(g.id)).expiresAt;
+    await service.expire();
+    await ui.render();
+    const { messageId } = (await store.get(g.id)).ui;
+    expect(messageId).not.toBe(g.ui.messageId);
+    expect(bot.telegram.deleteMessage).toHaveBeenCalledWith(input.chatId, g.ui.messageId);
+    expect(bot.telegram.sendAnimation).toHaveBeenCalledWith(input.chatId,
+      { source: expect.stringMatching(/assets\/deposit-timeout\.mp4$/) },
+      expect.objectContaining({ caption: expect.stringMatching(/challenger didn’t complete[\s\S]*Refunds processing/), reply_markup: { inline_keyboard: [] } }));
+    await store.saveSigned('refund:repost-creator', { signature: 'timeout-refund' });
+    await store.paymentState('refund:repost-creator', 'CONFIRMED');
+    await ui.render();
+    expect(bot.telegram.editMessageCaption).toHaveBeenLastCalledWith(input.chatId, messageId, undefined,
+      expect.stringContaining('Refunds confirmed.'), expect.anything());
+    expect(bot.telegram.sendAnimation).toHaveBeenCalledTimes(1);
+  });
+  test('manual cancellation of an unfunded game and historical deposit timeouts stay quiet', async () => {
+    const { SolanaInterface } = require('../src/solana/interface');
+    const bot = fakeBot(), ui = new SolanaInterface(bot, service, {});
+    const manual = await service.create({ ...input, interfaceVersion: 2 });
+    await service.cancel({ id: manual.id, userId: input.userId, chatId: input.chatId });
+    const historical = await service.create({ ...input, interfaceVersion: 2 });
+    await store.mutate(historical.id, g => { g.status = 'CANCELLED'; g.cancelReason = 'EXPIRED'; });
+    await ui.render();
+    expect(bot.telegram.sendAnimation).not.toHaveBeenCalled();
+    expect(bot.telegram.sendMessage).not.toHaveBeenCalled();
   });
   test('failed repost retains the card; deletion follows a saved replacement acknowledgement', async () => {
     const { g, bot, ui } = await openGroupCard(); now += 60000;
