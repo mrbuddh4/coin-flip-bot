@@ -92,10 +92,10 @@ class SolanaStore {
   async pendingPayments() {
     return (await this.pool.query('SELECT * FROM "SolOutbox" WHERE status IN (\'PENDING\',\'SIGNED\') ORDER BY (signed IS NOT NULL) DESC, "createdAt", id LIMIT 20')).rows;
   }
-  async liabilities() {
+  async liabilities(db = this.pool) {
     // One statement gives one MVCC snapshot while deposits/results move between
     // open games, pools and the outbox in concurrent transactions.
-    const { rows } = await this.pool.query(`SELECT mint,SUM(amount)::text AS amount FROM (
+    const { rows } = await db.query(`SELECT mint,SUM(amount)::text AS amount FROM (
       SELECT payment->>'mint' AS mint,(payment->>'amount')::numeric AS amount FROM "SolOutbox" WHERE status<>'CONFIRMED'
       UNION ALL SELECT mint,amount FROM "SolFeePools"
       UNION ALL SELECT state->'token'->>'address',COALESCE(state->'creator'->'funding'->>'amount',state->'creator'->'deposit'->>'amount')::numeric FROM "SolGames" WHERE state->>'status'='OPEN' AND (state->'creator' ? 'deposit' OR state->'creator' ? 'funding')

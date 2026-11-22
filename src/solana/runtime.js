@@ -14,6 +14,7 @@ const { SolanaFees, holderRewardsMode } = require('./fees');
 const { holderHandler } = require('./holderPage');
 const { holderWallet } = require('./custody');
 const { ObsoleteNoticeCleanup } = require('./notifications');
+const { recoveryTick } = require('./returnWrongChainSid');
 const { startupStep, formatStartupFailure } = require('../utils/startupDiagnostics');
 function assertLaunchReady(env = process.env) {
   const rewards = holderRewardsMode(env);
@@ -117,7 +118,8 @@ async function main() {
     await startupStep('worker', () => cycle());
     timer = setInterval(() => cycle().catch(() => console.error('Solana worker check failed; ledger retained.')), 5000);
     // A slow/rate-limited history scan must never hold queued refunds or expiry.
-    const scan = () => { if (!stopping) return Promise.all([scanner.tick(), ...(rh ? [rh.scanner.tick()] : [])]).catch(() => console.error('DEPOSIT_SCAN_RETRY: history retained.')); };
+    const returnOriginalSid = recoveryTick(service);
+    const scan = () => { if (!stopping) return Promise.all([scanner.tick(), returnOriginalSid(), ...(rh ? [rh.scanner.tick()] : [])]).catch(() => console.error('DEPOSIT_SCAN_RETRY: history retained.')); };
     scan();
     scanTimer = setInterval(scan, 5000);
     presentationTimer = setInterval(() => present().catch(() => console.error('PRESENTATION_RETRY: financial records retained.')), 1000);
