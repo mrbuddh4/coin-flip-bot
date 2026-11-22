@@ -139,3 +139,20 @@ funds, production database or real-money mainnet flip are used by these tests.
 Source publication/CI does not establish a successful Railway deployment or live
 Robinhood operation. Verify deployment first, then use very small end-to-end
 ETH/SID games and check payout/refund hashes before inviting broader use.
+
+### Wrong-chain SID deposits
+
+In multi-chain mode, the bot checks for direct transfers of the configured
+Solana and Robinhood SID contracts during a player's deposit window. When the
+source wallet is registered to the same Telegram user and the funds match
+exactly one wager on the other chain, the bot queues the full amount back to
+the original sender on the source chain and sends a private note identifying
+the correct chain. The original wager is unchanged. If its window has
+closed, start a new flip.
+
+The existing chain confirmation and signed payment worker rules still apply.
+A same-chain payment candidate takes precedence. Unregistered or shared
+sending wallets, overlapping requests, other assets, partial transfers and
+indirect transfers are excluded from automatic wrong-chain recovery. The
+first activation records a timestamp; older transfers require separate
+reconciliation to avoid repaying a manual return.
