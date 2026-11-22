@@ -67,6 +67,12 @@ async function main() {
     service.feeService = fees;
     scanner = new DepositScanner(service);
     if (process.env.BOT_CHAIN === 'multi') rh = await startupStep('robinhood', () => require('../robinhood/runtime').setupRobinhood(store));
+    if (rh) {
+      const { WrongChainRefunds, SCHEMA } = require('./wrongChain');
+      await startupStep('wrong-chain-refunds', () => Promise.all([store.pool.query(SCHEMA), rh.store.pool.query(SCHEMA)]));
+      service.wrongChain = new WrongChainRefunds(service, rh.service, 'solana');
+      rh.service.wrongChain = new WrongChainRefunds(rh.service, service, 'robinhood');
+    }
     bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
     const info = await startupStep('telegram', () => bot.telegram.getWebhookInfo());
     if (info.url) throw new Error('Bot has an existing webhook; stop and review before switching to polling');
@@ -94,7 +100,13 @@ async function main() {
     const cycle = async () => {
       if (cycleRunning || stopping) return;
       cycleRunning = true;
-      try { await Promise.all([service.work(), ...(rh ? [rh.service.work()] : [])]); await present(); }
+      try {
+        await Promise.all([service.work(), ...(rh ? [rh.service.work()] : [])]);
+        await present();
+        if (rh && !stopping) for (const worker of [service.wrongChain, rh.service.wrongChain]) {
+          worker.notify(bot.telegram).catch(() => console.error('WRONG_CHAIN_NOTICE_RETRY: refund retained.'));
+        }
+      }
       finally {
         // Removing obsolete verbose notices must never affect payments or polling.
         try { await noticeCleanup.tick(); }

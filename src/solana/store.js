@@ -51,7 +51,7 @@ class SolanaStore {
     return null;
   }
   async noMemoCandidates(input) { return findNoMemoCandidates(this.pool, input); }
-  async refundCandidates(input) { return findNoMemoCandidates(this.pool, input, refundCandidates); }
+  async refundCandidates(input, db = this.pool) { return findNoMemoCandidates(db, input, refundCandidates); }
   async get(id) {
     const { rows } = await this.pool.query('SELECT state FROM "SolGames" WHERE id=$1', [id]);
     if (!rows.length) throw new Error('Unknown Solana game');

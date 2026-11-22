@@ -3,7 +3,7 @@ on:
   push:
     branches: [recovery-review-2026-11-09]
   pull_request:
-    branches: [main]
+    branches: [main, recovery-review-2026-11-09]
 permissions:
   contents: read
 jobs:

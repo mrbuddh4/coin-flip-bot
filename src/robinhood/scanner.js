@@ -42,7 +42,8 @@ class RobinhoodScanner {
       const confirmedHead = await chain.finalized();
       const end = BigInt(confirmedHead.number), from = BigInt(cursor.block) + 1n;
       if (from > end) return;
-      const watched = new Set(await store.watchedAddresses());
+      const cross = await this.service.wrongChain?.requests() || [];
+      const watched = new Set([...(await store.watchedAddresses()), ...cross.map(r => r.address)]);
       // Empty ledger can advance without history reads; active games cannot.
       if (!watched.size) { await store.saveScanState(end, confirmedHead.hash); return; }
       const native = (await store.pool.query(`SELECT 1 FROM "SolGames" WHERE state->'token'->>'address'='NATIVE' LIMIT 1`)).rowCount > 0;
@@ -115,6 +116,7 @@ class RobinhoodScanner {
     try {
       if (candidates.length !== 1) {
         if (await service.recoverUnmatchedDeposit({ ...input, signature, transaction })) return;
+        if (!candidates.length && await service.wrongChain?.recover({ ...input, signature, transaction })) return;
         if (candidates.length) await store.reviewDeposit(signature, candidates[0].gameId, 'Ambiguous Robinhood transfer; no game credited');
         return;
       }

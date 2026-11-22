@@ -18,7 +18,12 @@ class DepositScanner {
     try {
       // Check current payment windows before old wallets and historical replay.
       // Replaying only their live window also recovers a cursor skipped earlier.
-      const active = await this.service.store.activeDepositRequests?.() || [];
+      const cross = await this.service.wrongChain?.requests() || [];
+      const live = new Map();
+      for (const r of [...(await this.service.store.activeDepositRequests?.() || []), ...cross.filter(r => r.open)]) {
+        live.set(r.address, { address: r.address, replayFrom: Math.min(live.get(r.address)?.replayFrom ?? Infinity, r.replayFrom) });
+      }
+      const active = [...live.values()];
       for (let i = 0; i < Math.min(2, active.length); i++) {
         const request = active[this.activeOffset++ % active.length];
         try { await this.scan(request.address, { replayFrom: request.replayFrom }); }
@@ -34,12 +39,16 @@ class DepositScanner {
         catch (_) { console.error('DEPOSIT_SCAN_RETRY: finalized range retained for another scan.'); }
         if (Date.now() < this.nextScanAt) return;
       }
-      const requests = (await this.service.store.depositRecoveryRequests?.() || [])
-        .filter(r => !activeAddresses.has(r.address));
+      const normal = await this.service.store.depositRecoveryRequests?.() || [];
+      const requests = new Map();
+      for (const r of [...normal, ...cross].filter(r => !activeAddresses.has(r.address))) {
+        requests.set(r.address, { address: r.address, replayFrom: Math.min(requests.get(r.address)?.replayFrom ?? Infinity, r.replayFrom) });
+      }
+      const recovery = [...requests.values()];
       // Recent closed requests still recover missed deposits/refunds, but never
       // replay the same wallet's entire day of history every five seconds.
-      for (let i = 0; i < Math.min(2, requests.length); i++) {
-        const request = requests[this.recoveryOffset++ % requests.length];
+      for (let i = 0; i < Math.min(2, recovery.length); i++) {
+        const request = recovery[this.recoveryOffset++ % recovery.length];
         const now = Date.now();
         if (now - (this.replayed.get(request.address) || 0) < 60000) continue;
         this.replayed.set(request.address, now);
@@ -183,6 +192,7 @@ class DepositScanner {
           return;
         }
       }
+      if (!matches.length && await this.service.wrongChain?.recover({ sender: address, mint, amount: String(amount), signature, transaction })) return;
       if (matches.length) await store.reviewDeposit(signature, matches[0].gameId, 'Ambiguous plain transfer; no game was credited.');
       return;
     }
