@@ -5,6 +5,8 @@ const { paymentFailure } = require('../solana/errors');
 const { readDeposit } = require('./depositTrace');
 const TRANSFER = ERC20.getEvent('Transfer').topicHash;
 const ERC20_RANGE = 1000n;
+const ERC20_CATCHUP_RANGE = 10000n;
+const PAYOUT_HEAD_START_MS = 30000;
 class RobinhoodScanner {
   constructor(service) { this.service = service; this.running = false; this.nextTry = 0; this.nextReview = 0; this.reviewOffset = 0; this.activeRetry = 0; }
   async confirm(id) {
@@ -105,11 +107,17 @@ class RobinhoodScanner {
     let stage = 'validation';
     try {
       const { chain, store } = this.service;
-      // Payouts have priority over historical deposit scanning. Both use the
-      // same public RPC quota; scanning while a signed payout is queued can
-      // starve its broadcast and produce a misleading rate-limit failure.
-      const pendingPayments = await store.pendingPayments?.();
-      if (pendingPayments?.length) { this.nextTry = Date.now() + 30000; return; }
+      // Give payouts first use of the shared RPC, but a single stuck outbox
+      // entry must not indefinitely halt receipt recovery for every game.
+      const payoutPending = Boolean((await store.pendingPayments?.())?.length);
+      if (payoutPending) {
+        this.nextTry = Date.now() + PAYOUT_HEAD_START_MS;
+        if (!this.yieldedForPayout) {
+          this.yieldedForPayout = true;
+          this.service.depositScanStatus = { code: 'PAYOUT_PRIORITY', stage: 'history' };
+          return;
+        }
+      } else this.yieldedForPayout = false;
       await chain.validate();
       await store.assertHealthy();
       await chain.checkHistory?.();
@@ -131,24 +139,40 @@ class RobinhoodScanner {
       // Empty ledger can advance without history reads; active games cannot.
       if (!watched.size) { await store.saveScanState(end, confirmedHead.hash); return; }
       const native = (await store.pool.query(`SELECT 1 FROM "SolGames" WHERE state->'token'->>'address'='NATIVE' LIMIT 1`)).rowCount > 0;
-      const upper = from + (native ? 79n : 999n) < end ? from + (native ? 79n : 999n) : end;
       stage = 'transfer-logs';
-      const logs = await chain.rpc('eth_getLogs', [{ fromBlock: ethers.toQuantity(from), toBlock: ethers.toQuantity(upper), topics: [TRANSFER, null, ethers.zeroPadValue(chain.address, 32)] }]);
+      const bound = size => from + size - 1n < end ? from + size - 1n : end;
+      const query = upper => chain.rpc('eth_getLogs', [{ fromBlock: ethers.toQuantity(from), toBlock: ethers.toQuantity(upper), topics: [TRANSFER, null, ethers.zeroPadValue(chain.address, 32)] }]);
+      const wide = !native && !payoutPending && Date.now() >= (this.wideRetry || 0) && end - from + 1n > ERC20_RANGE;
+      let upper = bound(native ? (payoutPending ? 16n : 80n) : wide ? ERC20_CATCHUP_RANGE : ERC20_RANGE);
+      let logs;
+      try { logs = await query(upper); }
+      catch (error) {
+        const message = String(error?.shortMessage || '') + ' ' + String(error?.message || '');
+        if (!wide || !/block range|query returned more|too many results|response (?:size|too large)/i.test(message)) throw error;
+        // Other configured RPCs may allow smaller ranges. Retry the same
+        // starting block without trusting or skipping any of the wide query.
+        this.wideRetry = Date.now() + 60000;
+        upper = bound(ERC20_RANGE);
+        logs = await query(upper);
+      }
+      if (!Array.isArray(logs)) throw new Error('Historical log range unavailable');
       const byBlock = new Map();
       for (const log of logs) {
         if (log.removed || BigInt(log.blockNumber) < from || BigInt(log.blockNumber) > upper) throw new Error('Log range proof mismatch');
-        const key = BigInt(log.blockNumber).toString();
+        const key = BigInt(log.blockNumber);
         if (!byBlock.has(key)) byBlock.set(key, []);
         byBlock.get(key).push(log);
       }
-      const deadline = Date.now() + 18000;
-      for (let height = from; height <= upper; height++) {
+      const deadline = Date.now() + (payoutPending ? 3000 : 18000);
+      const heights = native ? Array.from({ length: Number(upper - from + 1n) }, (_, i) => from + BigInt(i))
+        : [...new Set([...byBlock.keys(), upper])].sort((a, b) => Number(a - b));
+      for (const height of heights) {
         if (Date.now() >= deadline) break;
         let block;
         stage = 'block-history';
-        if (native || byBlock.has(height.toString()) || height === upper) block = await chain.rpc('eth_getBlockByNumber', [ethers.toQuantity(height), native]);
-        if (block && BigInt(block.number) !== height) throw new Error('Block range mismatch');
-        for (const log of byBlock.get(height.toString()) || []) {
+        block = await chain.rpc('eth_getBlockByNumber', [ethers.toQuantity(height), native]);
+        if (!block || BigInt(block.number) !== height || !block.hash) throw new Error('Block range mismatch');
+        for (const log of (byBlock.get(height) || []).sort((a, b) => Number(BigInt(a.logIndex) - BigInt(b.logIndex)))) {
           if (log.blockHash !== block?.hash) throw new Error('Log/block hash mismatch');
           let event; try { event = ERC20.parseLog(log); } catch (_) { continue; }
           const sender = event.args[0].toLowerCase();
@@ -167,10 +191,10 @@ class RobinhoodScanner {
         // Sparse ERC-20 ranges can skip empty blocks after the complete log query.
         if (block) { stage = 'save-cursor'; await store.saveScanState(height, block.hash); }
       }
-      this.nextTry = 0;
+      if (!payoutPending) this.nextTry = 0;
       this.service.depositScanStatus = null;
     } catch (error) {
-      this.nextTry = Date.now() + 15000;
+      this.nextTry = Math.max(this.nextTry, Date.now() + 15000);
       const failure = paymentFailure(error);
       this.service.depositScanStatus = { code: failure.code, stage };
       console.error(`ROBINHOOD_SCAN_RETRY: ${failure.code} at ${stage}; confirmation cursor retained; deposits not discarded.`);
