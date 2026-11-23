@@ -5,7 +5,7 @@ const { Keypair } = require('@solana/web3.js');
 const { RobinhoodStore } = require('../src/robinhood/store');
 const { SolanaStore } = require('../src/solana/store');
 const { SolanaService } = require('../src/solana/service');
-const { MAXIMUM, SID, normalizeAddress } = require('../src/robinhood/chain');
+const { MAXIMUM, SID, ERC20, normalizeAddress } = require('../src/robinhood/chain');
 const { RobinhoodScanner } = require('../src/robinhood/scanner');
 const { createRouter } = require('../src/robinhood/router');
 const url = process.env.SOLANA_TEST_DATABASE_URL;
@@ -99,6 +99,33 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     await scanner.process(a,'0x'+'ab'.repeat(32),SID,ethers.parseEther('1000'),block);await scanner.process(a,'0x'+'ab'.repeat(32),SID,ethers.parseEther('1000'),block);
     expect(chain.verifyDeposit).toHaveBeenCalledTimes(1);expect((await rh.get(g.id)).creator.deposit).toBeDefined();
     await rh.saveScanState(10,'block10');chain.rpc=jest.fn(async()=>{throw new Error('429')});scanner.nextTry=0;await scanner.tick();expect(await rh.scanState()).toEqual({block:'10',hash:'block10'});
+  });
+  test('active SID is credited ahead of the historical cursor and only once after replay', async () => {
+    const g = await service.create(input), scanner = new RobinhoodScanner(service);
+    await rh.saveScanState(10, 'block10');
+    const block = height => ({ number: ethers.toQuantity(height), hash: `block${height}`, timestamp: ethers.toQuantity(height) });
+    const { topics, data } = ERC20.encodeEventLog('Transfer', [a, treasury, ethers.parseEther('1000')]);
+    const logs = [999, 1001, 1004].map(height => ({
+      address: SID, topics, data, transactionHash: ethers.toBeHex(height, 32), blockNumber: ethers.toQuantity(height), blockHash: `block${height}`, logIndex: '0x0',
+    }));
+    now += 5000;
+    chain.finalized = jest.fn(async () => block(1003));
+    chain.rpc = jest.fn(async (method, [arg]) => {
+      if (method === 'eth_getBlockByNumber') return block(Number(arg));
+      if (method === 'eth_getLogs') return logs.filter(log => BigInt(log.blockNumber) >= BigInt(arg.fromBlock) && BigInt(log.blockNumber) <= BigInt(arg.toBlock));
+      throw new Error('Unexpected RPC call');
+    });
+    // A failed/busy historical scan must not hold up the independent lane.
+    scanner.running = true;
+    await Promise.all([scanner.tick(), scanner.confirm(g.id)]);
+    expect((await rh.get(g.id)).creator.deposit.signature).toBe(logs[1].transactionHash);
+    expect(await rh.hasDeposit(logs[0].transactionHash)).toBe(false);
+    expect(await rh.hasDeposit(logs[2].transactionHash)).toBe(false);
+    expect(await rh.scanState()).toEqual({block: '10', hash: 'block10'});
+    const logCall = chain.rpc.mock.calls.find(([method]) => method === 'eth_getLogs');
+    expect(logCall[1][0]).toMatchObject({ fromBlock: '0x3e8', toBlock: '0x3eb', address: [SID], topics: [topics[0], [topics[1]], topics[2]] });
+    await new RobinhoodScanner(service).process(a, logs[1].transactionHash, SID, ethers.parseEther('1000'), block(1001));
+    expect(chain.verifyDeposit).toHaveBeenCalledTimes(1);
   });
   async function priorSettledGame({legacy=false}={}) {
     chain.verifyDeposit.mockResolvedValue(ethers.parseEther('6900'));
