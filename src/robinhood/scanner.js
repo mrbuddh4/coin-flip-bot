@@ -4,9 +4,90 @@ const { DepositValidationError } = require('../solana/errors');
 const { paymentFailure } = require('../solana/errors');
 const { readDeposit } = require('./depositTrace');
 const TRANSFER = ERC20.getEvent('Transfer').topicHash;
+const ERC20_RANGE = 1000n;
 class RobinhoodScanner {
-  constructor(service) { this.service = service; this.running = false; this.nextTry = 0; this.nextReview = 0; this.reviewOffset = 0; }
-  async confirm() { return this.tick(); }
+  constructor(service) { this.service = service; this.running = false; this.nextTry = 0; this.nextReview = 0; this.reviewOffset = 0; this.activeRetry = 0; }
+  async confirm(id) {
+    if (id && (await this.service.store.get(id)).token.address === 'NATIVE') return this.scanHistory();
+    return this.checkActive();
+  }
+  async checkActive() {
+    if (this.activeScan) return this.activeScan;
+    if (Date.now() < this.activeRetry) return;
+    this.activeScan = this.scanActiveErc20().catch(error => {
+      this.activeRetry = Date.now() + 5000;
+      console.error(`ROBINHOOD_ACTIVE_SCAN_RETRY: ${paymentFailure(error).code}; active deposits will be checked again.`);
+    }).finally(() => { this.activeScan = null; });
+    return this.activeScan;
+  }
+  async startBlockAt(head, start) {
+    const height = BigInt(head.number);
+    // Bracket the recent window before bisecting. Don't assume a fixed block
+    // time or jump to a guessed height that could skip a valid payment.
+    const read = async h => {
+      const b = await this.service.chain.rpc('eth_getBlockByNumber', [ethers.toQuantity(h), false]);
+      if (!b || BigInt(b.number) !== h || b.timestamp == null) throw new Error('Missing Robinhood window block');
+      return Number(BigInt(b.timestamp)) * 1000;
+    };
+    let lower = height, upper = height, step = 1024n;
+    while (lower > 0n) {
+      lower = height > step ? height - step : 0n;
+      if (await read(lower) < start) { lower++; break; }
+      upper = lower;
+      step *= 2n;
+    }
+    while (lower < upper) {
+      const mid = (lower + upper) / 2n;
+      if (await read(mid) < start) lower = mid + 1n;
+      else upper = mid;
+    }
+    return lower;
+  }
+  async scanActiveErc20() {
+    const { chain, store } = this.service;
+    const requests = await store.activeErc20Requests(this.service.now());
+    if (!requests.length) { this.activeStart = null; return; }
+    await chain.validate();
+    await store.assertHealthy();
+    await chain.checkHistory?.();
+    const head = await chain.finalized();
+    const start = Math.min(...requests.map(r => r.start));
+    if (Number(BigInt(head.timestamp)) * 1000 < start) return;
+    // Cache only the start bound. Repeat the bounded log query so delayed
+    // indexing, a restart or scan failure cannot drop a still-active receipt.
+    const before = async block => block === 0n ? null
+      : (await chain.rpc('eth_getBlockByNumber', [ethers.toQuantity(block - 1n), false]))?.hash;
+    if (this.activeStart?.time !== start || this.activeStart.block > BigInt(head.number)
+        || this.activeStart.before !== await before(this.activeStart.block)) {
+      const block = await this.startBlockAt(head, start);
+      this.activeStart = { time: start, block, before: await before(block) };
+    }
+    const senders = [...new Set(requests.map(r => ethers.zeroPadValue(r.sender, 32)))];
+    const mints = [...new Set(requests.map(r => r.mint))];
+    const end = BigInt(head.number);
+    for (let from = this.activeStart.block; from <= end; from += ERC20_RANGE) {
+      const to = from + ERC20_RANGE - 1n < end ? from + ERC20_RANGE - 1n : end;
+      const logs = await chain.rpc('eth_getLogs', [{ fromBlock: ethers.toQuantity(from), toBlock: ethers.toQuantity(to),
+        address: mints, topics: [TRANSFER, senders, ethers.zeroPadValue(chain.address, 32)] }]);
+      logs.sort((a, b) => Number(BigInt(a.blockNumber) - BigInt(b.blockNumber) || BigInt(a.logIndex) - BigInt(b.logIndex)));
+      const blocks = new Map();
+      for (const log of logs) {
+        const height = BigInt(log.blockNumber);
+        if (log.removed || height < from || height > to) throw new Error('Active log range proof mismatch');
+        let event; try { event = ERC20.parseLog(log); } catch (_) { continue; }
+        if (!event || event.args[1].toLowerCase() !== chain.address) continue;
+        const sender = event.args[0].toLowerCase(), mint = log.address.toLowerCase();
+        const candidates = requests.filter(r => r.sender === sender && r.mint === mint);
+        const signature = log.transactionHash.toLowerCase();
+        if (!candidates.length || await store.hasDeposit(signature)) continue;
+        if (!blocks.has(height)) blocks.set(height, await chain.rpc('eth_getBlockByNumber', [ethers.toQuantity(height), false]));
+        const block = blocks.get(height);
+        if (!block || BigInt(block.number) !== height || block.hash !== log.blockHash) throw new Error('Active log/block hash mismatch');
+        const at = Number(BigInt(block.timestamp)) * 1000;
+        if (candidates.some(r => at >= r.start && at < r.end)) await this.process(sender, signature, mint, event.args[2], block);
+      }
+    }
+  }
   async start() {
     const { store, chain } = this.service;
     if (await store.scanState()) return;
@@ -16,6 +97,9 @@ class RobinhoodScanner {
     await store.saveScanState(BigInt(b.number), b.hash);
   }
   async tick() {
+    await Promise.all([this.checkActive(), this.scanHistory()]);
+  }
+  async scanHistory() {
     if (this.running || Date.now() < this.nextTry) return;
     this.running = true;
     let stage = 'validation';

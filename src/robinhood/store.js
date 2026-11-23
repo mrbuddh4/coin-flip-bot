@@ -41,6 +41,16 @@ class RobinhoodStore extends SolanaStore {
   async setInvitePeer(id, peer) { await this.pool.query('CREATE TABLE IF NOT EXISTS "RhInvites" (id text PRIMARY KEY, peer text NOT NULL)'); await this.pool.query('INSERT INTO "RhInvites" (id,peer) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, peer]); }
   async invitePeer(id) { return (await this.pool.query('SELECT peer FROM "RhInvites" WHERE id=$1', [id])).rows[0]?.peer; }
   async scanState() { return (await this.pool.query('SELECT block::text,hash FROM "RhScanState" WHERE id=1')).rows[0]; }
+  async activeErc20Requests(now) {
+    const { rows } = await this.pool.query(`SELECT state FROM "SolGames"
+      WHERE state->>'status'='OPEN' AND (state->>'expiresAt')::bigint > $1
+      AND state->'token'->>'address' <> 'NATIVE'`, [now]);
+    return rows.flatMap(({ state: game }) => [game.creator, game.challenger].flatMap((player, index) => {
+      const start = index === 0 ? game.createdAt : player?.joinedAt;
+      return player?.wallet && !player.deposit && Number.isSafeInteger(start) && player.depositExpiresAt > now
+        ? [{ sender: player.wallet, mint: game.token.address, start, end: player.depositExpiresAt }] : [];
+    }));
+  }
   async saveScanState(block, hash) { await this.pool.query('INSERT INTO "RhScanState" (id,block,hash) VALUES (1,$1,$2) ON CONFLICT(id) DO UPDATE SET block=EXCLUDED.block,hash=EXCLUDED.hash', [String(block), hash]); }
   async ambiguousReceipts(offset = 0) {
     return (await this.pool.query(`SELECT r.signature FROM "SolDepositReviews" r
