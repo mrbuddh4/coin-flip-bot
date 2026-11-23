@@ -100,6 +100,62 @@ const url = process.env.SOLANA_TEST_DATABASE_URL;
     expect(chain.verifyDeposit).toHaveBeenCalledTimes(1);expect((await rh.get(g.id)).creator.deposit).toBeDefined();
     await rh.saveScanState(10,'block10');chain.rpc=jest.fn(async()=>{throw new Error('429')});scanner.nextTry=0;await scanner.tick();expect(await rh.scanState()).toEqual({block:'10',hash:'block10'});
   });
+  function mockHistory(head, getLogs = async () => []) {
+    const block = height => ({ number: ethers.toQuantity(height), hash: `block${height}`, timestamp: ethers.toQuantity(height), transactions: [] });
+    chain.finalized = jest.fn(async () => block(head));
+    chain.rpc = jest.fn(async (method, [arg]) => {
+      if (method === 'eth_getBlockByNumber') return block(Number(arg));
+      if (method === 'eth_getLogs') return getLogs(Number(arg.fromBlock), Number(arg.toBlock));
+      throw new Error('Unexpected RPC call');
+    });
+    return () => chain.rpc.mock.calls.filter(([method]) => method === 'eth_getLogs').map(([, [q]]) => [Number(q.fromBlock), Number(q.toBlock)]);
+  }
+  test('historical token catch-up uses a wider complete range and falls back from the same block', async () => {
+    await service.create(input);
+    await rh.saveScanState(10, 'block10');
+    const scanner = new RobinhoodScanner(service);
+    const ranges = mockHistory(30000, async (from, to) => {
+      if (to - from >= 1000) throw new Error('Unsupported block range');
+      return [];
+    });
+    await scanner.scanHistory();
+    expect(ranges()).toEqual([[11, 10010], [11, 1010]]);
+    expect(await rh.scanState()).toEqual({ block: '1010', hash: 'block1010' });
+    scanner.wideRetry = 0;
+    const wideRanges = mockHistory(30000);
+    await scanner.scanHistory();
+    expect(wideRanges()).toEqual([[1011, 11010]]);
+    expect(await rh.scanState()).toEqual({ block: '11010', hash: 'block11010' });
+  });
+  test('a stuck payout gets a head start but no longer stops history forever', async () => {
+    const g = await fundedCreator();
+    await service.cancel({ id: g.id, userId: '1', chatId: input.chatId });
+    expect(await rh.pendingPayments()).toHaveLength(1);
+    await rh.saveScanState(10, 'block10');
+    const scanner = new RobinhoodScanner(service), ranges = mockHistory(30000);
+    await scanner.scanHistory();
+    expect(ranges()).toEqual([]);
+    expect(await rh.scanState()).toEqual({ block: '10', hash: 'block10' });
+    expect(scanner.nextTry).toBeGreaterThan(Date.now());
+    scanner.nextTry = 0; // Let the payout head-start interval elapse.
+    await scanner.scanHistory();
+    expect(ranges()).toEqual([[11, 1010]]);
+    expect(await rh.scanState()).toEqual({ block: '1010', hash: 'block1010' });
+    await scanner.scanHistory();
+    expect(ranges()).toHaveLength(1);
+    expect(await rh.pendingPayments()).toHaveLength(1);
+  });
+  test('a missing historical boundary block does not advance the cursor', async () => {
+    await service.create(input);
+    await rh.saveScanState(10, 'block10');
+    const scanner = new RobinhoodScanner(service);
+    mockHistory(30000);
+    const rpc = chain.rpc.getMockImplementation();
+    chain.rpc.mockImplementation(async (method, args) => method === 'eth_getBlockByNumber' && Number(args[0]) === 10010 ? null : rpc(method, args));
+    await scanner.scanHistory();
+    expect(await rh.scanState()).toEqual({ block: '10', hash: 'block10' });
+    expect(service.depositScanStatus).toMatchObject({ stage: 'block-history' });
+  });
   test('active SID is credited ahead of the historical cursor and only once after replay', async () => {
     const g = await service.create(input), scanner = new RobinhoodScanner(service);
     await rh.saveScanState(10, 'block10');
