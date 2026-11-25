@@ -2,6 +2,10 @@ const { randomUUID, randomInt, randomBytes } = require('node:crypto');
 const { publicKey } = require('./chain');
 const { toUnits, splitPool } = require('./amounts');
 const { DepositValidationError, ChallengeTakenError, paymentFailure } = require('./errors');
+const { SID_MINT } = require('./featured');
+// This fallback is prospective; older unassigned treasury transfers require
+// reconciliation (including ones that may already have been returned manually).
+const SID_FOR_SOL_ACTIVE_SINCE = Date.parse('2026-11-25T07:10:00Z');
 class SolanaService {
   constructor({ store, chain, now = () => Date.now(), coin = () => randomInt(2) }) {
     Object.assign(this, { store, chain, now, coin });
@@ -146,6 +150,36 @@ class SolanaService {
       await this.refund(g, tx, player, { signature, amount: value.toString() }, mint);
     });
     return true;
+  }
+  async recoverSidSentForSol({ sender, signature, mint, amount, transaction }) {
+    const at = transaction?.blockTime * 1000;
+    if (this.chain.chainId || mint !== SID_MINT || sender === this.chain.address ||
+        !Number.isSafeInteger(at) || at < SID_FOR_SOL_ACTIVE_SINCE || at > this.now() ||
+        !/^[1-9]\d*$/.test(String(amount)) || BigInt(amount) > 18446744073709551615n) return false;
+    const input = { sender, mint, amount: String(amount), at };
+    // Amount here only bounds the proof; SID units are never compared with
+    // lamports. The SOL request is identified by sender and its saved window.
+    const solInput = { ...input, mint: 'NATIVE' };
+    if ((await this.store.refundCandidates(input)).length) return false;
+    const matches = await this.store.noMemoCandidates(solInput);
+    if (matches.length !== 1) return false;
+    const match = matches[0];
+    const snapshot = await this.store.get(match.gameId);
+    if (snapshot.depositAddress !== this.chain.address) return false;
+    const proved = await this.chain.verifyDeposit({ signature, sender, mint, transaction, allowNoMemo: true });
+    if (proved.toString() !== input.amount) return false;
+    let queued = false;
+    await this.store.mutate(match.gameId, async (game, tx) => {
+      const current = await tx.noMemoCandidates(solInput);
+      if (current.length !== 1 || current[0].gameId !== match.gameId || current[0].userId !== match.userId ||
+          (await tx.refundCandidates(input)).length || game.token.address !== 'NATIVE' ||
+          game.depositAddress !== this.chain.address) return;
+      const player = this.member(game, match.userId);
+      if (player.wallet !== sender || !await tx.consume(signature, player.userId, input.amount)) return;
+      await this.refund(game, tx, player, { signature, amount: input.amount }, mint);
+      queued = true;
+    });
+    return queued;
   }
   async expire() {
     for (const { id } of await this.store.unfinished()) await this.store.mutate(id, async (g, tx) => {

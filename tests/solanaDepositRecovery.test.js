@@ -62,6 +62,60 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     chain.connection.getParsedTransaction = jest.fn().mockResolvedValue(transaction);
     return { signature, transaction };
   }
+  test.each(['open', 'expired', 'ambiguous', 'SID request', 'wrong recipient'])('memo-free SID sent during a SOL request: %s', async scenario => {
+    const { PublicKey } = require('@solana/web3.js');
+    const { SolanaChain } = require('../src/solana/chain');
+    const { DepositScanner } = require('../src/solana/scanner');
+    const { SID_MINT: mint } = require('../src/solana/featured');
+    const { TOKEN_2022_PROGRAM_ID: programId, getAssociatedTokenAddressSync } = require('../src/solana/token');
+    now = Math.max(Date.now(), Date.parse('2026-11-25T07:10:00Z'));
+    const game = await service.create({ ...input, interfaceVersion: 2 });
+    const signature = require('bs58').default.encode(Buffer.alloc(64, 63));
+    const sender = new PublicKey(walletA);
+    const treasury = new PublicKey(chain.address);
+    chain.signer = { publicKey: treasury };
+    chain.tokenInfo.mockImplementation(async value => value === mint
+      ? { address: mint, symbol: 'SID', decimals: 6, program: programId.toBase58() }
+      : { address: 'NATIVE', symbol: 'SOL', decimals: 9 });
+    chain.verifyDeposit = SolanaChain.prototype.verifyDeposit.bind(chain);
+    let sidGame;
+    if (scenario === 'ambiguous') await service.create({ ...input, chatId: '-101', interfaceVersion: 2 });
+    if (scenario === 'SID request') sidGame = await service.create({ ...input, chatId: '-101', mint, amount: '1001', interfaceVersion: 2 });
+    const source = getAssociatedTokenAddressSync(new PublicKey(mint), sender, programId);
+    const recipient = scenario === 'wrong recipient' ? new PublicKey(walletB) : treasury;
+    const destination = getAssociatedTokenAddressSync(new PublicKey(mint), recipient, programId);
+    const blockTime = Math.floor(game.createdAt / 1000) + 2;
+    const amount = '1001000000';
+    const transaction = { blockTime, meta: { err: null, innerInstructions: [],
+      preTokenBalances: [{ accountIndex: 1, owner: walletA, mint }],
+      postTokenBalances: [{ accountIndex: 2, owner: recipient.toBase58(), mint }],
+    }, transaction: { signatures: [signature], message: {
+      accountKeys: [sender, source, destination].map((pubkey, i) => ({ pubkey, signer: i === 0 })),
+      instructions: [{ programId, parsed: { type: 'transferChecked', info: { source: source.toBase58(), destination: destination.toBase58(),
+        mint, multisigAuthority: walletA, signers: [walletA], tokenAmount: { amount, decimals: 6 },
+      } } }],
+    } } };
+    now = blockTime * 1000 + 1000;
+    if (scenario === 'expired') { now = game.expiresAt + 1; await service.expire(); }
+    await store.setCursor(walletA, signature);
+    chain.connection.getParsedTransaction = jest.fn().mockResolvedValue(transaction);
+    chain.connection.getSignaturesForAddress = jest.fn(async (key, opts) => key.equals(sender) && !opts.until ? [{ signature, blockTime }] : []);
+    await new DepositScanner(service).tick();
+    await new DepositScanner(service).tick();
+    const refunds = await store.payments(game.id);
+    const shouldRefund = ['open', 'expired'].includes(scenario);
+    expect(refunds).toHaveLength(shouldRefund ? 1 : 0);
+    if (shouldRefund) expect(refunds[0]).toMatchObject({ status: 'PENDING', payment: {
+      id: 'refund:' + signature, sourceWallet: chain.address, recipient: walletA, mint, amount, kind: 'refund',
+    } });
+    const state = await store.get(game.id);
+    expect(state.status).toBe(scenario === 'expired' ? 'CANCELLED' : 'OPEN');
+    expect(state.creator.deposit).toBeUndefined();
+    expect(await store.hasDeposit(signature)).toBe(shouldRefund || Boolean(sidGame));
+    if (sidGame) expect((await store.get(sidGame.id)).creator.deposit.signature).toBe(signature);
+    expect(service.coin).not.toHaveBeenCalled();
+    expect(chain.broadcast).not.toHaveBeenCalled();
+  });
   test.each([false, true])('one-tap SID self-signer proof recovers automatically, expired=%s', async expired => {
     const { PublicKey } = require('@solana/web3.js');
     const { SolanaChain } = require('../src/solana/chain');

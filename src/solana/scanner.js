@@ -193,6 +193,13 @@ class DepositScanner {
         }
       }
       if (!matches.length && await this.service.wrongChain?.recover({ sender: address, mint, amount: String(amount), signature, transaction })) return;
+      if (!matches.length && this.service.recoverSidSentForSol) {
+        try {
+          if (await this.service.recoverSidSentForSol({ sender: address, mint, amount: String(amount), signature, transaction })) return;
+        } catch (error) {
+          if (!(error instanceof DepositValidationError)) throw error;
+        }
+      }
       if (matches.length) await store.reviewDeposit(signature, matches[0].gameId, 'Ambiguous plain transfer; no game was credited.');
       return;
     }
