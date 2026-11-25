@@ -1,6 +1,5 @@
 const { Sequelize } = require('sequelize');
-const path = require('path');
-const config = require('../config');
+const { createSequelize } = require('./connection');
 const defineModels = require('./models');
 
 let sequelize;
@@ -8,23 +7,7 @@ let models;
 
 const initDB = async () => {
   try {
-    const dbConfig = {
-      dialect: config.database.dialect,
-      host: config.database.host,
-      port: config.database.port,
-      username: config.database.username,
-      password: config.database.password,
-      database: config.database.database,
-      logging: config.database.logging,
-      pool: {
-        max: 5,
-        min: 0,
-        acquire: 30000,
-        idle: 10000,
-      },
-    };
-
-    sequelize = new Sequelize(dbConfig);
+    sequelize = createSequelize(Sequelize);
 
     models = defineModels(sequelize);
 
@@ -42,24 +25,33 @@ const initDB = async () => {
     await sequelize.authenticate();
     console.log('Database connection authenticated');
 
-    // Fix enum types if needed
-    try {
-      await sequelize.query(`
-        ALTER TYPE "enum_BotSessions_sessionType" ADD VALUE IF NOT EXISTS 'UPDATING_WALLET'
-      `);
-      console.log('Updated BotSession sessionType enum');
-    } catch (err) {
-      // Enum might already exist, continue
-      console.log('Enum update skipped (likely already exists)');
+    // Recovery must never silently rewrite an existing financial schema.
+    const schemaMode = process.env.DB_SCHEMA_MODE || 'verify';
+    if (!['verify', 'create', 'alter'].includes(schemaMode)) {
+      throw new Error('DB_SCHEMA_MODE must be verify, create or alter');
     }
-
-    await sequelize.sync({ alter: true });
-    console.log('Database models synchronized');
+    if (schemaMode === 'verify') {
+      const queryInterface = sequelize.getQueryInterface();
+      for (const model of Object.values(models)) {
+        if (!model || typeof model.getTableName !== 'function') continue;
+        const columns = await queryInterface.describeTable(model.getTableName());
+        const missing = Object.values(model.rawAttributes)
+          .map(attribute => attribute.field)
+          .filter(field => !Object.hasOwn(columns, field));
+        if (missing.length) throw new Error(`Schema mismatch in ${model.name}: missing columns ${missing.join(', ')}`);
+      }
+      console.log('Database tables and columns verified (types, enums and indexes require migration review)');
+    } else {
+      // Only on a backed-up database after reviewing the generated changes.
+      await sequelize.sync({ alter: schemaMode === 'alter' });
+      console.log(`Database schema initialization completed (${schemaMode})`);
+    }
 
     return { sequelize, models };
   } catch (error) {
-    console.error('Database initialization failed:', error);
-    process.exit(1);
+    if (sequelize) await sequelize.close().catch(() => {});
+    sequelize = undefined; models = undefined;
+    throw error;
   }
 };
 

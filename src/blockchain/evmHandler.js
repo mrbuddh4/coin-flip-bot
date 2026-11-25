@@ -1,5 +1,6 @@
 const { ethers } = require('ethers');
 const config = require('../config');
+const { assertLiveFunds } = require('../utils/recoveryMode');
 
 const PAXSCAN_API = process.env.PAXSCAN_API_URL || 'https://api.paxscan.io/api';
 
@@ -134,6 +135,7 @@ class EVMHandler {
    * Transfer ERC20 token from one wallet to another
    */
   async transferToken(tokenAddress, fromPrivateKey, toAddress, amount, decimals) {
+    assertLiveFunds();
     const fromWallet = new ethers.Wallet(fromPrivateKey, this.provider);
     const erc20ABI = [
       'function transfer(address to, uint256 amount) returns (bool)',
@@ -168,6 +170,7 @@ class EVMHandler {
    * Transfer native ETH from one wallet to another
    */
   async transferNative(fromPrivateKey, toAddress, amountEth) {
+    assertLiveFunds();
     const fromWallet = new ethers.Wallet(fromPrivateKey, this.provider);
     const amountBN = ethers.parseEther(amountEth.toString());
 
@@ -213,7 +216,7 @@ class EVMHandler {
       }
 
       const currentBlock = await this.provider.getBlockNumber();
-      const confirmations = currentBlock - receipt.blockNumber;
+      const confirmations = Math.max(0, currentBlock - receipt.blockNumber + 1);
 
       return {
         status: receipt.status === 1 ? 'confirmed' : 'failed',
