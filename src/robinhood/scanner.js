@@ -226,6 +226,18 @@ class RobinhoodScanner {
         if (await service.recoverUnmatchedDeposit({ ...input, signature, transaction })) return;
         if (!candidates.length && await service.wrongChain?.recover({ ...input, signature, transaction })) return;
         if (candidates.length) await store.reviewDeposit(signature, candidates[0].gameId, 'Ambiguous Robinhood transfer; no game credited');
+        else if (store.recordAuditReceipt && sender !== service.chain.address && amount > 0n) {
+          // ERC-20 logs were already checked against their source block. A
+          // native transaction body alone does not establish successful execution.
+          if (mint === 'NATIVE') {
+            if (Date.now() - input.at > 48 * 3600000) return;
+            const receipt = await service.chain.rpc('eth_getTransactionReceipt', [signature]);
+            if (!receipt || receipt.blockHash !== block.hash || receipt.transactionHash?.toLowerCase() !== signature)
+              throw new Error('Native audit receipt unavailable or changed; retain scan cursor');
+            if (BigInt(receipt.status) !== 1n) return;
+          }
+          await store.recordAuditReceipt(signature, input.at);
+        }
         return;
       }
       await service.deposit({ id: candidates[0].gameId, userId: candidates[0].userId, signature, detectedMint: mint, transaction, noMemo: true });

@@ -142,6 +142,7 @@ class SolanaStore {
       CREATE TABLE IF NOT EXISTS "SolDrafts" (id text PRIMARY KEY, "userId" text NOT NULL, "chatId" text NOT NULL, "expiresAt" timestamptz NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolScanCursors" (address text PRIMARY KEY, signature text NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolDepositReviews" (signature text PRIMARY KEY, "gameId" text NOT NULL, reason text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
+      CREATE TABLE IF NOT EXISTS "SolAuditReceipts" (signature text PRIMARY KEY, "seenAt" timestamptz NOT NULL);
       CREATE TABLE IF NOT EXISTS "SolScanReviews" (signature text PRIMARY KEY, address text NOT NULL, reason text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
     `);
     await this.pool.query('ALTER TABLE "SolDrafts" ADD COLUMN IF NOT EXISTS "messageId" bigint');
@@ -190,6 +191,12 @@ class SolanaStore {
     return new Set(rows.map(r => r.gameId));
   }
   async allResults() { return (await this.pool.query('SELECT state FROM "SolGames" WHERE state->>\'status\'=\'SETTLED\'')).rows.map(r => r.state); }
+  async recordAuditReceipt(signature, at) {
+    // The observer is separate from scanner reviews: recording a receipt
+    // here must never suppress a later attempt to credit or refund it.
+    if (!Number.isSafeInteger(at) || at < Date.parse('2026-11-25T16:45:00Z') || Date.now() - at > 48 * 3600000) return;
+    await this.pool.query('INSERT INTO "SolAuditReceipts" (signature,"seenAt") VALUES ($1,to_timestamp($2::double precision / 1000)) ON CONFLICT DO NOTHING', [signature, at]);
+  }
   async hasDeposit(signature) {
     return (await this.pool.query('SELECT 1 FROM "SolDeposits" WHERE signature=$1', [signature])).rowCount > 0;
   }

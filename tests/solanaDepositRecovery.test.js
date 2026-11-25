@@ -30,7 +30,7 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     if (admin) { if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
   });
   beforeEach(async () => {
-    await pool.query('TRUNCATE "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolScanReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges", "SolMediaCache", "SolNotificationDeliveries"');
+    await pool.query('TRUNCATE "SolAuditReceipts", "SolOutbox", "SolDeposits", "SolGames", "SolTokens", "SolProfiles", "SolSessions", "SolDrafts", "SolScanCursors", "SolDepositReviews", "SolScanReviews", "SolFeeAccruals", "SolFeePools", "SolFeeCycles", "SolHolderLinks", "SolHolderChallenges", "SolMediaCache", "SolNotificationDeliveries"');
     await pool.query('DROP TABLE IF EXISTS \"SolNetwork\"');
     now = 1000;
     chain = {
@@ -62,6 +62,33 @@ integration('Solana deposit recovery on real PostgreSQL', () => {
     chain.connection.getParsedTransaction = jest.fn().mockResolvedValue(transaction);
     return { signature, transaction };
   }
+  test('daily audit reads stale payments and unresolved observations without changing the ledger', async () => {
+    const { DailyAudit, SCHEMA } = require('../src/solana/dailyAudit');
+    const game = await service.create(input);
+    await pool.query(SCHEMA);
+    await pool.query('DELETE FROM "SolDailyAudit"');
+    await pool.query('INSERT INTO "SolOutbox" (id,"gameId",payment,"createdAt") VALUES ($1,$2,$3,now() - interval \'2 hours\')',
+      ['prize:stalled', game.id, JSON.stringify({ kind: 'prize' })]);
+    await pool.query(`INSERT INTO "SolAuditReceipts" (signature,"seenAt") VALUES
+      ('unmatched-audit-proof',now() - interval '2 hours'),
+      ('credited-audit-proof',now() - interval '2 hours'),
+      ('recent-audit-proof',now())`);
+    await pool.query('INSERT INTO "SolDeposits" (signature,"gameId","userId",amount) VALUES ($1,$2,$3,$4)',
+      ['credited-audit-proof', game.id, '1', '12']);
+    const telegram = { sendMessage: jest.fn() };
+    const run = () => new DailyAudit({ store, sources: [{ store, chain, name: 'Solana' }], telegram, adminIds: '1',
+      now: () => Date.parse('2026-11-25T17:00:00Z') }).tick();
+    await run();
+    await run();
+    const message = telegram.sendMessage.mock.calls[0][1];
+    expect(telegram.sendMessage).toHaveBeenCalledTimes(1);
+    expect(message).toContain('prize:stalled');
+    expect(message).toContain('unmatched-audit-proof');
+    expect(message).not.toContain('credited-audit-proof');
+    expect(message).not.toContain('recent-audit-proof');
+    expect((await store.payments(game.id))[0].status).toBe('PENDING');
+    expect(await store.hasDeposit('unmatched-audit-proof')).toBe(false);
+  });
   test.each(['open', 'expired', 'ambiguous', 'SID request', 'wrong recipient'])('memo-free SID sent during a SOL request: %s', async scenario => {
     const { PublicKey } = require('@solana/web3.js');
     const { SolanaChain } = require('../src/solana/chain');

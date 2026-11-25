@@ -1,7 +1,7 @@
 const { PublicKey, SystemProgram } = require('@solana/web3.js');
 const { MEMO } = require('./chain');
 const { DepositValidationError } = require('./errors');
-const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } = require('./token');
+const { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } = require('./token');
 function retryCode(error) {
   const message = String(error?.message || '');
   if (error?.code === -32015 || /transaction version .*not supported/i.test(message)) return 'RPC_UNSUPPORTED_VERSION';
@@ -9,6 +9,23 @@ function retryCode(error) {
   if (/timeout|timed out|abort/i.test(message)) return 'RPC_TIMEOUT';
   if (/^[0-9A-Z]{5}$/.test(String(error?.code || ''))) return `DATABASE_${error.code}`;
   return 'LOOKUP_OR_LEDGER_FAILURE';
+}
+function isTreasuryTokenReceipt(chain, transaction, transfer, sender) {
+  const { info, type } = transfer.parsed;
+  const program = transfer.programId;
+  if (type !== 'transferChecked' || ![TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID].some(p => program.equals(p))) return false;
+  let ata;
+  try { ata = getAssociatedTokenAddressSync(new PublicKey(info.mint), chain.signer.publicKey, program).toBase58(); }
+  catch (_) { return false; }
+  if (ata !== info.destination) return false;
+  const keys = transaction.transaction.message.accountKeys;
+  const src = keys.findIndex(k => k.pubkey.toBase58() === info.source);
+  const dst = keys.findIndex(k => k.pubkey.toBase58() === ata);
+  const pre = transaction.meta?.preTokenBalances || [], post = transaction.meta?.postTokenBalances || [];
+  const source = pre.find(b => b.accountIndex === src && b.mint === info.mint && b.owner === sender);
+  const before = pre.find(b => b.accountIndex === dst && b.mint === info.mint);
+  const after = post.find(b => b.accountIndex === dst && b.mint === info.mint && b.owner === chain.address);
+  return !!(source && after && BigInt(after.uiTokenAmount.amount) > BigInt(before?.uiTokenAmount.amount || 0));
 }
 class DepositScanner {
   constructor(service) { this.service = service; this.running = false; this.offset = 0; this.activeOffset = 0; this.recoveryOffset = 0; this.replayed = new Map(); this.nextScanAt = 0; this.rateFailures = 0; }
@@ -178,7 +195,7 @@ class DepositScanner {
     const amount = native ? info.lamports : info.tokenAmount?.amount;
     if (!mint || (native ? !Number.isSafeInteger(amount) : !/^\d+$/.test(amount || ''))) return;
     if (native && info.source !== address) return;
-    const { store } = this.service;
+    const { store, chain } = this.service;
     const matches = await store.noMemoCandidates({ sender: address, mint, amount: String(amount), at: transaction.blockTime * 1000 });
     if (matches.length !== 1) {
       // Proof verification still checks recipient, program, signature, sender
@@ -201,6 +218,14 @@ class DepositScanner {
         }
       }
       if (matches.length) await store.reviewDeposit(signature, matches[0].gameId, 'Ambiguous plain transfer; no game was credited.');
+      else if (store.recordAuditReceipt && chain.signer && transaction.meta && address !== chain.address) {
+        // No new RPC request: require the successful finalized transaction to
+        // show a direct treasury transfer, with sender and actual token credit.
+        const message = transaction.transaction.message;
+        if (!message.accountKeys?.some(k => k.pubkey.toBase58() === address && k.signer)) return;
+        if (native ? info.destination !== chain.address : !isTreasuryTokenReceipt(chain, transaction, transfer, address)) return;
+        if (BigInt(amount) > 0n) await store.recordAuditReceipt(signature, transaction.blockTime * 1000);
+      }
       return;
     }
     try {

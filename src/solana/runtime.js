@@ -8,6 +8,7 @@ const { assertLiveFunds } = require('../utils/recoveryMode');
 const { startHealthServer } = require('../utils/healthServer');
 const { DepositScanner } = require('./scanner');
 const { SolanaInterface } = require('./interface');
+const { DailyAudit, SCHEMA: AUDIT_SCHEMA } = require('./dailyAudit');
 const { paymentHandler } = require('./paymentPage');
 const { network } = require('./network');
 const { SolanaFees, holderRewardsMode } = require('./fees');
@@ -34,7 +35,7 @@ async function main() {
   let pollingStarted = false;
   let cycleRunning = false;
   let presentationRunning = false;
-  let scanner, ui, rh;
+  let scanner, ui, rh, audit, auditTimer;
   const shutdown = async () => {
     if (stopping) return;
     stopping = true;
@@ -42,9 +43,10 @@ async function main() {
     clearInterval(scanTimer);
     clearInterval(presentationTimer);
     clearInterval(feeTimer);
+    clearInterval(auditTimer);
     if (bot && pollingStarted) { try { bot.stop('shutdown'); } catch (_) {} }
     // Keep the DB lock until the worker finishes its current signed transaction operation.
-    while (rh?.service.workerRunning || rh?.scanner.running || rh?.ui?.depositCheckJobs?.size || cycleRunning || presentationRunning || scanner?.running || ui?.depositCheckJobs?.size || service?.workerRunning || fees?.running) await new Promise(resolve => setTimeout(resolve, 50));
+    while (audit?.running || rh?.service.workerRunning || rh?.scanner.running || rh?.ui?.depositCheckJobs?.size || cycleRunning || presentationRunning || scanner?.running || ui?.depositCheckJobs?.size || service?.workerRunning || fees?.running) await new Promise(resolve => setTimeout(resolve, 50));
     if (server) await new Promise(resolve => server.close(resolve));
     if (rh) { await rh.store.pool.end(); rh.chain.provider.destroy?.(); }
     await store.pool.end();
@@ -128,6 +130,20 @@ async function main() {
     if (fees.mode === 'paxeer') {
       rewardTick();
       feeTimer = setInterval(rewardTick, 60000);
+    }
+    if (process.env.ADMIN_IDS) {
+      try {
+        await store.pool.query(AUDIT_SCHEMA);
+        audit = new DailyAudit({ store, telegram: bot.telegram, adminIds: process.env.ADMIN_IDS, sources: [
+          { store, chain, name: 'Solana' },
+          ...(rh ? [{ store: rh.store, chain: rh.chain, name: 'Robinhood' }] : []),
+        ] });
+        const auditTick = () => {
+          if (!stopping) audit.tick().catch(() => console.error('DAILY_AUDIT_RETRY: no financial records changed.'));
+        };
+        auditTimer = setInterval(auditTick, 60000);
+        auditTick();
+      } catch (_) { console.error('DAILY_AUDIT_SETUP_FAILED: audit unavailable; coin-flip service continues.'); }
     }
     const polling = bot.launch({ dropPendingUpdates: false }, () => { pollingStarted = true; });
     polling.catch(async error => {
