@@ -13,6 +13,7 @@ const original = Object.freeze({
 });
 const unrecordedSidNov25 = Object.freeze({
   digest: '59370d79a6017b02bca15801133213932d69ba84b10eb8e58dac84b2f7f117e9',
+  signature: '49P2XBKVf8ZhHtbeghS7cC6hDFVC3J8epTPPvBJrYVQh5JeEhUX5c9QLxSCEp2ne3B4mfb1UdN4NXLeULy3QMKPr',
   slot: 473595922, blockTime: 1795577358, amount: '1001000000', balance: '1001081598',
   caseId: 'refund-case:unrecorded-sid-2026-11-25',
 });
@@ -20,6 +21,18 @@ const account = getAssociatedTokenAddressSync(new PublicKey(SID_MINT), new Publi
 const digestOf = signature => createHash('sha256').update(signature).digest('hex');
 
 class RefundNeedsReview extends Error {}
+class RefundReadRetry extends Error {
+  constructor(stage, cause) {
+    super(stage);
+    this.stage = stage;
+    this.rateLimited = /\b429\b|too many requests|rate limit/i.test(String(cause?.message || ''));
+  }
+}
+
+async function read(stage, fn) {
+  try { return await fn(); }
+  catch (error) { throw new RefundReadRetry(stage, error); }
+}
 
 async function prior(db, { caseId, amount, digest }) {
   const { rows } = await db.query(`SELECT o.status,o.payment FROM "SolOutbox" o
@@ -32,32 +45,37 @@ async function prior(db, { caseId, amount, digest }) {
   return null;
 }
 
-async function exactHistory(connection, commitment, { slot, digest }) {
-  const rows = await connection.getSignaturesForAddress(account, { limit: 100 }, commitment);
+async function exactHistory(connection, commitment, { slot, digest }, minContextSlot) {
+  const rows = await read('treasury-history-' + commitment, () => connection.getSignaturesForAddress(account,
+    { limit: 100, ...(minContextSlot === undefined ? {} : { minContextSlot }) }, commitment));
   const hit = rows.find(r => r.slot === slot && !r.err && digestOf(r.signature) === digest);
-  if (!hit) throw new Error('original receipt not available from RPC');
+  if (!hit) throw new RefundReadRetry('original-receipt-history');
   if (rows.some(r => r.slot >= slot && r.signature !== hit.signature && !r.err)) throw new RefundNeedsReview('newer-successful-token-account-activity');
   return hit.signature;
 }
 
 async function verify(chain, receipt) {
   const { slot, blockTime, amount, balance } = receipt;
-  await chain.validate();
+  await read('validate-network', () => chain.validate());
   const { connection } = chain;
-  const signature = await exactHistory(connection, 'finalized', receipt);
-  const transaction = await connection.getParsedTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 });
-  if (!transaction) throw new Error('finalized transaction unavailable');
+  const signature = receipt.signature || await exactHistory(connection, 'finalized', receipt);
+  if (digestOf(signature) !== receipt.digest) throw new RefundNeedsReview('receipt-signature-mismatch');
+  const transaction = await read('finalized-transaction', () => connection.getParsedTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }));
+  if (!transaction) throw new RefundReadRetry('finalized-transaction-unavailable');
   const transfer = transaction.transaction.message.instructions.find(i => i.parsed?.type === 'transferChecked');
   const sender = directTransferAuthority(transfer?.parsed?.info || {});
   if (!sender || sender === treasury || transaction.slot !== slot || transaction.blockTime !== blockTime ||
-      String(await chain.verifyDeposit({ signature, sender, mint: SID_MINT, transaction, allowNoMemo: true })) !== amount) {
+      String(await read('deposit-proof', () => chain.verifyDeposit({ signature, sender, mint: SID_MINT, transaction, allowNoMemo: true }))) !== amount) {
     throw new RefundNeedsReview('deposit-proof-mismatch');
   }
   // Confirmed history can already show a manual return which has not
   // finalized. Any successful later activity forces manual reconciliation.
-  if (await exactHistory(connection, 'confirmed', receipt) !== signature ||
-      (await connection.getTokenAccountBalance(account, 'confirmed')).value?.amount !== balance ||
-      await exactHistory(connection, 'confirmed', receipt) !== signature) throw new RefundNeedsReview('token-balance-or-history-changed');
+  if (!receipt.signature) await exactHistory(connection, 'confirmed', receipt);
+  const snapshot = await read('treasury-balance', () => connection.getTokenAccountBalance(account, 'confirmed'));
+  const minContextSlot = snapshot.context?.slot;
+  if (receipt.signature && (!Number.isSafeInteger(minContextSlot) || minContextSlot < slot)) throw new RefundReadRetry('treasury-balance-context');
+  if (snapshot.value?.amount !== balance ||
+      await exactHistory(connection, 'confirmed', receipt, minContextSlot) !== signature) throw new RefundNeedsReview('token-balance-or-history-changed');
   return { sender, signature };
 }
 
@@ -104,7 +122,10 @@ function recoveryTick(service, now = Date.now, incident = original) {
     } catch (error) {
       done = error instanceof RefundNeedsReview;
       next = now() + 60000;
-      console.error(label + ': ' + (done ? 'REVIEW_REQUIRED (' + error.message + ')' : 'RETRY'));
+      const retry = error instanceof RefundReadRetry
+        ? 'RETRY stage=' + error.stage + (error.rateLimited ? ' reason=RPC_RATE_LIMIT' : '')
+        : 'RETRY stage=ledger';
+      console.error(label + ': ' + (done ? 'REVIEW_REQUIRED (' + error.message + ')' : retry));
     }
   };
 }

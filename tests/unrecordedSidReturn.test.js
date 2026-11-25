@@ -1,14 +1,6 @@
-jest.mock('node:crypto', () => {
-  const real = jest.requireActual('node:crypto');
-  return { ...real, createHash: kind => {
-    const hash = real.createHash(kind);
-    return { update: value => value === 'fixture-nov25-deposit' ?
-      { digest: () => '59370d79a6017b02bca15801133213932d69ba84b10eb8e58dac84b2f7f117e9' } : hash.update(value) };
-  } };
-});
-const { recoverWrongChainSid, unrecordedSidNov25 } = require('../src/solana/returnWrongChainSid');
+const { recoverWrongChainSid, recoveryTick, unrecordedSidNov25 } = require('../src/solana/returnWrongChainSid');
 const { SID_MINT } = require('../src/solana/featured');
-const signature = 'fixture-nov25-deposit';
+const signature = '49P2XBKVf8ZhHtbeghS7cC6hDFVC3J8epTPPvBJrYVQh5JeEhUX5c9QLxSCEp2ne3B4mfb1UdN4NXLeULy3QMKPr';
 const sender = 'fixture-original-sender';
 const treasury = '6izojQcvjazUDZ4jckAnFn15i8fDRkNb4J9NnTpTVBkY';
 const slot = 473595922, blockTime = 1795577358;
@@ -22,7 +14,7 @@ function fixture() {
   };
   const connection = {
     getSignaturesForAddress: jest.fn(async () => [deposit]),
-    getTokenAccountBalance: jest.fn(async () => ({ value: { amount: '1001081598' } })),
+    getTokenAccountBalance: jest.fn(async () => ({ context: { slot: slot + 10 }, value: { amount: '1001081598' } })),
     getParsedTransaction: jest.fn(async () => ({ slot, blockTime, transaction: { message: { instructions: [
       { parsed: { type: 'transferChecked', info: { multisigAuthority: sender, signers: [sender] } } },
     ] } } })),
@@ -35,9 +27,23 @@ test('queues only the exact transfer amount to its verified sender and keeps the
   const { store, chain, client } = fixture();
   await expect(recoverWrongChainSid({ store, chain }, unrecordedSidNov25)).resolves.toBe('PENDING');
   expect(chain.verifyDeposit.mock.calls[0][0]).toMatchObject({ sender, signature, mint: SID_MINT, allowNoMemo: true });
+  expect(chain.connection.getSignaturesForAddress).toHaveBeenCalledTimes(1);
+  expect(chain.connection.getSignaturesForAddress).toHaveBeenCalledWith(expect.anything(),
+    { limit: 100, minContextSlot: slot + 10 }, 'confirmed');
   const call = client.query.mock.calls.find(([sql]) => sql.startsWith('INSERT INTO "SolOutbox"'));
   expect(JSON.parse(call[1][2])).toMatchObject({ id: 'refund:' + signature, recipient: sender, amount, mint: SID_MINT, sourceWallet: treasury, kind: 'refund' });
   expect(client.query).toHaveBeenLastCalledWith('COMMIT');
+});
+
+test('history throttling reports the failed stage without leaking the endpoint or opening a write transaction', async () => {
+  const { store, chain } = fixture();
+  chain.connection.getSignaturesForAddress.mockRejectedValueOnce(new Error('429 at https://private.example/secret'));
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await recoveryTick({ store, chain }, () => 0, unrecordedSidNov25)();
+    expect(log).toHaveBeenCalledWith('SID_ONE_TIME_RETURN_NOV25: RETRY stage=treasury-history-confirmed reason=RPC_RATE_LIMIT');
+    expect(store.pool.connect).not.toHaveBeenCalled();
+  } finally { log.mockRestore(); }
 });
 
 test('refuses to queue if confirmed treasury history shows a possible manual return', async () => {
